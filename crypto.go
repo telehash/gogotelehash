@@ -1,5 +1,7 @@
 package telehash
 
+import "crypto"
+import "crypto/elliptic"
 import "crypto/rsa"
 import "crypto/sha1"
 import "crypto/sha256"
@@ -18,26 +20,34 @@ func DecryptWithRSA(priv *rsa.PrivateKey, ciphertext []byte) (cleartext []byte, 
 
 func SignWithRSA(priv *rsa.PrivateKey, data []byte) (sig []byte, err error) {
 	// Sign the SHA-256 hash using PKCS1v15 (RSA PKCS#1 v1.5)
-	return rsa.SignPKCS1v15(rand.Reader, priv, sha256.New(), sha256Hash(data))
+	return rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, sha256Hash(data))
 }
 
 func IsSignatureValid(pub *rsa.PublicKey, data []byte, sig []byte) bool {
-	err := rsa.VerifyPKCS1v15(pub, sha256.New(), sha256Hash(data), sig)
+	err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sha256Hash(data), sig)
 	return err == nil
 }
 
 func GenerateFingerprint(pub *ecdh.PublicKey) []byte {
 	// Construct a SHA-256 fingerprint of the ECC public key. The key should
 	// be marshalled into uncompressed point form, per 4.3.6, ANSI X.9.62
-	return sha256(elliptic.Marshal(pub.Curve, pub.X, pub.Y))
+	return sha256Hash(elliptic.Marshal(pub.Curve, pub.X, pub.Y))
 }
 
 func GenerateSharedKey(pub *ecdh.PublicKey) (key []byte, err error) {
+	return
 }
 
+func decryptWithAES(key []byte, iv []byte, ciphertext []byte) (cleartext []byte, err error) {
+	return
+}
+
+func derToPubKey(data[] byte) (key *rsa.PublicKey, err error) {
+	return
+}
 
 func sha256Hash(data []byte) []byte {
 	h := sha256.New()
-	io.Write(h, data)
+	h.Write(data)
 	return h.Sum(nil)
 }
