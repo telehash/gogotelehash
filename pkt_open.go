@@ -1,9 +1,7 @@
 package telehash
 
 import (
-	"bytes"
 	"crypto"
-	"crypto/cipher"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
@@ -29,11 +27,20 @@ type pkt_open_inner struct {
 	Family string `json:"family,omitempty"`
 }
 
+// Outbound open packet
+type cmd_open_o struct {
+	peer  *peer_t
+	reply chan error
+}
+
+func (cmd *cmd_open_o) log_err(err error) {
+	cmd.reply <- err
+}
+
 // See https://github.com/telehash/telehash.org/blob/feb3421b36a03e97f395f014a494f5dc90695f04/protocol.md#packet-generation
-func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) error {
+func (cmd *cmd_open_o) exec(s *Switch) error {
 	var (
 		err        error
-		buf        *bytes.Buffer
 		ecprv      *ecdh.PrivateKey
 		ecpub_data []byte
 		rsapub_der []byte
@@ -42,23 +49,29 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 		outer_sig  []byte
 		open       []byte
 		pkt        []byte
-		aes_blk    cipher.Block
-		aes_stream cipher.Stream
-		aes_w      *cipher.StreamWriter
-		iv         = make([]byte, 16)
-		line       = make([]byte, 16)
+		line       *line_t
+		iv         []byte
+		line_id    []byte
 	)
+
+	line = s.i_open[cmd.peer.hashname]
+	if line == nil {
+		line = &line_t{_switch: s}
+	}
+	line.peer = cmd.peer
 
 	{ // STEP 2:
 		// - Generate an IV and a line identifier from a secure random source, both
 		//   16 bytes
-		_, err = rand.Read(iv)
+		iv, err = make_rand(16)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
-		_, err = rand.Read(line)
+		line_id, err = make_rand(16)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
@@ -66,7 +79,8 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 		// - Generate a new elliptic curve keypair, based on the "nistp256" curve
 		ecprv, err = ecdh.GenerateKey(rand.Reader, elliptic.P256())
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
@@ -75,25 +89,28 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 		//   inner packet
 		ecpub_data, err = ecprv.PublicKey.Marshal()
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
 	{ // STEP 5:
 		// - Form the inner packet containing a current timestamp at, line identifier,
 		//   recipient hashname, and family (if you have such a value). Your own RSA
-		//   public key is the packet BODY in the binary DER format.
-		rsapub_der, err = enc_DER_RSA(&l._switch.identity.PublicKey)
+		rsapub_der, err = enc_DER_RSA(&s.identity.PublicKey)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
+		line.at = time.Now()
 		inner_pkt, err = form_packet(pkt_open_inner{
-			To:   recipient,
-			At:   time.Now().Unix(),
-			Line: hex.EncodeToString(line),
+			To:   cmd.peer.hashname,
+			At:   line.at.Unix(),
+			Line: hex.EncodeToString(line_id),
 		}, rsapub_der)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
@@ -106,9 +123,10 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 	{ // STEP 7:
 		// - Create a signature from the encrypted inner packet using your own RSA
 		//   keypair, a SHA 256 digest, and PKCSv1.5 padding
-		inner_sig, err = rsa.SignPKCS1v15(rand.Reader, l._switch.identity, crypto.SHA256, hash_SHA256(inner_pkt))
+		inner_sig, err = rsa.SignPKCS1v15(rand.Reader, s.identity, crypto.SHA256, hash_SHA256(inner_pkt))
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
@@ -117,16 +135,17 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 		//   a new SHA-256 key hashed from the public elliptic key + the line value
 		//   (16 bytes from #5), then base64 encode the result as the value for the
 		//   sig param.
-		outer_sig, err = enc_AES_256_CTR(hash_SHA256(ecpub_data, line), iv, inner_sig)
+		outer_sig, err = enc_AES_256_CTR(hash_SHA256(ecpub_data, line_id), iv, inner_sig)
 	}
 
 	{ // STEP 8:
 		// - Create an open param, by encrypting the public elliptic curve key you
 		//   generated (in uncompressed form, aka ANSI X9.63) with the recipient's
 		//   RSA public key and OAEP padding.
-		open, err = rsa.EncryptOAEP(sha1.New(), rand.Reader, recipient_pub, ecpub_data, nil)
+		open, err = rsa.EncryptOAEP(sha1.New(), rand.Reader, cmd.peer.pubkey, ecpub_data, nil)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
@@ -140,15 +159,19 @@ func (l *Line) send_open_pkt(recipient string, recipient_pub *rsa.PublicKey) err
 			Iv:   hex.EncodeToString(iv),
 		}, inner_pkt)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil
 		}
 	}
 
-	l.LineOut = line
-	l.local_eckey = ecprv
+	line.LineOut = line_id
+	line.local_eckey = ecprv
 
 	// Send packet pkt
+	s.o_open[cmd.peer.hashname] = line
+	s.o_queue <- pkt_udp_t{cmd.peer.addr, pkt}
 
+	close(cmd.reply)
 	return nil
 }
 
@@ -157,25 +180,20 @@ type cmd_open_i struct {
 	pkt pkt_udp_t
 }
 
-func (cmd *cmd_open_i) exec(s *Switch) error {
-	l := &Line{_switch: s}
-	err := cmd.handle_open_pkt(s)
-	if err != nil {
-		// open failed; drop packet
-	}
-	return nil
+func (cmd *cmd_open_i) log_err(err error) {
+	Log.Debugf("open(i) error: %s", err)
 }
 
 // See https://github.com/telehash/telehash.org/blob/feb3421b36a03e97f395f014a494f5dc90695f04/protocol.md#packet-processing-1
-func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
+func (cmd *cmd_open_i) exec(s *Switch) error {
 	var (
 		data       = cmd.pkt.data
 		err        error
-		buf        *bytes.Buffer
 		outer_pkt  pkt_open
 		inner_pkt  pkt_open_inner
 		iv         []byte
-		line       []byte
+		line_id    []byte
+		line       *line_t
 		sig        []byte
 		hashname   string
 		ecpub_data []byte
@@ -185,9 +203,7 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 		aes_key_2  []byte
 		at         time.Time
 		now        time.Time
-		aes_blk    cipher.Block
-		aes_stream cipher.Stream
-		aes_r      *cipher.StreamReader
+		icmd       command_i
 		outer_body = make([]byte, 1500)
 		inner_body = make([]byte, 1500)
 	)
@@ -195,39 +211,46 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	// decode the packet
 	outer_body, err = parse_packet(data, &outer_pkt, outer_body)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	if outer_pkt.Type != "open" {
-		return errors.New("open: type is not `open`")
+		cmd.log_err(errors.New("open: type is not `open`"))
+		return nil // drop
 	}
 
 	// decode IV
 	iv, err = hex.DecodeString(outer_pkt.Iv)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// decode Sig
 	sig, err = base64.StdEncoding.DecodeString(outer_pkt.Sig)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// STEP 1:
 	// - Using your private key and OAEP padding, decrypt the open param,
 	//   extracting the ECC public key (in uncompressed form) of the sender
-	ecpub_data, err = hex.DecodeString(outer_pkt.Open)
+	ecpub_data, err = base64.StdEncoding.DecodeString(outer_pkt.Open)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 	ecpub_data, err = rsa.DecryptOAEP(sha1.New(), rand.Reader, s.identity, ecpub_data, nil)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 	ecpub_key, err = ecdh.UnmarshalPublic(ecpub_data)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// STEP 2:
@@ -239,25 +262,29 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	//   AES-256-CTR algorithm.
 	data, err = dec_AES_256_CTR(aes_key_1, iv, outer_body)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// parse inner pkt
 	inner_body, err = parse_packet(data, &inner_pkt, inner_body[:0])
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// decode Line
-	line, err = hex.DecodeString(inner_pkt.Line)
+	line_id, err = hex.DecodeString(inner_pkt.Line)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// STEP 4:
 	// - Verify the to value of the inner packet matches your hashname
 	if inner_pkt.To != s.hashname {
-		return errors.New("open: hashname mismatch")
+		cmd.log_err(errors.New("open: hashname mismatch"))
+		return nil // drop
 	}
 
 	// STEP 5:
@@ -265,7 +292,8 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	//   (binary DER format)
 	rsapub_key, err = dec_DER_RSA(inner_body)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// STEP 6:
@@ -279,21 +307,31 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	at = time.Unix(inner_pkt.At, 0)
 	now = time.Now()
 	if at.Before(now.Add(-s.open_delta)) || at.After(now.Add(s.open_delta)) {
-		return errors.New("open: open.at is too far of")
+		cmd.log_err(errors.New("open: open.at is too far of"))
+		return nil // drop
 	}
-	// TODO: verify newer than other open requests
+	if line := s.i_open[hashname]; line != nil && line.at.After(at) {
+		cmd.log_err(errors.New("open: open.at is older than another line"))
+		return nil // drop
+	}
+	line = s.o_open[hashname]
+	if line == nil {
+		line = &line_t{_switch: s}
+		s.i_open[hashname] = line
+	}
 
 	// STEP 8:
 	// - SHA-256 hash the ECC public key with the 16 bytes derived from the inner
 	//   line hex value to generate an new AES key
-	aes_key_2 = hash_SHA256(ecpub_data, line)
+	aes_key_2 = hash_SHA256(ecpub_data, line_id)
 
 	// STEP 9:
 	// - Decrypt the outer packet sig value using AES-256-CTR with the key from #8
 	//   and the same IV value as #3.
 	sig, err = dec_AES_256_CTR(aes_key_2, iv, sig)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
 
 	// STEP 10:
@@ -301,16 +339,32 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	//   in #9) of the original (encrypted) form of the inner packet
 	err = rsa.VerifyPKCS1v15(rsapub_key, crypto.SHA256, hash_SHA256(outer_body), sig)
 	if err != nil {
-		return err
+		cmd.log_err(err)
+		return nil // drop
 	}
+
+	// ====> Open packet is now verified <========================================
+
+	line.remote_eckey = ecpub_key
+	line.LineIn = line_id
 
 	// STEP 11:
 	// - If an open packet has not already been sent to this hashname, do so by
 	//   creating one following the steps above
-	if !l.can_activate() {
-		err = l.send_open_pkt(hashname, rsapub_key)
+	if !line.can_activate() {
+		s.known_peers[hashname] = &peer_t{hashname, cmd.pkt.addr, rsapub_key}
+
+		reply := make(chan error, 1)
+		icmd = &cmd_open_o{s.known_peers[hashname], reply}
+		err = icmd.exec(s)
 		if err != nil {
-			return err
+			cmd.log_err(err)
+			return nil // drop
+		}
+		err = <-reply
+		if err != nil {
+			cmd.log_err(err)
+			return nil // drop
 		}
 	}
 
@@ -318,11 +372,12 @@ func (cmd *cmd_open_i) handle_open_pkt(s *Switch) error {
 	// - After sending your own open packet in response, you may now generate a
 	//   line shared secret using the received and sent ECC public keys and
 	//   Elliptic Curve Diffie-Hellman (ECDH).
-	l.remote_eckey = ecpub_key
-	l.LineIn = line
-	err = l.activate()
-	if err != nil {
-		return err
+	if line.can_activate() {
+		err = line.activate()
+		if err != nil {
+			cmd.log_err(err)
+			return nil // drop
+		}
 	}
 
 	return nil

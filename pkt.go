@@ -40,7 +40,7 @@ func form_packet(header interface{}, body []byte) ([]byte, error) {
 
 func parse_packet(in []byte, header interface{}, body []byte) ([]byte, error) {
 	l := int(binary.BigEndian.Uint16(in[:2]))
-	body_len := len(in) - l + 2
+	body_len := len(in) - (l + 2)
 
 	err := json.NewDecoder(bytes.NewReader(in[2 : 2+l])).Decode(header)
 	if err != nil {

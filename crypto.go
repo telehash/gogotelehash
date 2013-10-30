@@ -4,13 +4,23 @@ import (
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/asn1"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"io"
 )
+
+func make_rand(n int) ([]byte, error) {
+	b := make([]byte, n)
+	_, err := rand.Read(b)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
 
 func hash_SHA256(data ...[]byte) []byte {
 	h := sha256.New()
@@ -69,11 +79,6 @@ func enc_AES_256_CTR(key, iv, data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	err = aes_w.Close()
-	if err != nil {
-		return nil, err
-	}
-
 	return buf.Bytes(), nil
 }
 
@@ -87,17 +92,20 @@ func hashname_from_RSA(pub *rsa.PublicKey) (string, error) {
 }
 
 func enc_DER_RSA(pub *rsa.PublicKey) ([]byte, error) {
-	return asn1.Marshal(pub)
+	return asn1.Marshal(*pub)
 }
 
 func dec_DER_RSA(der []byte) (*rsa.PublicKey, error) {
 	pub := &rsa.PublicKey{}
-	rest, err := asn1.Unmarshal(der, pub)
+	_, err := asn1.Unmarshal(der, pub)
 	if err != nil {
 		return nil, err
 	}
-	if len(rest) != 0 {
-		return nil, errors.New("der: unexpexted data at end of der.")
+	if pub.N.Sign() <= 0 {
+		return nil, fmt.Errorf("telehash: RSA modulus is not a positive number")
+	}
+	if pub.E <= 0 {
+		return nil, fmt.Errorf("telehash: RSA public exponent is not a positive number")
 	}
 	return pub, nil
 }

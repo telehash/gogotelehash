@@ -1,11 +1,15 @@
 package telehash
 
 import (
+	"encoding/hex"
 	"github.com/gokyle/ecdh"
+	"time"
 )
 
-type Line struct {
+type line_t struct {
 	_switch      *Switch
+	peer         *peer_t
+	at           time.Time
 	LineIn       []byte
 	LineOut      []byte
 	local_eckey  *ecdh.PrivateKey
@@ -14,11 +18,11 @@ type Line struct {
 	dec_key      []byte
 }
 
-func (l *Line) can_activate() bool {
+func (l *line_t) can_activate() bool {
 	return l.LineIn != nil && l.LineOut != nil && l.local_eckey != nil && l.remote_eckey != nil
 }
 
-func (l *Line) activate() error {
+func (l *line_t) activate() error {
 	sk, err := l.local_eckey.GenerateShared(l.remote_eckey, ecdh.MaxSharedKeyLength(l.remote_eckey))
 	if err != nil {
 		return err
@@ -26,6 +30,12 @@ func (l *Line) activate() error {
 
 	l.enc_key = hash_SHA256(sk, l.LineOut, l.LineIn)
 	l.dec_key = hash_SHA256(sk, l.LineIn, l.LineOut)
+
+	delete(l._switch.o_open, l.peer.hashname)
+	delete(l._switch.i_open, l.peer.hashname)
+	l._switch.lines[hex.EncodeToString(l.LineOut)] = l
+
+	Log.Debugf("line opened: %s -> %s", l._switch.hashname, l.peer.hashname)
 
 	return nil
 }
