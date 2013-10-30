@@ -1,52 +1,103 @@
 package telehash
 
-import "crypto"
-import "crypto/elliptic"
-import "crypto/rsa"
-import "crypto/sha1"
-import "crypto/sha256"
-import "crypto/rand"
-import "github.com/gokyle/ecdh"
+import (
+	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rsa"
+	"crypto/sha256"
+	"encoding/asn1"
+	"encoding/hex"
+	"errors"
+	"io"
+)
 
-func EncryptWithRSA(pub *rsa.PublicKey, cleartext []byte) (ciphertext []byte, err error) {
-	// Use RSA-OEAP w/ SHA1 as hash and no value for the label
-	return rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, cleartext, nil)
-}
-
-func DecryptWithRSA(priv *rsa.PrivateKey, ciphertext []byte) (cleartext []byte, err error) {
-	return rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, ciphertext, nil)
-}
-
-func SignWithRSA(priv *rsa.PrivateKey, data []byte) (sig []byte, err error) {
-	// Sign the SHA-256 hash using PKCS1v15 (RSA PKCS#1 v1.5)
-	return rsa.SignPKCS1v15(rand.Reader, priv, crypto.SHA256, sha256Hash(data))
-}
-
-func IsSignatureValid(pub *rsa.PublicKey, data []byte, sig []byte) bool {
-	err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sha256Hash(data), sig)
-	return err == nil
-}
-
-func GenerateFingerprint(pub *ecdh.PublicKey) []byte {
-	// Construct a SHA-256 fingerprint of the ECC public key. The key should
-	// be marshalled into uncompressed point form, per 4.3.6, ANSI X.9.62
-	return sha256Hash(elliptic.Marshal(pub.Curve, pub.X, pub.Y))
-}
-
-func GenerateSharedKey(pub *ecdh.PublicKey) (key []byte, err error) {
-	return
-}
-
-func decryptWithAES(key []byte, iv []byte, ciphertext []byte) (cleartext []byte, err error) {
-	return
-}
-
-func derToPubKey(data []byte) (key *rsa.PublicKey, err error) {
-	return
-}
-
-func sha256Hash(data []byte) []byte {
+func hash_SHA256(data ...[]byte) []byte {
 	h := sha256.New()
-	h.Write(data)
+	for _, c := range data {
+		h.Write(c)
+	}
 	return h.Sum(nil)
+}
+
+func dec_AES_256_CTR(key, iv, data []byte) ([]byte, error) {
+	var (
+		err        error
+		buf_data   = make([]byte, 0, 1500)
+		buf        = bytes.NewBuffer(buf_data)
+		aes_blk    cipher.Block
+		aes_stream cipher.Stream
+		aes_r      *cipher.StreamReader
+	)
+
+	aes_blk, err = aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	aes_stream = cipher.NewCTR(aes_blk, iv)
+	aes_r = &cipher.StreamReader{S: aes_stream, R: bytes.NewReader(data)}
+
+	_, err = io.Copy(buf, aes_r)
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func enc_AES_256_CTR(key, iv, data []byte) ([]byte, error) {
+	var (
+		err        error
+		buf_data   = make([]byte, 0, 1500)
+		buf        = bytes.NewBuffer(buf_data)
+		aes_blk    cipher.Block
+		aes_stream cipher.Stream
+		aes_w      *cipher.StreamWriter
+	)
+
+	aes_blk, err = aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+
+	aes_stream = cipher.NewCTR(aes_blk, iv)
+	aes_w = &cipher.StreamWriter{S: aes_stream, W: buf}
+
+	_, err = aes_w.Write(data)
+	if err != nil {
+		return nil, err
+	}
+
+	err = aes_w.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func hashname_from_RSA(pub *rsa.PublicKey) (string, error) {
+	der, err := enc_DER_RSA(pub)
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(hash_SHA256(der)), nil
+}
+
+func enc_DER_RSA(pub *rsa.PublicKey) ([]byte, error) {
+	return asn1.Marshal(pub)
+}
+
+func dec_DER_RSA(der []byte) (*rsa.PublicKey, error) {
+	pub := &rsa.PublicKey{}
+	rest, err := asn1.Unmarshal(der, pub)
+	if err != nil {
+		return nil, err
+	}
+	if len(rest) != 0 {
+		return nil, errors.New("der: unexpexted data at end of der.")
+	}
+	return pub, nil
 }
