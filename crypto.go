@@ -8,7 +8,6 @@ import "crypto/sha256"
 import "crypto/rand"
 import "github.com/gokyle/ecdh"
 
-
 func EncryptWithRSA(pub *rsa.PublicKey, cleartext []byte) (ciphertext []byte, err error) {
 	// Use RSA-OEAP w/ SHA1 as hash and no value for the label
 	return rsa.EncryptOAEP(sha1.New(), rand.Reader, pub, cleartext, nil)
@@ -42,7 +41,7 @@ func decryptWithAES(key []byte, iv []byte, ciphertext []byte) (cleartext []byte,
 	return
 }
 
-func derToPubKey(data[] byte) (key *rsa.PublicKey, err error) {
+func derToPubKey(data []byte) (key *rsa.PublicKey, err error) {
 	return
 }
 
