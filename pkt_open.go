@@ -13,20 +13,6 @@ import (
 	"time"
 )
 
-type pkt_open struct {
-	Type string `json:"type"`
-	Open string `json:"open"`
-	Iv   string `json:"iv"`
-	Sig  string `json:"sig"`
-}
-
-type pkt_open_inner struct {
-	To     string `json:"to"`
-	At     int64  `json:"at"`
-	Line   string `json:"line"`
-	Family string `json:"family,omitempty"`
-}
-
 // Outbound open packet
 type cmd_open_o struct {
 	peer  *peer_t
@@ -103,11 +89,16 @@ func (cmd *cmd_open_o) exec(s *Switch) error {
 			return nil
 		}
 		line.at = time.Now()
-		inner_pkt, err = form_packet(pkt_open_inner{
-			To:   cmd.peer.hashname,
-			At:   line.at.Unix(),
-			Line: hex.EncodeToString(line_id),
-		}, rsapub_der)
+
+		pkt := pkt_t{
+			hdr: pkt_hdr_t{
+				To:   cmd.peer.hashname,
+				At:   line.at.Unix(),
+				Line: hex.EncodeToString(line_id),
+			},
+			body: rsapub_der,
+		}
+		inner_pkt, err = pkt.format_pkt()
 		if err != nil {
 			cmd.log_err(err)
 			return nil
@@ -152,12 +143,16 @@ func (cmd *cmd_open_o) exec(s *Switch) error {
 	{ // STEP 9:
 		// - Form the outer packet containing the open type, open param, the generated
 		//   iv, and the sig value.
-		pkt, err = form_packet(pkt_open{
-			Type: "open",
-			Open: base64.StdEncoding.EncodeToString(open),
-			Sig:  base64.StdEncoding.EncodeToString(outer_sig),
-			Iv:   hex.EncodeToString(iv),
-		}, inner_pkt)
+		opkt := pkt_t{
+			hdr: pkt_hdr_t{
+				Type: "open",
+				Open: base64.StdEncoding.EncodeToString(open),
+				Sig:  base64.StdEncoding.EncodeToString(outer_sig),
+				Iv:   hex.EncodeToString(iv),
+			},
+			body: inner_pkt,
+		}
+		pkt, err = opkt.format_pkt()
 		if err != nil {
 			cmd.log_err(err)
 			return nil
@@ -177,7 +172,7 @@ func (cmd *cmd_open_o) exec(s *Switch) error {
 
 // Inbound open packet
 type cmd_open_i struct {
-	pkt pkt_udp_t
+	pkt *pkt_t
 }
 
 func (cmd *cmd_open_i) log_err(err error) {
@@ -187,10 +182,10 @@ func (cmd *cmd_open_i) log_err(err error) {
 // See https://github.com/telehash/telehash.org/blob/feb3421b36a03e97f395f014a494f5dc90695f04/protocol.md#packet-processing-1
 func (cmd *cmd_open_i) exec(s *Switch) error {
 	var (
-		data       = cmd.pkt.data
+		opkt       = cmd.pkt
+		ipkt       *pkt_t
 		err        error
-		outer_pkt  pkt_open
-		inner_pkt  pkt_open_inner
+		data       []byte
 		iv         []byte
 		line_id    []byte
 		line       *line_t
@@ -204,31 +199,22 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 		at         time.Time
 		now        time.Time
 		icmd       command_i
-		outer_body = make([]byte, 1500)
-		inner_body = make([]byte, 1500)
 	)
 
-	// decode the packet
-	outer_body, err = parse_packet(data, &outer_pkt, outer_body)
-	if err != nil {
-		cmd.log_err(err)
-		return nil // drop
-	}
-
-	if outer_pkt.Type != "open" {
+	if opkt.hdr.Type != "open" {
 		cmd.log_err(errors.New("open: type is not `open`"))
 		return nil // drop
 	}
 
 	// decode IV
-	iv, err = hex.DecodeString(outer_pkt.Iv)
+	iv, err = hex.DecodeString(opkt.hdr.Iv)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
 	}
 
 	// decode Sig
-	sig, err = base64.StdEncoding.DecodeString(outer_pkt.Sig)
+	sig, err = base64.StdEncoding.DecodeString(opkt.hdr.Sig)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
@@ -237,7 +223,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	// STEP 1:
 	// - Using your private key and OAEP padding, decrypt the open param,
 	//   extracting the ECC public key (in uncompressed form) of the sender
-	ecpub_data, err = base64.StdEncoding.DecodeString(outer_pkt.Open)
+	ecpub_data, err = base64.StdEncoding.DecodeString(opkt.hdr.Open)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
@@ -260,21 +246,21 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	// STEP 3:
 	// - Decrypt the inner packet using the generated key and IV value with the
 	//   AES-256-CTR algorithm.
-	data, err = dec_AES_256_CTR(aes_key_1, iv, outer_body)
+	data, err = dec_AES_256_CTR(aes_key_1, iv, opkt.body)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
 	}
 
 	// parse inner pkt
-	inner_body, err = parse_packet(data, &inner_pkt, inner_body[:0])
+	ipkt, err = parse_pkt(data, opkt.addr)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
 	}
 
 	// decode Line
-	line_id, err = hex.DecodeString(inner_pkt.Line)
+	line_id, err = hex.DecodeString(ipkt.hdr.Line)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
@@ -282,7 +268,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 
 	// STEP 4:
 	// - Verify the to value of the inner packet matches your hashname
-	if inner_pkt.To != s.hashname {
+	if ipkt.hdr.To != s.hashname {
 		cmd.log_err(errors.New("open: hashname mismatch"))
 		return nil // drop
 	}
@@ -290,7 +276,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	// STEP 5:
 	// - Extract the RSA public key of the sender from the inner packet BODY
 	//   (binary DER format)
-	rsapub_key, err = dec_DER_RSA(inner_body)
+	rsapub_key, err = dec_DER_RSA(ipkt.body)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
@@ -298,13 +284,13 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 
 	// STEP 6:
 	// - SHA-256 hash the RSA public key to derive the sender's hashname
-	hashname = hex.EncodeToString(hash_SHA256(inner_body))
+	hashname = hex.EncodeToString(hash_SHA256(ipkt.body))
 
 	// STEP 7:
 	// - Verify the at timestamp is both within a reasonable amount of time to
 	//   account for network delays and clock skew, and is newer than any other
 	//   'open' requests received from the sender.
-	at = time.Unix(inner_pkt.At, 0)
+	at = time.Unix(ipkt.hdr.At, 0)
 	now = time.Now()
 	if at.Before(now.Add(-s.open_delta)) || at.After(now.Add(s.open_delta)) {
 		cmd.log_err(errors.New("open: open.at is too far of"))
@@ -337,7 +323,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	// STEP 10:
 	// - Using the RSA public key of the sender, verify the signature (decrypted
 	//   in #9) of the original (encrypted) form of the inner packet
-	err = rsa.VerifyPKCS1v15(rsapub_key, crypto.SHA256, hash_SHA256(outer_body), sig)
+	err = rsa.VerifyPKCS1v15(rsapub_key, crypto.SHA256, hash_SHA256(opkt.body), sig)
 	if err != nil {
 		cmd.log_err(err)
 		return nil // drop
@@ -352,7 +338,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	// - If an open packet has not already been sent to this hashname, do so by
 	//   creating one following the steps above
 	if !line.can_activate() {
-		s.known_peers[hashname] = &peer_t{hashname, cmd.pkt.addr, rsapub_key}
+		s.known_peers[hashname] = make_peer(s, hashname, opkt.addr, rsapub_key)
 
 		reply := make(chan error, 1)
 		icmd = &cmd_open_o{s.known_peers[hashname], reply}

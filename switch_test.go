@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 	"github.com/fd/go-util/log"
 	"runtime"
 	"testing"
@@ -26,27 +27,50 @@ func TestOpen(t *testing.T) {
 
 	go a.Run()
 	go b.Run()
-
 	defer a.Close()
 	defer b.Close()
 
-	hashname, err := a.RegisterPeer("127.0.0.1:4001", &key_b.PublicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	go func() {
 
-	err = a.Open(hashname)
-	if err != nil {
-		t.Fatal(err)
-	}
+		hashname, err := a.RegisterPeer("127.0.0.1:4001", &key_b.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	time.Sleep(1 * time.Second)
+		channel, err := a.Open(hashname, "_greetings")
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	for _, l := range a.lines {
-		l.send_pkt([]byte("hello world"))
-	}
+		defer channel.Close()
 
-	time.Sleep(1 * time.Second)
+		for i := 0; i < 1000; i++ {
+			channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
+		}
+	}()
+
+	go func() {
+
+		channel := b.Accept()
+		defer channel.Close()
+
+		msg, err := channel.Receive(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		Log.Infof("msg=%q", msg)
+
+		for i := 0; i < 1000; i++ {
+			msg, err = channel.Receive(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			Log.Infof("msg=%q", msg)
+		}
+	}()
+
+	time.Sleep(5 * time.Second)
 
 	if a.err != nil {
 		t.Fatal(a.err)

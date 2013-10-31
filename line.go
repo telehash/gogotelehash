@@ -34,6 +34,7 @@ func (l *line_t) activate() error {
 	delete(l._switch.o_open, l.peer.hashname)
 	delete(l._switch.i_open, l.peer.hashname)
 	l._switch.lines[hex.EncodeToString(l.LineOut)] = l
+	l.peer.set_line(l)
 
 	Log.Debugf("line opened: %s -> %s", l._switch.hashname, l.peer.hashname)
 
