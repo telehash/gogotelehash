@@ -2,7 +2,6 @@ package telehash
 
 import (
 	"crypto/rsa"
-	"encoding/hex"
 	"errors"
 	"net"
 	"runtime"
@@ -83,32 +82,6 @@ func (s *Switch) RegisterPeer(addr string, pub *rsa.PublicKey) (string, error) {
 	}
 
 	return hashname, nil
-}
-
-func (s *Switch) Open(hashname, pkt_type string) (*Channel, error) {
-	peer := s.lookup_peer(hashname)
-	if peer == nil {
-		return nil, errors.New("unknown peer: " + hashname)
-	}
-
-	id, err := make_rand(16)
-	if err != nil {
-		return nil, err
-	}
-
-	channel := make_channel(peer)
-	channel.id = hex.EncodeToString(id)
-	s.channels[channel.id] = channel
-
-	go channel.control_loop()
-
-	channel.send(&pkt_t{
-		hdr: pkt_hdr_t{
-			Type: pkt_type,
-		},
-	})
-
-	return channel, nil
 }
 
 func (s *Switch) open_line(hashname string) error {

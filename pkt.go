@@ -29,6 +29,8 @@ type pkt_hdr_t struct {
 	Miss   []int           `json:"miss,omitempty"`
 	End    bool            `json:"end,omitempty"`
 	Err    string          `json:"err,omitempty"`
+	Seek   string          `json:"seek,omitempty"`
+	See    []string        `json:"see,omitempty"`
 	Custom json.RawMessage `json:"_,omitempty"`
 }
 

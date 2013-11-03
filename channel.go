@@ -1,7 +1,9 @@
 package telehash
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"time"
 )
 
@@ -21,15 +23,46 @@ type Channel struct {
 
 	readable_pkt *pkt_t
 
-	i_queue  chan *pkt_t
-	s_queue  chan channel_command_i
-	r_queue  chan *pkt_t
-	a_ticker *time.Ticker
-	need_ack bool
+	i_queue    chan *pkt_t
+	s_queue    chan channel_command_i
+	r_queue    chan *pkt_t
+	a_ticker   *time.Ticker
+	r_deadline *time.Timer
+	need_ack   bool
 }
 
 type channel_command_i interface {
 	exec(c *Channel)
+}
+
+func (s *Switch) Open(hashname, pkt_type string) (*Channel, error) {
+	return s.open_channel(hashname, &pkt_t{
+		hdr: pkt_hdr_t{
+			Type: pkt_type,
+		},
+	})
+}
+
+func (s *Switch) open_channel(hashname string, pkt *pkt_t) (*Channel, error) {
+	peer := s.lookup_peer(hashname)
+	if peer == nil {
+		return nil, errors.New("unknown peer: " + hashname)
+	}
+
+	id, err := make_rand(16)
+	if err != nil {
+		return nil, err
+	}
+
+	channel := make_channel(peer)
+	channel.id = hex.EncodeToString(id)
+	s.channels[channel.id] = channel
+
+	go channel.control_loop()
+
+	channel.send(pkt)
+
+	return channel, nil
 }
 
 func make_channel(peer *peer_t) *Channel {
@@ -42,7 +75,10 @@ func make_channel(peer *peer_t) *Channel {
 		r_queue:      make(chan *pkt_t),
 		s_queue:      make(chan channel_command_i),
 		a_ticker:     time.NewTicker(250 * time.Microsecond),
+		r_deadline:   time.NewTimer(10 * time.Second),
 	}
+
+	c.r_deadline.Stop()
 
 	return c
 }
@@ -79,6 +115,15 @@ func (c *Channel) control_loop() {
 		}
 
 		select {
+		case <-c.r_deadline.C:
+			c.handle_pkt(&pkt_t{
+				hdr: pkt_hdr_t{
+					C:   c.id,
+					Seq: c.rcv_seq_next,
+					End: true,
+					Err: "timeout",
+				},
+			})
 		case <-a_queue:
 			c.send_ack()
 		case r_queue <- c.readable_pkt:
@@ -98,6 +143,10 @@ func (c *Channel) control_loop() {
 			cmd.exec(c)
 		}
 	}
+}
+
+func (c *Channel) SetReceiveDeadline(deadline time.Time) {
+	c.r_deadline.Reset(time.Now().Sub(deadline))
 }
 
 func (c *Channel) Send(hdr interface{}, body []byte) error {
