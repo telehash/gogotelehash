@@ -46,8 +46,7 @@ func (l *line_t) send_pkt(ipkt *pkt_t) error {
 		return err
 	}
 
-	l._switch.o_queue <- pkt_udp_t{l.peer.addr, pkt}
-	return nil
+	return l._switch.conn.send(l.peer.addr, pkt)
 }
 
 func (l *line_t) handle_pkt(opkt *pkt_t) {

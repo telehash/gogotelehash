@@ -168,7 +168,11 @@ func (cmd *cmd_open_o) exec(s *Switch) error {
 
 	// Send packet pkt
 	s.o_open[cmd.peer.hashname] = line
-	s.o_queue <- pkt_udp_t{cmd.peer.addr, pkt}
+	err = s.conn.send(cmd.peer.addr, pkt)
+	if err != nil {
+		cmd.log_err(err)
+		return nil
+	}
 
 	close(cmd.reply)
 	return nil

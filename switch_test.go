@@ -17,23 +17,40 @@ func init() {
 func TestOpen(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
+	greetings := HandlerFunc(func(c *Channel) {
+		msg, err := c.Receive(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		Log.Infof("msg=%q", msg)
+
+		for i := 0; i < 1000; i++ {
+			msg, err = c.Receive(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			Log.Infof("msg=%q", msg)
+		}
+	})
+
 	var (
 		key_a = make_key()
-		a     = make_switch("127.0.0.1:4000", key_a)
+		a     = make_switch("127.0.0.1:4000", key_a, nil)
 
 		key_b = make_key()
-		b     = make_switch("127.0.0.1:4001", key_b)
+		b     = make_switch("127.0.0.1:4001", key_b, greetings)
 
 		key_c = make_key()
-		c     = make_switch("127.0.0.1:4002", key_c)
+		c     = make_switch("127.0.0.1:4002", key_c, nil)
 	)
 
-	go a.Run()
-	go b.Run()
-	go c.Run()
-	defer a.Close()
-	defer b.Close()
-	defer c.Close()
+	a.Start()
+	b.Start()
+	c.Start()
+	defer a.Stop()
+	defer b.Stop()
+	defer c.Stop()
 
 	go func() {
 
@@ -50,60 +67,14 @@ func TestOpen(t *testing.T) {
 		defer channel.Close()
 
 		for i := 0; i < 1000; i++ {
-			channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
-		}
-	}()
-
-	go func() {
-
-		channel := b.Accept()
-		defer channel.Close()
-
-		msg, err := channel.Receive(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		Log.Infof("msg=%q", msg)
-
-		for i := 0; i < 1000; i++ {
-			msg, err = channel.Receive(nil)
+			err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)
 			}
-
-			Log.Infof("msg=%q", msg)
 		}
-	}()
-
-	go func() {
-		time.Sleep(1 * time.Second)
-
-		hashname, err := c.RegisterPeer("127.0.0.1:4001", &key_b.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		channel, err := c.Open(hashname, "_c")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		defer channel.Close()
-
-		Log.Infof("seek=%s see=%+v", c.hashname, c.Seek(c.hashname, 12))
 	}()
 
 	time.Sleep(5 * time.Second)
-
-	if a.err != nil {
-		t.Fatal(a.err)
-	}
-	if b.err != nil {
-		t.Fatal(b.err)
-	}
-	if c.err != nil {
-		t.Fatal(c.err)
-	}
 }
 
 func make_key() *rsa.PrivateKey {
@@ -114,8 +85,8 @@ func make_key() *rsa.PrivateKey {
 	return key
 }
 
-func make_switch(addr string, key *rsa.PrivateKey) *Switch {
-	s, err := NewSwitch(addr, key)
+func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
+	s, err := NewSwitch(addr, key, h)
 	if err != nil {
 		panic(err)
 	}

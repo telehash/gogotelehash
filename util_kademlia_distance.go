@@ -5,10 +5,10 @@ import (
 	"sort"
 )
 
-func (s *Switch) find_closest_hashnames(t string, n int) []string {
-	hashnames := make([]string, 0, len(s.known_peers))
+func (h *peer_handler) find_closest_hashnames(t string, n int) []string {
+	hashnames := make([]string, 0, len(h.peers))
 
-	for hn, peer := range s.known_peers {
+	for hn, peer := range h.peers {
 		if peer.pubkey == nil {
 			continue
 		}
@@ -16,7 +16,7 @@ func (s *Switch) find_closest_hashnames(t string, n int) []string {
 		hashnames = append(hashnames, hn)
 	}
 
-	SortByDistance(s.hashname, hashnames)
+	SortByDistance(h.get_local_hashname(), hashnames)
 
 	if len(hashnames) > n {
 		hashnames = hashnames[:n]
