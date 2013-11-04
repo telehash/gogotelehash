@@ -40,6 +40,10 @@ func (cmd *cmd_open_o) exec(s *Switch) error {
 		line_id    []byte
 	)
 
+	if cmd.peer.pubkey == nil {
+		return errors.New("Unknown pub key")
+	}
+
 	line = s.i_open[cmd.peer.hashname]
 	if line == nil {
 		line = &line_t{_switch: s}
@@ -302,7 +306,7 @@ func (cmd *cmd_open_i) exec(s *Switch) error {
 	}
 	line = s.o_open[hashname]
 	if line == nil {
-		line = &line_t{_switch: s}
+		line = &line_t{_switch: s, at: at}
 		s.i_open[hashname] = line
 	}
 

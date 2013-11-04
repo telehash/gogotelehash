@@ -23,12 +23,17 @@ func TestOpen(t *testing.T) {
 
 		key_b = make_key()
 		b     = make_switch("127.0.0.1:4001", key_b)
+
+		key_c = make_key()
+		c     = make_switch("127.0.0.1:4002", key_c)
 	)
 
 	go a.Run()
 	go b.Run()
+	go c.Run()
 	defer a.Close()
 	defer b.Close()
+	defer c.Close()
 
 	go func() {
 
@@ -70,6 +75,24 @@ func TestOpen(t *testing.T) {
 		}
 	}()
 
+	go func() {
+		time.Sleep(1 * time.Second)
+
+		hashname, err := c.RegisterPeer("127.0.0.1:4001", &key_b.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		channel, err := c.Open(hashname, "_c")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		defer channel.Close()
+
+		Log.Infof("seek=%s see=%+v", c.hashname, c.Seek(c.hashname, 12))
+	}()
+
 	time.Sleep(5 * time.Second)
 
 	if a.err != nil {
@@ -77,6 +100,9 @@ func TestOpen(t *testing.T) {
 	}
 	if b.err != nil {
 		t.Fatal(b.err)
+	}
+	if c.err != nil {
+		t.Fatal(c.err)
 	}
 }
 

@@ -98,8 +98,7 @@ func (l *line_t) handle_pkt(opkt *pkt_t) {
 		channel.rcv_init_ack = true
 		l._switch.channels[channel.id] = channel
 		channel.i_queue <- ipkt
-		// pass to seek command
-		// auto accept channel
+		l._switch.handle_seek(channel)
 
 	case "peer": // make a Peer channel
 		channel := make_channel(l.peer)

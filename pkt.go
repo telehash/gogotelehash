@@ -91,6 +91,7 @@ func parse_pkt(in []byte, addr *net.UDPAddr) (*pkt_t, error) {
 
 	// determin body length
 	body_len = len(in) - (hdr_len + 2)
+	Log.Debugf("pkt-len=%d hdr-len=%d body-len=%d", len(in), binary.BigEndian.Uint16(in[:2]), body_len)
 	if body_len < 0 {
 		return nil, fmt.Errorf("pkt is too short")
 	}
