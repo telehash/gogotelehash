@@ -250,6 +250,7 @@ func (h *peer_handler) send_peer_cmd(hashname string) error {
 		hdr: pkt_hdr_t{
 			Type: "peer",
 			Peer: to.hashname,
+			End:  true,
 		},
 	})
 	defer conn_ch.close()
@@ -291,6 +292,7 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 			Type: "connect",
 			IP:   sender.addr.IP.String(),
 			Port: sender.addr.Port,
+			End:  true,
 		},
 		body: pubkey,
 	})
