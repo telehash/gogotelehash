@@ -239,6 +239,13 @@ func (h *peer_handler) send_peer_cmd(hashname string) error {
 		return fmt.Errorf("peer has unknown via: %s", hashname)
 	}
 
+	if to.addr != nil {
+		h.conn.conn.conn.send(&pkt_t{
+			hdr:  pkt_hdr_t{Type: "+ping"},
+			addr: to.addr,
+		})
+	}
+
 	conn_ch, err := h.conn.open_channel(via.hashname, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "peer",
