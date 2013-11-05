@@ -223,8 +223,6 @@ func (h *line_handler) send(to string, ipkt *pkt_t) error {
 		addr: line.addr,
 	}
 
-	line.touch()
-
 	// Log.Debugf("line[%s:%s]: snd %+v", line.snd_id[:8], line.rcv_id[:8], ipkt)
 	return h.conn.send(&opkt)
 }
