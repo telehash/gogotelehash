@@ -15,10 +15,16 @@ import (
 
 func make_rand(n int) ([]byte, error) {
 	b := make([]byte, n)
-	_, err := rand.Read(b)
-	if err != nil {
-		return nil, err
+	w := b
+
+	for len(w) != 0 {
+		r, err := rand.Read(w)
+		if err != nil {
+			return nil, err
+		}
+		w = w[r:]
 	}
+
 	return b, nil
 }
 

@@ -1,7 +1,6 @@
 package telehash
 
 import (
-	"errors"
 	"net"
 	"strings"
 	"time"
@@ -24,8 +23,6 @@ type net_handler_rcv struct {
 	data []byte
 	err  error
 }
-
-var ErrUDPConnClosed = errors.New("upd: connection closed")
 
 func (h *net_handler) reader_loop() {
 	var (

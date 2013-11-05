@@ -12,6 +12,7 @@ type channel_t struct {
 
 	id           string // id of the channel
 	peer         string // hashname of the peer
+	channel_type string // type of the channel
 	snd_init_pkt bool
 	snd_seq_next int
 	snd_in_flght int
@@ -34,17 +35,18 @@ type channel_t struct {
 }
 
 type channel_handler_iface interface {
-	ServeTelehash(channel *channel_t)
+	serve_telehash(channel *channel_t)
 }
 
 type channel_handler_func func(channel *channel_t)
 
-func (f channel_handler_func) ServeTelehash(channel *channel_t) {
+func (f channel_handler_func) serve_telehash(channel *channel_t) {
 	f(channel)
 }
 
 type channel_handler struct {
-	conn         *peer_handler
+	conn         *line_handler
+	peers        *peer_handler
 	channels     map[string]*channel_t
 	channels_mtx sync.Mutex
 	handler      channel_handler_iface
@@ -67,14 +69,15 @@ func (h *channel_handler) reader_loop() {
 	}
 }
 
-func channel_handler_open(addr string, prvkey *rsa.PrivateKey, handler channel_handler_iface) (*channel_handler, error) {
-	conn, err := peer_handler_open(addr, prvkey)
+func channel_handler_open(addr string, prvkey *rsa.PrivateKey, handler channel_handler_iface, peers *peer_handler) (*channel_handler, error) {
+	conn, err := line_handler_open(addr, prvkey, peers)
 	if err != nil {
 		return nil, err
 	}
 
 	h := &channel_handler{
 		conn:     conn,
+		peers:    peers,
 		channels: make(map[string]*channel_t),
 		handler:  handler,
 	}
@@ -86,10 +89,6 @@ func channel_handler_open(addr string, prvkey *rsa.PrivateKey, handler channel_h
 
 func (h *channel_handler) close() {
 	h.conn.close()
-}
-
-func (h *channel_handler) add_peer(addr string, pubkey *rsa.PublicKey) (string, error) {
-	return h.conn.add_peer(addr, pubkey)
 }
 
 func (h *channel_handler) open_channel(hashname string, pkt *pkt_t) (*channel_t, error) {
@@ -209,7 +208,7 @@ func (c *channel_t) control_loop() {
 }
 
 func (c *channel_t) SetReceiveDeadline(deadline time.Time) {
-	c.r_deadline.Reset(time.Now().Sub(deadline))
+	c.r_deadline.Reset(deadline.Sub(time.Now()))
 }
 
 func (c *channel_t) close() error {
@@ -400,6 +399,7 @@ func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
 func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
 	channel := h.make_channel(pkt.peer)
 	channel.id = pkt.hdr.C
+	channel.channel_type = pkt.hdr.Type
 	channel.snd_init_pkt = true
 	channel.rcv_init_ack = true
 	h.add_channel(channel)
@@ -420,5 +420,5 @@ func (c *channel_t) run_user_handler() {
 		}
 	}()
 
-	c.conn.handler.ServeTelehash(c)
+	c.conn.handler.serve_telehash(c)
 }

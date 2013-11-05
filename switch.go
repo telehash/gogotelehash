@@ -6,38 +6,44 @@ import (
 )
 
 type Switch struct {
-	conn    *channel_handler
-	addr    string
-	key     *rsa.PrivateKey
-	handler Handler
+	conn  *channel_handler
+	peers *peer_handler
+	addr  string
+	key   *rsa.PrivateKey
+	mux   *SwitchMux
 }
-
-type Handler interface {
-	ServeTelehash(ch *Channel)
-}
-
-type HandlerFunc func(*Channel)
 
 type Channel struct {
 	c *channel_t
 }
 
 func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, error) {
+	mux := NewSwitchMux()
+
+	mux.HandleFallback(handler)
+
 	s := &Switch{
-		addr:    addr,
-		key:     key,
-		handler: handler,
+		addr: addr,
+		key:  key,
+		mux:  mux,
 	}
 
 	return s, nil
 }
 
 func (s *Switch) Start() error {
-	conn, err := channel_handler_open(s.addr, s.key, channel_handler_func(s.handle_telehash))
+	peers, err := peer_handler_open(s.key, s.mux)
+	if err != nil {
+		return err
+	}
+	s.peers = peers
+
+	conn, err := channel_handler_open(s.addr, s.key, s.mux, s.peers)
 	if err != nil {
 		return err
 	}
 
+	peers.conn = conn
 	s.conn = conn
 	return nil
 }
@@ -47,8 +53,16 @@ func (s *Switch) Stop() error {
 	return nil
 }
 
+func (s *Switch) LocalHashname() string {
+	return s.peers.get_local_hashname()
+}
+
 func (s *Switch) RegisterPeer(addr string, key *rsa.PublicKey) (string, error) {
-	return s.conn.add_peer(addr, key)
+	return s.peers.add_peer("", addr, key)
+}
+
+func (s *Switch) Seek(hashname string, n int) []string {
+	return s.peers.seek(hashname, n)
 }
 
 func (s *Switch) Open(hashname, typ string) (*Channel, error) {
@@ -61,12 +75,6 @@ func (s *Switch) Open(hashname, typ string) (*Channel, error) {
 	}
 
 	return &Channel{channel}, nil
-}
-
-func (s *Switch) handle_telehash(ch *channel_t) {
-	if s.handler != nil {
-		s.handler.ServeTelehash(&Channel{ch})
-	}
 }
 
 func (c *Channel) Close() error {
@@ -103,8 +111,4 @@ func (c *Channel) Receive(hdr interface{}) (body []byte, err error) {
 	}
 
 	return pkt.body, nil
-}
-
-func (f HandlerFunc) ServeTelehash(ch *Channel) {
-	f(ch)
 }

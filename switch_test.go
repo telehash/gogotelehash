@@ -36,21 +36,16 @@ func TestOpen(t *testing.T) {
 
 	var (
 		key_a = make_key()
-		a     = make_switch("127.0.0.1:4000", key_a, nil)
+		a     = make_switch("0.0.0.0:4000", key_a, nil)
 
 		key_b = make_key()
-		b     = make_switch("127.0.0.1:4001", key_b, greetings)
-
-		key_c = make_key()
-		c     = make_switch("127.0.0.1:4002", key_c, nil)
+		b     = make_switch("0.0.0.0:4001", key_b, greetings)
 	)
 
 	a.Start()
 	b.Start()
-	c.Start()
 	defer a.Stop()
 	defer b.Stop()
-	defer c.Stop()
 
 	go func() {
 
@@ -74,7 +69,53 @@ func TestOpen(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
+}
+
+func TestSeek(t *testing.T) {
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	var (
+		key_a = make_key()
+		a     = make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong))
+
+		key_b = make_key()
+		b     = make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong))
+
+		key_c = make_key()
+		c     = make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong))
+	)
+
+	a.Start()
+	b.Start()
+	c.Start()
+	defer a.Stop()
+	defer b.Stop()
+	defer c.Stop()
+
+	go func() {
+		_, err := b.RegisterPeer("127.0.0.1:4000", &key_a.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		time.Sleep(100 * time.Millisecond)
+		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+	}()
+
+	go func() {
+		_, err := c.RegisterPeer("127.0.0.1:4000", &key_a.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		time.Sleep(100 * time.Millisecond)
+		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+	}()
+
+	time.Sleep(1 * time.Second)
 }
 
 func make_key() *rsa.PrivateKey {
@@ -91,4 +132,18 @@ func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
 		panic(err)
 	}
 	return s
+}
+
+func ping_pong(c *Channel) {
+	for {
+		body, err := c.Receive(nil)
+		if err != nil {
+			return
+		}
+
+		err = c.Send(nil, body)
+		if err != nil {
+			return
+		}
+	}
 }

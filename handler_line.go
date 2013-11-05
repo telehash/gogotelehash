@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/gokyle/ecdh"
 	"net"
 	"sync"
@@ -33,7 +34,7 @@ type line_t struct {
 
 type line_handler struct {
 	conn          *pkt_handler
-	hashname      string
+	peers         *peer_handler
 	key           *rsa.PrivateKey
 	snd_lines     map[string]*line_t // hashname -> line
 	rcv_lines     map[string]*line_t // line id  -> line
@@ -43,8 +44,6 @@ type line_handler struct {
 	shutdown      chan bool
 	max_time_skew time.Duration
 	lines_mtx     sync.RWMutex
-
-	new_peer_handler func(hashname string, addr *net.UDPAddr, pubkey *rsa.PublicKey)
 }
 
 type line_handler_snd_open struct {
@@ -87,27 +86,22 @@ func (h *line_handler) command_loop() {
 	}
 }
 
-func line_handler_open(addr string, prvkey *rsa.PrivateKey) (*line_handler, error) {
+func line_handler_open(addr string, prvkey *rsa.PrivateKey, peers *peer_handler) (*line_handler, error) {
 	conn, err := pkt_handler_open(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	hashname, err := hashname_from_RSA(&prvkey.PublicKey)
 	if err != nil {
 		return nil, err
 	}
 
 	h := &line_handler{
 		conn:          conn,
-		hashname:      hashname,
+		peers:         peers,
 		key:           prvkey,
 		snd_lines:     make(map[string]*line_t),
 		rcv_lines:     make(map[string]*line_t),
 		rcv:           make(chan *pkt_t),
 		rcv_open:      make(chan *pkt_t),
 		snd_open:      make(chan line_handler_snd_open),
-		max_time_skew: 1 * time.Second,
+		max_time_skew: 5 * time.Second,
 		shutdown:      make(chan bool),
 	}
 
@@ -117,19 +111,19 @@ func line_handler_open(addr string, prvkey *rsa.PrivateKey) (*line_handler, erro
 	return h, nil
 }
 
-func (h *line_handler) get_local_hashname() string {
-	return h.hashname
-}
-
 func (h *line_handler) close() {
 	h.shutdown <- true
 	h.conn.close()
 }
 
-func (h *line_handler) open_line(addr *net.UDPAddr, pubkey *rsa.PublicKey) error {
-	hashname, err := hashname_from_RSA(pubkey)
-	if err != nil {
-		return err
+func (h *line_handler) open_line(hashname string) error {
+	peer := h.peers.get_peer(hashname)
+	if peer == nil {
+		return fmt.Errorf("unknown peer: %s", hashname)
+	}
+
+	if peer.pubkey == nil {
+		return errMissingPublicKey
 	}
 
 	if h.get_snd_line(hashname) != nil {
@@ -140,8 +134,8 @@ func (h *line_handler) open_line(addr *net.UDPAddr, pubkey *rsa.PublicKey) error
 
 	h.snd_open <- line_handler_snd_open{
 		hashname: hashname,
-		pubkey:   pubkey,
-		addr:     addr,
+		pubkey:   peer.pubkey,
+		addr:     peer.addr,
 		reply:    reply,
 	}
 
@@ -153,7 +147,15 @@ func (h *line_handler) open_line(addr *net.UDPAddr, pubkey *rsa.PublicKey) error
 func (h *line_handler) send(to string, ipkt *pkt_t) error {
 	line := h.get_snd_line(to)
 	if line == nil {
-		return errors.New("unknown target: " + to)
+		err := h.open_line(to)
+		if err != nil {
+			return err
+		}
+
+		line = h.get_snd_line(to)
+		if line == nil {
+			return errors.New("unknown target: " + to)
+		}
 	}
 
 	ipkt_data, err := ipkt.format_pkt()
@@ -517,7 +519,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 
 	// STEP 4:
 	// - Verify the to value of the inner packet matches your hashname
-	if ipkt.hdr.To != h.hashname {
+	if ipkt.hdr.To != h.peers.get_local_hashname() {
 		err = errors.New("open: hashname mismatch")
 		Log.Debug(err)
 		return // drop
@@ -643,9 +645,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 		line.dec_key = hash_SHA256(shared_key, rcv_id, snd_id)
 	}
 
-	if h.new_peer_handler != nil {
-		h.new_peer_handler(line.hashname, line.addr, line.pubkey)
-	}
+	h.peers.add_peer(line.hashname, line.addr.String(), line.pubkey)
 
 	// activate line and notify waiters
 	line.opened = true
@@ -659,7 +659,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 	Log.Debugf("line opened: %s:%s (%s -> %s)",
 		line.rcv_id,
 		line.snd_id,
-		h.hashname[:8],
+		h.peers.get_local_hashname()[:8],
 		line.hashname[:8])
 
 	return

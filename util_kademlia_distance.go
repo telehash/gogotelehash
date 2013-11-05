@@ -5,26 +5,6 @@ import (
 	"sort"
 )
 
-func (h *peer_handler) find_closest_hashnames(t string, n int) []string {
-	hashnames := make([]string, 0, len(h.peers))
-
-	for hn, peer := range h.peers {
-		if peer.pubkey == nil {
-			continue
-		}
-
-		hashnames = append(hashnames, hn)
-	}
-
-	SortByDistance(h.get_local_hashname(), hashnames)
-
-	if len(hashnames) > n {
-		hashnames = hashnames[:n]
-	}
-
-	return hashnames
-}
-
 type hashname_sorter struct {
 	target string
 	list   []string
