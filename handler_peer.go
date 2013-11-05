@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,7 @@ import (
 
 type peer_t struct {
 	hashname string
+	via      string
 	pubkey   *rsa.PublicKey
 	addr     *net.UDPAddr
 }
@@ -44,7 +46,7 @@ func (h *peer_handler) get_local_hashname() string {
 	return h.local_hashname
 }
 
-func (h *peer_handler) add_peer(hashname, addr string, pubkey *rsa.PublicKey) (string, error) {
+func (h *peer_handler) add_peer(hashname, addr string, pubkey *rsa.PublicKey, via string) (string, error) {
 	udp_addr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return "", err
@@ -64,6 +66,7 @@ func (h *peer_handler) add_peer(hashname, addr string, pubkey *rsa.PublicKey) (s
 		hashname: hashname,
 		pubkey:   pubkey,
 		addr:     udp_addr,
+		via:      via,
 	}
 
 	return hashname, nil
@@ -183,7 +186,7 @@ func (h *peer_handler) send_seek_cmd(to, seek string, wg *sync.WaitGroup) {
 			continue
 		}
 
-		_, err := h.add_peer(hashname, addr, nil)
+		_, err := h.add_peer(hashname, addr, nil, to)
 		if err != nil {
 			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
 		}
@@ -222,8 +225,101 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 	}
 }
 
+func (h *peer_handler) send_peer_cmd(hashname string) error {
+	to := h.get_peer(hashname)
+	if to == nil {
+		return fmt.Errorf("unknown peer: %s", hashname)
+	}
+	if to.via == "" {
+		return fmt.Errorf("peer has unknown via: %s", hashname)
+	}
+
+	via := h.get_peer(to.via)
+	if via == nil {
+		return fmt.Errorf("peer has unknown via: %s", hashname)
+	}
+
+	conn_ch, err := h.conn.open_channel(via.hashname, &pkt_t{
+		hdr: pkt_hdr_t{
+			Type: "peer",
+			Peer: to.hashname,
+		},
+	})
+	defer conn_ch.close()
+	return err
+}
+
 func (h *peer_handler) serve_peer(channel *channel_t) {
+	pkt, err := channel.receive()
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
+
+	if pkt.hdr.Peer == "" {
+		return
+	}
+
+	if pkt.hdr.Peer == h.get_local_hashname() {
+		return
+	}
+
+	if pkt.hdr.Peer == channel.peer {
+		return
+	}
+
+	sender := h.get_peer(channel.peer)
+	if sender == nil {
+		return
+	}
+
+	pubkey, err := enc_DER_RSA(sender.pubkey)
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
+
+	conn_ch, err := h.conn.open_channel(pkt.hdr.Peer, &pkt_t{
+		hdr: pkt_hdr_t{
+			Type: "connect",
+			IP:   sender.addr.IP.String(),
+			Port: sender.addr.Port,
+		},
+		body: pubkey,
+	})
+	conn_ch.close()
+
+	if err != nil {
+		channel.close_with_error(err.Error())
+	}
 }
 
 func (h *peer_handler) serve_connect(channel *channel_t) {
+	pkt, err := channel.receive()
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
+
+	addr := net.JoinHostPort(pkt.hdr.IP, strconv.Itoa(pkt.hdr.Port))
+
+	pubkey, err := dec_DER_RSA(pkt.body)
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
+
+	hashname, err := h.add_peer("", addr, pubkey, "")
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
+
+	Log.Debugf("(l=%s) hashname=%s addr=%+q", h.get_local_hashname()[:8], hashname[:8], addr)
+
+	err = h.conn.conn.open_line(hashname)
+	if err != nil {
+		Log.Debugf("error: %s", err)
+		return
+	}
 }

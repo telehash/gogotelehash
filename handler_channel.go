@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"encoding/hex"
+	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -415,7 +416,7 @@ func (c *channel_t) run_user_handler() {
 	defer func() {
 		r := recover()
 		if r != nil {
-			Log.Error(r)
+			Log.Errorf("panic: %s\n%s", r, debug.Stack())
 			c.close_with_error("internal server error")
 		}
 	}()

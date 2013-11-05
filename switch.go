@@ -57,8 +57,14 @@ func (s *Switch) LocalHashname() string {
 	return s.peers.get_local_hashname()
 }
 
-func (s *Switch) RegisterPeer(addr string, key *rsa.PublicKey) (string, error) {
-	return s.peers.add_peer("", addr, key)
+func (s *Switch) Seed(addr string, key *rsa.PublicKey) (string, error) {
+	hashname, err := s.peers.add_peer("", addr, key, "")
+	if err != nil {
+		return "", err
+	}
+
+	s.Seek(hashname, 15)
+	return hashname, nil
 }
 
 func (s *Switch) Seek(hashname string, n int) []string {

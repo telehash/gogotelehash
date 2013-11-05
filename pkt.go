@@ -32,6 +32,9 @@ type pkt_hdr_t struct {
 	Err    string          `json:"err,omitempty"`
 	Seek   string          `json:"seek,omitempty"`
 	See    []string        `json:"see,omitempty"`
+	Peer   string          `json:"peer,omitempty"`
+	IP     string          `json:"ip,omitempty"`
+	Port   int             `json:"port,omitempty"`
 	Custom json.RawMessage `json:"_,omitempty"`
 }
 

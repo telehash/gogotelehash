@@ -41,6 +41,7 @@ type line_handler struct {
 	rcv           chan *pkt_t
 	rcv_open      chan *pkt_t
 	snd_open      chan line_handler_snd_open
+	wait_open     chan line_handler_wait_open
 	shutdown      chan bool
 	max_time_skew time.Duration
 	lines_mtx     sync.RWMutex
@@ -50,6 +51,11 @@ type line_handler_snd_open struct {
 	hashname string
 	pubkey   *rsa.PublicKey
 	addr     *net.UDPAddr
+	reply    chan error
+}
+
+type line_handler_wait_open struct {
+	hashname string
 	reply    chan error
 }
 
@@ -81,6 +87,8 @@ func (h *line_handler) command_loop() {
 			h.rcv_open_pkt(pkt)
 		case cmd := <-h.snd_open:
 			h.snd_open_pkt(cmd, true)
+		case cmd := <-h.wait_open:
+			h.wait_open_cmd(cmd)
 
 		}
 	}
@@ -101,6 +109,7 @@ func line_handler_open(addr string, prvkey *rsa.PrivateKey, peers *peer_handler)
 		rcv:           make(chan *pkt_t),
 		rcv_open:      make(chan *pkt_t),
 		snd_open:      make(chan line_handler_snd_open),
+		wait_open:     make(chan line_handler_wait_open),
 		max_time_skew: 5 * time.Second,
 		shutdown:      make(chan bool),
 	}
@@ -122,15 +131,28 @@ func (h *line_handler) open_line(hashname string) error {
 		return fmt.Errorf("unknown peer: %s", hashname)
 	}
 
+	reply := make(chan error, 1)
+
 	if peer.pubkey == nil {
+		if peer.via != "" {
+			h.wait_open <- line_handler_wait_open{
+				hashname: hashname,
+				reply:    reply,
+			}
+
+			err := h.peers.send_peer_cmd(hashname)
+			if err != nil {
+				return err
+			}
+
+			return <-reply
+		}
 		return errMissingPublicKey
 	}
 
 	if h.get_snd_line(hashname) != nil {
 		return nil
 	}
-
-	reply := make(chan error, 1)
 
 	h.snd_open <- line_handler_snd_open{
 		hashname: hashname,
@@ -155,6 +177,15 @@ func (h *line_handler) send(to string, ipkt *pkt_t) error {
 		line = h.get_snd_line(to)
 		if line == nil {
 			return errors.New("unknown target: " + to)
+		}
+	}
+
+	if !line.opened {
+		waiter := make(chan error, 1)
+		line.waiters = append(line.waiters, waiter)
+		err := <-waiter
+		if err != nil {
+			return err
 		}
 	}
 
@@ -203,6 +234,7 @@ func (h *line_handler) rcv_line_pkt(opkt *pkt_t) {
 	line = h.get_rcv_line(opkt.hdr.Line)
 	if line == nil {
 		// Log.Debugf("dropped packet: %+v (error: %s)", opkt, "unknown line")
+		return
 	}
 
 	iv, err = hex.DecodeString(opkt.hdr.Iv)
@@ -251,7 +283,7 @@ func (h *line_handler) snd_open_pkt(cmd line_handler_snd_open, initiator bool) {
 	}
 
 	if cmd.addr == nil {
-		cmd.reply <- errors.New("invalid line open request: must know address")
+		cmd.reply <- fmt.Errorf("invalid line open request: must know address (%s -> %s)", h.peers.get_local_hashname()[:8], cmd.hashname[:8])
 		return
 	}
 
@@ -559,9 +591,13 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 	if line == nil {
 		line = &line_t{
 			hashname: hashname,
-			pubkey:   rsa_pubkey,
-			addr:     opkt.addr,
 		}
+	}
+	if line.pubkey == nil {
+		line.pubkey = rsa_pubkey
+	}
+	if line.addr == nil {
+		line.addr = opkt.addr
 	}
 
 	// STEP 8:
@@ -645,7 +681,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 		line.dec_key = hash_SHA256(shared_key, rcv_id, snd_id)
 	}
 
-	h.peers.add_peer(line.hashname, line.addr.String(), line.pubkey)
+	h.peers.add_peer(line.hashname, line.addr.String(), line.pubkey, "")
 
 	// activate line and notify waiters
 	line.opened = true
@@ -663,6 +699,17 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 		line.hashname[:8])
 
 	return
+}
+
+func (h *line_handler) wait_open_cmd(cmd line_handler_wait_open) {
+	line := &line_t{
+		hashname: cmd.hashname,
+	}
+	line.waiters = append(line.waiters, cmd.reply)
+
+	h.lines_mtx.Lock()
+	defer h.lines_mtx.Unlock()
+	h.snd_lines[line.hashname] = line
 }
 
 func (h *line_handler) drop_line(line *line_t, err error) {

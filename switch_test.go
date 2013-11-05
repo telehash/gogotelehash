@@ -49,7 +49,7 @@ func TestOpen(t *testing.T) {
 
 	go func() {
 
-		hashname, err := a.RegisterPeer("127.0.0.1:4001", &key_b.PublicKey)
+		hashname, err := a.Seed("127.0.0.1:4001", &key_b.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,28 +94,28 @@ func TestSeek(t *testing.T) {
 	defer c.Stop()
 
 	go func() {
-		_, err := b.RegisterPeer("127.0.0.1:4000", &key_a.PublicKey)
+		_, err := b.Seed("127.0.0.1:4000", &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		// Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 		time.Sleep(100 * time.Millisecond)
 		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 	}()
 
 	go func() {
-		_, err := c.RegisterPeer("127.0.0.1:4000", &key_a.PublicKey)
+		_, err := c.Seed("127.0.0.1:4000", &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		// Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 		time.Sleep(100 * time.Millisecond)
 		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 	}()
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(5 * time.Second)
 }
 
 func make_key() *rsa.PrivateKey {
