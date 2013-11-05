@@ -56,7 +56,7 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("connected to %s", hn[:8])
+		fmt.Printf("connected to %s\n", hn[:8])
 	}
 
 	c := make(chan os.Signal)

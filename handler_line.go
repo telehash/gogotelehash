@@ -17,19 +17,21 @@ import (
 )
 
 type line_t struct {
-	opened     bool
-	hashname   string           // hashname of target
-	pubkey     *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
-	ecc_prvkey *ecdh.PrivateKey // (non-nil during open phase)
-	ecc_pubkey *ecdh.PublicKey  // (non-nil during open phase)
-	addr       *net.UDPAddr     // address of target
-	snd_id     string           // line id used when sending packets
-	rcv_id     string           // line id used when receiving packets
-	snd_at     time.Time        // when the line was opened on the local side
-	rcv_at     time.Time        // when the line was opened on the remote side
-	enc_key    []byte           // aes key used when sending packets
-	dec_key    []byte           // aes key  used when receiving packets
-	waiters    []chan error     // channels waiting for this line to finish opening
+	opened        bool
+	hashname      string           // hashname of target
+	pubkey        *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
+	ecc_prvkey    *ecdh.PrivateKey // (non-nil during open phase)
+	ecc_pubkey    *ecdh.PublicKey  // (non-nil during open phase)
+	addr          *net.UDPAddr     // address of target
+	snd_id        string           // line id used when sending packets
+	rcv_id        string           // line id used when receiving packets
+	snd_at        time.Time        // when the line was opened on the local side
+	rcv_at        time.Time        // when the line was opened on the remote side
+	enc_key       []byte           // aes key used when sending packets
+	dec_key       []byte           // aes key  used when receiving packets
+	waiters       []chan error     // channels waiting for this line to finish opening
+	last_activity time.Time
+	mtx           sync.RWMutex
 }
 
 type line_handler struct {
@@ -77,11 +79,17 @@ func (h *line_handler) reader_loop() {
 }
 
 func (h *line_handler) command_loop() {
+	idle_line_ticker := time.NewTicker(1 * time.Second)
+	defer idle_line_ticker.Stop()
+
 	for {
 		select {
 
 		case <-h.shutdown:
 			return
+
+		case <-idle_line_ticker.C:
+			h.drop_idle_lines()
 
 		case pkt := <-h.rcv_open:
 			h.rcv_open_pkt(pkt)
@@ -182,6 +190,7 @@ func (h *line_handler) send(to string, ipkt *pkt_t) error {
 
 	if !line.opened {
 		waiter := make(chan error, 1)
+		line.touch()
 		line.waiters = append(line.waiters, waiter)
 		err := <-waiter
 		if err != nil {
@@ -213,6 +222,8 @@ func (h *line_handler) send(to string, ipkt *pkt_t) error {
 		body: ipkt_data,
 		addr: line.addr,
 	}
+
+	line.touch()
 
 	// Log.Debugf("line[%s:%s]: snd %+v", line.snd_id[:8], line.rcv_id[:8], ipkt)
 	return h.conn.send(&opkt)
@@ -256,6 +267,7 @@ func (h *line_handler) rcv_line_pkt(opkt *pkt_t) {
 	}
 
 	ipkt.peer = line.hashname
+	line.touch()
 
 	// Log.Debugf("line[%s:%s]: rcv %+v", line.snd_id[:8], line.rcv_id[:8], ipkt)
 	h.rcv <- ipkt
@@ -447,6 +459,7 @@ func (h *line_handler) snd_open_pkt(cmd line_handler_snd_open, initiator bool) {
 		}
 	}
 
+	line.touch()
 	h.add_line(line)
 
 	if !initiator {
@@ -599,6 +612,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 	if line.addr == nil {
 		line.addr = opkt.addr
 	}
+	line.touch()
 
 	// STEP 8:
 	// - SHA-256 hash the ECC public key with the 16 bytes derived from the inner
@@ -693,10 +707,12 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 	}
 	line.waiters = nil
 	Log.Debugf("line opened: %s:%s (%s -> %s)",
-		line.rcv_id,
-		line.snd_id,
-		h.peers.get_local_hashname()[:8],
-		line.hashname[:8])
+		short_hash(line.rcv_id),
+		short_hash(line.snd_id),
+		short_hash(h.peers.get_local_hashname()),
+		short_hash(line.hashname))
+
+	line.touch()
 
 	return
 }
@@ -706,6 +722,7 @@ func (h *line_handler) wait_open_cmd(cmd line_handler_wait_open) {
 		hashname: cmd.hashname,
 	}
 	line.waiters = append(line.waiters, cmd.reply)
+	line.touch()
 
 	h.lines_mtx.Lock()
 	defer h.lines_mtx.Unlock()
@@ -743,4 +760,41 @@ func (h *line_handler) get_snd_line(id string) *line_t {
 	defer h.lines_mtx.RUnlock()
 
 	return h.snd_lines[id]
+}
+
+func (l *line_t) touch() {
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
+
+	l.last_activity = time.Now()
+}
+
+func (l *line_t) get_last_activity() time.Time {
+	l.mtx.RLock()
+	defer l.mtx.RUnlock()
+
+	return l.last_activity
+}
+
+func (h *line_handler) drop_idle_lines() {
+	h.lines_mtx.Lock()
+	defer h.lines_mtx.Unlock()
+
+	deadline := time.Now().Add(-15 * time.Second)
+
+	for _, line := range h.snd_lines {
+		if line.get_last_activity().Before(deadline) {
+			delete(h.snd_lines, line.hashname)
+			delete(h.rcv_lines, line.rcv_id)
+			for _, waiter := range line.waiters {
+				waiter <- errors.New("line: closed (idle)")
+			}
+
+			Log.Debugf("line closed: %s:%s (%s -> %s)",
+				short_hash(line.rcv_id),
+				short_hash(line.snd_id),
+				short_hash(h.peers.get_local_hashname()),
+				short_hash(line.hashname))
+		}
+	}
 }

@@ -211,6 +211,15 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
+		line := h.conn.conn.get_snd_line(peer.hashname)
+		if line == nil {
+			continue
+		}
+
+		if !line.opened {
+			continue
+		}
+
 		see = append(see, fmt.Sprintf("%s,%s,%d", hashname, peer.addr.IP, peer.addr.Port))
 	}
 
