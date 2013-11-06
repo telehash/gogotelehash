@@ -20,7 +20,7 @@ type peer_t struct {
 type peer_handler struct {
 	conn           *channel_handler
 	local_hashname Hashname
-	peers          map[Hashname]*peer_t
+	buckets        [][]*peer_t
 	peers_mtx      sync.RWMutex
 }
 
@@ -32,7 +32,7 @@ func peer_handler_open(prvkey *rsa.PrivateKey, mux *SwitchMux) (*peer_handler, e
 
 	h := &peer_handler{
 		local_hashname: hashname,
-		peers:          make(map[Hashname]*peer_t),
+		buckets:        make([][]*peer_t, 32*8),
 	}
 
 	mux.handle_func("seek", h.serve_seek)
@@ -47,82 +47,146 @@ func (h *peer_handler) get_local_hashname() Hashname {
 }
 
 func (h *peer_handler) add_peer(hashname Hashname, addr string, pubkey *rsa.PublicKey, via Hashname) (Hashname, error) {
-	udp_addr, err := net.ResolveUDPAddr("udp", addr)
+	var (
+		err      error
+		udp_addr *net.UDPAddr
+		peer     *peer_t
+	)
+
+	// resolve the address
+	udp_addr, err = net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
+	// determine the hashname
 	if hashname.IsZero() {
+		if pubkey == nil {
+			return ZeroHashname, fmt.Errorf("pubkey must not be nil")
+		}
+
 		hashname, err = HashnameFromPublicKey(pubkey)
 		if err != nil {
 			return ZeroHashname, err
 		}
 	}
 
-	h.peers_mtx.Lock()
-	defer h.peers_mtx.Unlock()
+	peer = h.get_peer(hashname)
 
-	h.peers[hashname] = &peer_t{
-		hashname: hashname,
-		pubkey:   pubkey,
-		addr:     udp_addr,
-		via:      via,
+	if peer == nil {
+		// make new peer
+		peer = &peer_t{
+			hashname: hashname,
+			via:      via,
+		}
+
+		bucket := kad_bucket_for(h.get_local_hashname(), hashname)
+
+		// add the peer
+		h.peers_mtx.Lock()
+		l := h.buckets[bucket]
+		l = append(l, peer)
+		h.buckets[bucket] = l
+		h.peers_mtx.Unlock()
+	}
+
+	peer.addr = udp_addr
+
+	if pubkey != nil {
+		peer.pubkey = pubkey
+	}
+
+	if !via.IsZero() {
+		peer.via = via
 	}
 
 	return hashname, nil
 }
 
-func (h *peer_handler) remove_peer(hashname Hashname) {
-	h.peers_mtx.Lock()
-	defer h.peers_mtx.Unlock()
-
-	delete(h.peers, hashname)
-}
-
 func (h *peer_handler) get_peer(hashname Hashname) *peer_t {
-	h.peers_mtx.RLock()
-	defer h.peers_mtx.RUnlock()
+	bucket_index := kad_bucket_for(h.get_local_hashname(), hashname)
 
-	return h.peers[hashname]
-}
-
-func (h *peer_handler) find_closest_hashnames(t Hashname, n int) []Hashname {
-	h.peers_mtx.RLock()
-	defer h.peers_mtx.RUnlock()
-
-	hashnames := make([]Hashname, 0, len(h.peers))
-
-	for hn := range h.peers {
-		hashnames = append(hashnames, hn)
+	if bucket_index < 0 {
+		return nil
 	}
 
-	kad_sort_by_distance(h.local_hashname, hashnames)
+	h.peers_mtx.RLock()
+	bucket := h.buckets[bucket_index]
+	h.peers_mtx.RUnlock()
 
-	if len(hashnames) > n {
-		hashnames = hashnames[:n]
+	for _, peer := range bucket {
+		if peer.hashname == hashname {
+			return peer
+		}
 	}
 
-	return hashnames
+	return nil
 }
 
-func (h *peer_handler) seek(hashname Hashname, n int) []Hashname {
+func (h *peer_handler) find_closest_peers(t Hashname, n int) []*peer_t {
+	bucket_index := kad_bucket_for(h.get_local_hashname(), t)
+	delta := 0
+
+	if bucket_index < 0 {
+		return nil
+	}
+
+	var (
+		peers = make([]*peer_t, 0, 10)
+	)
+
+	for len(peers) < n {
+		if 0 <= bucket_index+delta && bucket_index+delta < 32*8 {
+			h.peers_mtx.RLock()
+			bucket := h.buckets[bucket_index+delta]
+			h.peers_mtx.RUnlock()
+			peers = append(peers, bucket...)
+		}
+
+		if delta <= 0 {
+			delta = -delta + 1
+		} else {
+			delta = -delta
+		}
+
+		if delta >= 32*8 {
+			break
+		}
+	}
+
+	kad_sort_peers(t, peers)
+
+	if len(peers) > n {
+		peers = peers[:n]
+	}
+
+	return peers
+}
+
+func (h *peer_handler) seek(hashname Hashname, n int) []*peer_t {
 	var (
 		wg   sync.WaitGroup
-		last = h.find_closest_hashnames(hashname, n)
+		last = h.find_closest_peers(hashname, n)
 	)
+
+	tag := time.Now().UnixNano()
+
+	Log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
 
 RECURSOR:
 	for {
-		for _, to := range last {
-			if to != h.get_local_hashname() {
-				wg.Add(1)
-				go h.send_seek_cmd(to, hashname, &wg)
-			}
+
+		Log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
+		for _, via := range last {
+			wg.Add(1)
+			go h.send_seek_cmd(via.hashname, hashname, &wg)
 		}
 
 		wg.Wait()
 
-		curr := h.find_closest_hashnames(hashname, n)
+		curr := h.find_closest_peers(hashname, n)
+		Log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last, curr)
+
 		if len(curr) != len(last) {
 			last = curr
 			continue RECURSOR
@@ -210,14 +274,10 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 		Log.Debug(err)
 	}
 
-	closest := h.find_closest_hashnames(seek, 25)
+	closest := h.find_closest_peers(seek, 25)
 	see := make([]string, 0, len(closest))
 
-	for _, hashname := range closest {
-		peer := h.get_peer(hashname)
-		if peer == nil {
-			continue
-		}
+	for _, peer := range closest {
 		if peer.pubkey == nil {
 			continue // unable to forward peer requests to unless we know the public key
 		}
@@ -231,7 +291,7 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 			continue
 		}
 
-		see = append(see, fmt.Sprintf("%s,%s,%d", hashname, peer.addr.IP, peer.addr.Port))
+		see = append(see, fmt.Sprintf("%s,%s,%d", peer.hashname, peer.addr.IP, peer.addr.Port))
 	}
 
 	err = channel.send(&pkt_t{

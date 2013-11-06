@@ -68,7 +68,14 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 }
 
 func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
-	return s.peers.seek(hashname, n)
+	peers := s.peers.seek(hashname, n)
+	hashnames := make([]Hashname, len(peers))
+
+	for i, peer := range peers {
+		hashnames[i] = peer.hashname
+	}
+
+	return hashnames
 }
 
 func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {

@@ -115,7 +115,7 @@ func TestSeek(t *testing.T) {
 		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 	}()
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(30 * time.Second)
 }
 
 func make_key() *rsa.PrivateKey {
