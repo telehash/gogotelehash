@@ -11,28 +11,28 @@ import (
 )
 
 type peer_t struct {
-	hashname string
-	via      string
+	hashname Hashname
+	via      Hashname
 	pubkey   *rsa.PublicKey
 	addr     *net.UDPAddr
 }
 
 type peer_handler struct {
 	conn           *channel_handler
-	local_hashname string
-	peers          map[string]*peer_t
+	local_hashname Hashname
+	peers          map[Hashname]*peer_t
 	peers_mtx      sync.RWMutex
 }
 
 func peer_handler_open(prvkey *rsa.PrivateKey, mux *SwitchMux) (*peer_handler, error) {
-	hashname, err := hashname_from_RSA(&prvkey.PublicKey)
+	hashname, err := HashnameFromPublicKey(&prvkey.PublicKey)
 	if err != nil {
 		return nil, err
 	}
 
 	h := &peer_handler{
 		local_hashname: hashname,
-		peers:          make(map[string]*peer_t),
+		peers:          make(map[Hashname]*peer_t),
 	}
 
 	mux.handle_func("seek", h.serve_seek)
@@ -42,20 +42,20 @@ func peer_handler_open(prvkey *rsa.PrivateKey, mux *SwitchMux) (*peer_handler, e
 	return h, nil
 }
 
-func (h *peer_handler) get_local_hashname() string {
+func (h *peer_handler) get_local_hashname() Hashname {
 	return h.local_hashname
 }
 
-func (h *peer_handler) add_peer(hashname, addr string, pubkey *rsa.PublicKey, via string) (string, error) {
+func (h *peer_handler) add_peer(hashname Hashname, addr string, pubkey *rsa.PublicKey, via Hashname) (Hashname, error) {
 	udp_addr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
-		return "", err
+		return ZeroHashname, err
 	}
 
-	if hashname == "" {
-		hashname, err = hashname_from_RSA(pubkey)
+	if hashname.IsZero() {
+		hashname, err = HashnameFromPublicKey(pubkey)
 		if err != nil {
-			return "", err
+			return ZeroHashname, err
 		}
 	}
 
@@ -72,31 +72,31 @@ func (h *peer_handler) add_peer(hashname, addr string, pubkey *rsa.PublicKey, vi
 	return hashname, nil
 }
 
-func (h *peer_handler) remove_peer(hashname string) {
+func (h *peer_handler) remove_peer(hashname Hashname) {
 	h.peers_mtx.Lock()
 	defer h.peers_mtx.Unlock()
 
 	delete(h.peers, hashname)
 }
 
-func (h *peer_handler) get_peer(hashname string) *peer_t {
+func (h *peer_handler) get_peer(hashname Hashname) *peer_t {
 	h.peers_mtx.RLock()
 	defer h.peers_mtx.RUnlock()
 
 	return h.peers[hashname]
 }
 
-func (h *peer_handler) find_closest_hashnames(t string, n int) []string {
+func (h *peer_handler) find_closest_hashnames(t Hashname, n int) []Hashname {
 	h.peers_mtx.RLock()
 	defer h.peers_mtx.RUnlock()
 
-	hashnames := make([]string, 0, len(h.peers))
+	hashnames := make([]Hashname, 0, len(h.peers))
 
 	for hn := range h.peers {
 		hashnames = append(hashnames, hn)
 	}
 
-	SortByDistance(h.local_hashname, hashnames)
+	kad_sort_by_distance(h.local_hashname, hashnames)
 
 	if len(hashnames) > n {
 		hashnames = hashnames[:n]
@@ -105,7 +105,7 @@ func (h *peer_handler) find_closest_hashnames(t string, n int) []string {
 	return hashnames
 }
 
-func (h *peer_handler) seek(hashname string, n int) []string {
+func (h *peer_handler) seek(hashname Hashname, n int) []Hashname {
 	var (
 		wg   sync.WaitGroup
 		last = h.find_closest_hashnames(hashname, n)
@@ -141,7 +141,7 @@ RECURSOR:
 	return last
 }
 
-func (h *peer_handler) send_seek_cmd(to, seek string, wg *sync.WaitGroup) {
+func (h *peer_handler) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	local_hashname := h.get_local_hashname()
@@ -149,7 +149,7 @@ func (h *peer_handler) send_seek_cmd(to, seek string, wg *sync.WaitGroup) {
 	pkt := &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "seek",
-			Seek: seek,
+			Seek: seek.String(),
 		},
 	}
 
@@ -176,17 +176,23 @@ func (h *peer_handler) send_seek_cmd(to, seek string, wg *sync.WaitGroup) {
 		}
 
 		var (
-			hashname = fields[0]
-			ip       = fields[1]
-			port     = fields[2]
-			addr     = net.JoinHostPort(ip, port)
+			hashname_str = fields[0]
+			ip           = fields[1]
+			port         = fields[2]
+			addr         = net.JoinHostPort(ip, port)
 		)
+
+		hashname, err := HashnameFromString(hashname_str)
+		if err != nil {
+			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
+			continue
+		}
 
 		if hashname == local_hashname {
 			continue
 		}
 
-		_, err := h.add_peer(hashname, addr, nil, to)
+		_, err = h.add_peer(hashname, addr, nil, to)
 		if err != nil {
 			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
 		}
@@ -199,7 +205,12 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 		return // drop
 	}
 
-	closest := h.find_closest_hashnames(pkt.hdr.Seek, 25)
+	seek, err := HashnameFromString(pkt.hdr.Seek)
+	if err != nil {
+		Log.Debug(err)
+	}
+
+	closest := h.find_closest_hashnames(seek, 25)
 	see := make([]string, 0, len(closest))
 
 	for _, hashname := range closest {
@@ -234,12 +245,12 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 	}
 }
 
-func (h *peer_handler) send_peer_cmd(hashname string) error {
+func (h *peer_handler) send_peer_cmd(hashname Hashname) error {
 	to := h.get_peer(hashname)
 	if to == nil {
 		return fmt.Errorf("unknown peer: %s", hashname)
 	}
-	if to.via == "" {
+	if to.via.IsZero() {
 		return fmt.Errorf("peer has unknown via: %s", hashname)
 	}
 
@@ -258,7 +269,7 @@ func (h *peer_handler) send_peer_cmd(hashname string) error {
 	conn_ch, err := h.conn.open_channel(via.hashname, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "peer",
-			Peer: to.hashname,
+			Peer: to.hashname.String(),
 			End:  true,
 		},
 	})
@@ -273,15 +284,16 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
-	if pkt.hdr.Peer == "" {
+	peer, err := HashnameFromString(pkt.hdr.Peer)
+	if err != nil {
+		Log.Debug(err)
+	}
+
+	if peer == h.get_local_hashname() {
 		return
 	}
 
-	if pkt.hdr.Peer == h.get_local_hashname() {
-		return
-	}
-
-	if pkt.hdr.Peer == channel.peer {
+	if peer == channel.peer {
 		return
 	}
 
@@ -296,7 +308,7 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
-	conn_ch, err := h.conn.open_channel(pkt.hdr.Peer, &pkt_t{
+	conn_ch, err := h.conn.open_channel(peer, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "connect",
 			IP:   sender.addr.IP.String(),
@@ -327,13 +339,13 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 		return
 	}
 
-	hashname, err := h.add_peer("", addr, pubkey, "")
+	hashname, err := h.add_peer(ZeroHashname, addr, pubkey, ZeroHashname)
 	if err != nil {
 		Log.Debugf("error: %s", err)
 		return
 	}
 
-	Log.Debugf("(l=%s) hashname=%s addr=%+q", h.get_local_hashname()[:8], hashname[:8], addr)
+	Log.Debugf("(l=%s) hashname=%s addr=%+q", h.get_local_hashname().Short(), hashname.Short(), addr)
 
 	err = h.conn.conn.open_line(hashname)
 	if err != nil {

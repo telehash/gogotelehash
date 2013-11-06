@@ -11,9 +11,9 @@ import (
 type channel_t struct {
 	conn *channel_handler
 
-	id           string // id of the channel
-	peer         string // hashname of the peer
-	channel_type string // type of the channel
+	id           string   // id of the channel
+	peer         Hashname // hashname of the peer
+	channel_type string   // type of the channel
 	snd_init_pkt bool
 	snd_seq_next int
 	snd_in_flght int
@@ -92,7 +92,7 @@ func (h *channel_handler) close() {
 	h.conn.close()
 }
 
-func (h *channel_handler) open_channel(hashname string, pkt *pkt_t) (*channel_t, error) {
+func (h *channel_handler) open_channel(hashname Hashname, pkt *pkt_t) (*channel_t, error) {
 	id, err := make_rand(16)
 	if err != nil {
 		return nil, err
@@ -127,7 +127,7 @@ func (h *channel_handler) drop_channel(c *channel_t) {
 	delete(h.channels, c.id)
 }
 
-func (h *channel_handler) make_channel(peer string) *channel_t {
+func (h *channel_handler) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
 		conn:         h,
 		peer:         peer,
@@ -398,7 +398,13 @@ func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
 }
 
 func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
-	channel := h.make_channel(pkt.peer)
+	peer_hashname, err := HashnameFromString(pkt.peer)
+	if err != nil {
+		Log.Debug(err)
+		return // drop
+	}
+
+	channel := h.make_channel(peer_hashname)
 	channel.id = pkt.hdr.C
 	channel.channel_type = pkt.hdr.Type
 	channel.snd_init_pkt = true

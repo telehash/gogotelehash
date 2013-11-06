@@ -53,25 +53,25 @@ func (s *Switch) Stop() error {
 	return nil
 }
 
-func (s *Switch) LocalHashname() string {
+func (s *Switch) LocalHashname() Hashname {
 	return s.peers.get_local_hashname()
 }
 
-func (s *Switch) Seed(addr string, key *rsa.PublicKey) (string, error) {
-	hashname, err := s.peers.add_peer("", addr, key, "")
+func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
+	hashname, err := s.peers.add_peer(ZeroHashname, addr, key, ZeroHashname)
 	if err != nil {
-		return "", err
+		return ZeroHashname, err
 	}
 
 	s.Seek(hashname, 15)
 	return hashname, nil
 }
 
-func (s *Switch) Seek(hashname string, n int) []string {
+func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 	return s.peers.seek(hashname, n)
 }
 
-func (s *Switch) Open(hashname, typ string) (*Channel, error) {
+func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
 	channel, err := s.conn.open_channel(hashname, &pkt_t{
 		hdr: pkt_hdr_t{Type: typ},
 	})

@@ -8,7 +8,6 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/asn1"
-	"encoding/hex"
 	"fmt"
 	"io"
 )
@@ -86,15 +85,6 @@ func enc_AES_256_CTR(key, iv, data []byte) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func hashname_from_RSA(pub *rsa.PublicKey) (string, error) {
-	der, err := enc_DER_RSA(pub)
-	if err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(hash_SHA256(der)), nil
 }
 
 func enc_DER_RSA(pub *rsa.PublicKey) ([]byte, error) {

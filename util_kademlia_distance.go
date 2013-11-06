@@ -5,28 +5,23 @@ import (
 	"sort"
 )
 
+type kad_distance [32]byte
+
 type hashname_sorter struct {
-	target string
-	list   []string
-	dist   [][]byte
+	target Hashname
+	list   []Hashname
+	dist   []kad_distance
 }
 
-func SortByDistance(target string, list []string) {
+func kad_sort_by_distance(target Hashname, list []Hashname) {
 	s := hashname_sorter{
 		target: target,
 		list:   list,
-		dist:   make([][]byte, len(list)),
+		dist:   make([]kad_distance, len(list)),
 	}
 
-	t := []byte(target)
-
 	for i, hashname := range list {
-		b := []byte(hashname)
-		d := make([]byte, len(b))
-		for i, a := range b {
-			d[i] = t[i] ^ a
-		}
-		s.dist[i] = d
+		s.dist[i] = kad_distance_between(target, hashname)
 	}
 
 	sort.Sort(&s)
@@ -37,10 +32,26 @@ func (l *hashname_sorter) Len() int {
 }
 
 func (l *hashname_sorter) Less(i, j int) bool {
-	return bytes.Compare(l.dist[i], l.dist[j]) < 0
+	return kad_compare(l.dist[i], l.dist[j]) < 0
 }
 
 func (l *hashname_sorter) Swap(i, j int) {
 	l.list[i], l.list[j] = l.list[j], l.list[i]
 	l.dist[i], l.dist[j] = l.dist[j], l.dist[i]
+}
+
+func kad_distance_between(a, b Hashname) kad_distance {
+	var (
+		d kad_distance
+	)
+
+	for i := 0; i < 32; i++ {
+		d[i] = a[i] ^ b[i]
+	}
+
+	return d
+}
+
+func kad_compare(a, b kad_distance) int {
+	return bytes.Compare(a[:], b[:])
 }

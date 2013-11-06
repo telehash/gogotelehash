@@ -18,7 +18,7 @@ import (
 
 type line_t struct {
 	opened        bool
-	hashname      string           // hashname of target
+	hashname      Hashname         // hashname of target
 	pubkey        *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
 	ecc_prvkey    *ecdh.PrivateKey // (non-nil during open phase)
 	ecc_pubkey    *ecdh.PublicKey  // (non-nil during open phase)
@@ -38,8 +38,8 @@ type line_handler struct {
 	conn          *pkt_handler
 	peers         *peer_handler
 	key           *rsa.PrivateKey
-	snd_lines     map[string]*line_t // hashname -> line
-	rcv_lines     map[string]*line_t // line id  -> line
+	snd_lines     map[Hashname]*line_t // hashname -> line
+	rcv_lines     map[string]*line_t   // line id  -> line
 	rcv           chan *pkt_t
 	rcv_open      chan *pkt_t
 	snd_open      chan line_handler_snd_open
@@ -50,14 +50,14 @@ type line_handler struct {
 }
 
 type line_handler_snd_open struct {
-	hashname string
+	hashname Hashname
 	pubkey   *rsa.PublicKey
 	addr     *net.UDPAddr
 	reply    chan error
 }
 
 type line_handler_wait_open struct {
-	hashname string
+	hashname Hashname
 	reply    chan error
 }
 
@@ -112,7 +112,7 @@ func line_handler_open(addr string, prvkey *rsa.PrivateKey, peers *peer_handler)
 		conn:          conn,
 		peers:         peers,
 		key:           prvkey,
-		snd_lines:     make(map[string]*line_t),
+		snd_lines:     make(map[Hashname]*line_t),
 		rcv_lines:     make(map[string]*line_t),
 		rcv:           make(chan *pkt_t),
 		rcv_open:      make(chan *pkt_t),
@@ -133,7 +133,7 @@ func (h *line_handler) close() {
 	h.conn.close()
 }
 
-func (h *line_handler) open_line(hashname string) error {
+func (h *line_handler) open_line(hashname Hashname) error {
 	peer := h.peers.get_peer(hashname)
 	if peer == nil {
 		return fmt.Errorf("unknown peer: %s", hashname)
@@ -142,7 +142,7 @@ func (h *line_handler) open_line(hashname string) error {
 	reply := make(chan error, 1)
 
 	if peer.pubkey == nil {
-		if peer.via != "" {
+		if !peer.via.IsZero() {
 			h.wait_open <- line_handler_wait_open{
 				hashname: hashname,
 				reply:    reply,
@@ -174,7 +174,7 @@ func (h *line_handler) open_line(hashname string) error {
 
 // Send a packet over a line.
 // This function will wrap the packet in a line packet.
-func (h *line_handler) send(to string, ipkt *pkt_t) error {
+func (h *line_handler) send(to Hashname, ipkt *pkt_t) error {
 	line := h.get_snd_line(to)
 	if line == nil {
 		err := h.open_line(to)
@@ -184,7 +184,7 @@ func (h *line_handler) send(to string, ipkt *pkt_t) error {
 
 		line = h.get_snd_line(to)
 		if line == nil {
-			return errors.New("unknown target: " + to)
+			return errors.New("unknown target: " + to.Short())
 		}
 	}
 
@@ -264,7 +264,7 @@ func (h *line_handler) rcv_line_pkt(opkt *pkt_t) {
 		return
 	}
 
-	ipkt.peer = line.hashname
+	ipkt.peer = line.hashname.String()
 	line.touch()
 
 	// Log.Debugf("line[%s:%s]: rcv %+v", line.snd_id[:8], line.rcv_id[:8], ipkt)
@@ -287,13 +287,13 @@ func (h *line_handler) snd_open_pkt(cmd line_handler_snd_open, initiator bool) {
 		line_id    []byte
 	)
 
-	if cmd.hashname == "" {
+	if cmd.hashname.IsZero() {
 		cmd.reply <- errors.New("invalid line open request: must know hashname")
 		return
 	}
 
 	if cmd.addr == nil {
-		cmd.reply <- fmt.Errorf("invalid line open request: must know address (%s -> %s)", h.peers.get_local_hashname()[:8], cmd.hashname[:8])
+		cmd.reply <- fmt.Errorf("invalid line open request: must know address (%s -> %s)", h.peers.get_local_hashname().Short(), cmd.hashname[:8])
 		return
 	}
 
@@ -379,7 +379,7 @@ func (h *line_handler) snd_open_pkt(cmd line_handler_snd_open, initiator bool) {
 
 		pkt := pkt_t{
 			hdr: pkt_hdr_t{
-				To:   line.hashname,
+				To:   line.hashname.String(),
 				At:   line.snd_at.Unix(),
 				Line: line.snd_id,
 			},
@@ -476,7 +476,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 		line_id         []byte
 		line            *line_t
 		sig             []byte
-		hashname        string
+		hashname        Hashname
 		ecc_pubkey_data []byte
 		ecc_pubkey      *ecdh.PublicKey
 		rsa_pubkey      *rsa.PublicKey
@@ -562,7 +562,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 
 	// STEP 4:
 	// - Verify the to value of the inner packet matches your hashname
-	if ipkt.hdr.To != h.peers.get_local_hashname() {
+	if ipkt.hdr.To != h.peers.get_local_hashname().String() {
 		err = errors.New("open: hashname mismatch")
 		Log.Debug(err)
 		return // drop
@@ -579,7 +579,11 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 
 	// STEP 6:
 	// - SHA-256 hash the RSA public key to derive the sender's hashname
-	hashname = hex.EncodeToString(hash_SHA256(ipkt.body))
+	hashname, err = HashnameFromBytes(hash_SHA256(ipkt.body))
+	if err != nil {
+		Log.Debug(err)
+		return // drop
+	}
 
 	// STEP 7:
 	// - Verify the at timestamp is both within a reasonable amount of time to
@@ -693,7 +697,7 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 		line.dec_key = hash_SHA256(shared_key, rcv_id, snd_id)
 	}
 
-	h.peers.add_peer(line.hashname, line.addr.String(), line.pubkey, "")
+	h.peers.add_peer(line.hashname, line.addr.String(), line.pubkey, ZeroHashname)
 
 	// activate line and notify waiters
 	line.opened = true
@@ -707,8 +711,8 @@ func (h *line_handler) rcv_open_pkt(opkt *pkt_t) {
 	Log.Debugf("line opened: %s:%s (%s -> %s)",
 		short_hash(line.rcv_id),
 		short_hash(line.snd_id),
-		short_hash(h.peers.get_local_hashname()),
-		short_hash(line.hashname))
+		h.peers.get_local_hashname().Short(),
+		line.hashname.Short())
 
 	line.touch()
 
@@ -753,7 +757,7 @@ func (h *line_handler) get_rcv_line(id string) *line_t {
 	return h.rcv_lines[id]
 }
 
-func (h *line_handler) get_snd_line(id string) *line_t {
+func (h *line_handler) get_snd_line(id Hashname) *line_t {
 	h.lines_mtx.RLock()
 	defer h.lines_mtx.RUnlock()
 
@@ -791,8 +795,8 @@ func (h *line_handler) drop_idle_lines() {
 			Log.Debugf("line closed: %s:%s (%s -> %s)",
 				short_hash(line.rcv_id),
 				short_hash(line.snd_id),
-				short_hash(h.peers.get_local_hashname()),
-				short_hash(line.hashname))
+				h.peers.get_local_hashname().Short(),
+				line.hashname.Short())
 		}
 	}
 }
