@@ -222,7 +222,7 @@ func (h *peer_handler) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 		Log.Debugf("failed to seek %s (error: %s)", to, err)
 		return
 	}
-	defer channel.close()
+	// defer channel.close()
 
 	channel.SetReceiveDeadline(time.Now().Add(15 * time.Second))
 

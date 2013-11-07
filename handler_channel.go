@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"encoding/hex"
+	"errors"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -15,24 +16,24 @@ type channel_t struct {
 	peer         Hashname // hashname of the peer
 	channel_type string   // type of the channel
 	snd_init_pkt bool
-	snd_seq_next int
-	snd_in_flght int
-	snd_buf      map[int]*pkt_t
+	// snd_seq_next int
+	// snd_in_flght int
+	// snd_buf      map[int]*pkt_t
 	rcv_init_ack bool
-	end          bool
-	rcv_seq_next int
-	rcv_seq_last int
-	rcv_ack_last int
-	rcv_buf      map[int]*pkt_t
+	// rcv_seq_next int
+	// rcv_seq_last int
+	// rcv_ack_last int
+	// rcv_buf      map[int]*pkt_t
+	// rcv_missing  int
+	snd *channel_snd_buffer_t
+	rcv *channel_rcv_buffer_t
+
+	ended bool
 
 	readable_pkt *pkt_t
 
-	i_queue    chan *pkt_t
-	s_queue    chan channel_handler_snd
-	r_queue    chan *pkt_t
-	a_ticker   *time.Ticker
-	r_deadline *time.Timer
-	need_ack   bool
+	a_ticker *time.Ticker
+	need_ack bool
 }
 
 type channel_handler_iface interface {
@@ -129,87 +130,52 @@ func (h *channel_handler) drop_channel(c *channel_t) {
 
 func (h *channel_handler) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
-		conn:         h,
-		peer:         peer,
-		rcv_ack_last: -1,
-		snd_buf:      make(map[int]*pkt_t, 16),
-		rcv_buf:      make(map[int]*pkt_t, 16),
-		i_queue:      make(chan *pkt_t, 1),
-		r_queue:      make(chan *pkt_t),
-		s_queue:      make(chan channel_handler_snd),
-		a_ticker:     time.NewTicker(250 * time.Microsecond),
-		r_deadline:   time.NewTimer(10 * time.Second),
+		conn:     h,
+		peer:     peer,
+		a_ticker: time.NewTicker(250 * time.Microsecond),
+		rcv:      make_channel_rcv_buffer(),
+		snd:      make_channel_snd_buffer(),
 	}
-
-	c.r_deadline.Stop()
 
 	return c
 }
 
 func (c *channel_t) control_loop() {
+	Log.Debugf("channel[%s](%s -> %s): opened",
+		short_hash(c.id),
+		c.conn.peers.get_local_hashname().Short(),
+		c.peer.Short())
+
+	defer Log.Debugf("channel[%s](%s -> %s): closed",
+		short_hash(c.id),
+		c.conn.peers.get_local_hashname().Short(),
+		c.peer.Short())
+
+	defer c.conn.drop_channel(c)
+
 	for {
 		var (
-			s_queue = c.s_queue
 			a_queue = c.a_ticker.C
-			i_queue = c.i_queue
-			r_queue = c.r_queue
 		)
 
-		// don't send new packets when there are more than a 100 in-flight packets
-		if c.snd_in_flght > 100 {
-			s_queue = nil
-		}
-
-		// don't read new packets unles a packet is ready
-		if c.readable_pkt == nil {
-			r_queue = nil
-		}
-
-		// only allow sending packets
 		if !c.snd_init_pkt {
+			// only allow sending packets
 			a_queue = nil
-			r_queue = nil
-			i_queue = nil
 		} else if !c.rcv_init_ack {
 			// only allow receiving acks
 			a_queue = nil
-			r_queue = nil
-			s_queue = nil
 		}
 
 		select {
-		case <-c.r_deadline.C:
-			c.rcv_pkt(&pkt_t{
-				hdr: pkt_hdr_t{
-					C:   c.id,
-					Seq: c.rcv_seq_next,
-					End: true,
-					Err: "timeout",
-				},
-			})
 		case <-a_queue:
 			c.send_ack()
-		case r_queue <- c.readable_pkt:
-			// remove from buffer
-			delete(c.rcv_buf, c.readable_pkt.hdr.Seq)
-			c.readable_pkt = nil
 
-			// prepare new pkt
-			c.rcv_seq_next++
-			if pkt := c.rcv_buf[c.rcv_seq_next]; pkt != nil {
-				c.readable_pkt = pkt
-			}
-
-		case pkt := <-i_queue:
-			c.rcv_pkt(pkt)
-		case cmd := <-s_queue:
-			c.snd_pkt(cmd)
 		}
 	}
 }
 
 func (c *channel_t) SetReceiveDeadline(deadline time.Time) {
-	c.r_deadline.Reset(deadline.Sub(time.Now()))
+	c.rcv.set_deadline(deadline)
 }
 
 func (c *channel_t) close() error {
@@ -217,125 +183,40 @@ func (c *channel_t) close() error {
 }
 
 func (c *channel_t) close_with_error(err string) error {
-	defer c.conn.drop_channel(c)
-
-	if c.end {
-		return nil
-	}
-
 	return c.send(&pkt_t{hdr: pkt_hdr_t{End: true, Err: err}})
 }
 
 func (c *channel_t) send(pkt *pkt_t) error {
-	reply := make(chan error, 1)
-	c.s_queue <- channel_handler_snd{pkt, reply}
-	return <-reply
+
+	// mark the packet
+	pkt.hdr.C = c.id
+
+	// buffer the packet
+	err := c.snd.put(pkt)
+	if err != nil {
+		return err
+	}
+
+	// send the packet
+	err = c.conn.conn.send(c.peer, pkt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *channel_t) receive() (*pkt_t, error) {
-	return <-c.r_queue, nil
-}
-
-func (c *channel_t) snd_pkt(cmd channel_handler_snd) {
-	// mark the packet
-	cmd.pkt.hdr.C = c.id
-
-	// buffer the backet
-	cmd.pkt.hdr.Seq = c.snd_seq_next
-	c.snd_buf[cmd.pkt.hdr.Seq] = cmd.pkt
-	c.snd_seq_next++
-
-	// send pkt
-	// Log.Debugf("channel[%s]: snd %+v", c.id[:8], cmd.pkt)
-	err := c.conn.conn.send(c.peer, cmd.pkt)
+	pkt, err := c.rcv.get()
 	if err != nil {
-		cmd.reply <- err
-		return
-	}
-	cmd.reply <- nil
-
-	c.snd_in_flght++
-
-	if !c.snd_init_pkt {
-		c.snd_init_pkt = true
-	}
-}
-
-func (c *channel_t) rcv_pkt(pkt *pkt_t) {
-	// Log.Debugf("channel[%s]: rcv %+v", c.id[:8], pkt)
-
-	// Step 1:
-	// - handle ack
-	if pkt.hdr.Ack != nil {
-		c.handle_ack(pkt)
-		return
+		return nil, err
 	}
 
-	// Step 3:
-	// - handle rcv
-	c.buffer_pkt(pkt)
-}
-
-func (c *channel_t) handle_ack(pkt *pkt_t) {
-	var (
-		ack    = *pkt.hdr.Ack
-		missed = make(map[int]bool, len(pkt.hdr.Miss))
-	)
-
-	if ack < c.rcv_ack_last {
-		// drop ack;
-		return
-	}
-	c.rcv_ack_last = ack
-	c.snd_in_flght = c.snd_seq_next - 1 - ack + len(pkt.hdr.Miss)
-
-	// Log.Debugf("channel[%s]: rcv ack=%d in-flight=%d missing=%+v", c.id[:8], ack, c.snd_in_flght, pkt.hdr.Miss)
-
-	// resend missed packets
-	if len(pkt.hdr.Miss) > 0 {
-		for _, seq := range pkt.hdr.Miss {
-			if pkt := c.snd_buf[seq]; pkt != nil {
-				c.conn.conn.send(c.peer, pkt)
-			}
-		}
+	if pkt.hdr.Err != "" {
+		err = errors.New(pkt.hdr.Err)
 	}
 
-	// clean buffer
-	for seq := range c.snd_buf {
-		if seq <= ack && !missed[seq] {
-			delete(c.snd_buf, seq)
-		}
-	}
-
-	if !c.rcv_init_ack {
-		c.rcv_init_ack = true
-	}
-}
-
-func (c *channel_t) buffer_pkt(pkt *pkt_t) {
-	if c.rcv_buf[pkt.hdr.Seq] != nil {
-		// drop pkt; already received
-		return
-	}
-
-	if c.rcv_seq_last < pkt.hdr.Seq {
-		if c.end {
-			// drop pkt; pkt.Seq is larger than the end pkt
-			return
-		}
-		c.rcv_seq_last = pkt.hdr.Seq
-	}
-
-	if pkt.hdr.End {
-		c.end = true
-	}
-
-	if c.rcv_seq_next == pkt.hdr.Seq {
-		c.readable_pkt = pkt
-	}
-
-	c.rcv_buf[pkt.hdr.Seq] = pkt
-	c.request_ack()
+	return pkt, err
 }
 
 func (c *channel_t) request_ack() {
@@ -343,30 +224,13 @@ func (c *channel_t) request_ack() {
 }
 
 func (c *channel_t) send_ack() {
-	if !c.need_ack {
-		return
-	}
-	c.need_ack = false
-
-	var (
-		missing []int
-		ack     = new(int)
-	)
-
-	*ack = c.rcv_seq_last
-
-	for i := c.rcv_seq_next; i < c.rcv_seq_last; i++ {
-		if c.rcv_buf[i] == nil {
-			// missing
-			missing = append(missing, i)
-		}
-	}
+	ack, miss := c.rcv.inspect()
 
 	pkt := &pkt_t{
 		hdr: pkt_hdr_t{
 			C:    c.id,
-			Ack:  ack,
-			Miss: missing,
+			Ack:  &ack,
+			Miss: miss,
 		},
 	}
 
@@ -394,7 +258,7 @@ func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
 		}
 	}
 
-	channel.i_queue <- pkt
+	channel.rcv.put(pkt)
 }
 
 func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
@@ -414,11 +278,12 @@ func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
 	go channel.control_loop()
 	go channel.run_user_handler()
 
-	channel.i_queue <- pkt
+	channel.rcv.put(pkt)
 }
 
 func (c *channel_t) run_user_handler() {
 	defer c.close()
+
 	defer func() {
 		r := recover()
 		if r != nil {
