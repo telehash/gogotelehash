@@ -1,13 +1,13 @@
 package telehash
 
 type SwitchMux struct {
-	channel_types map[string]channel_handler_iface
-	fallback      channel_handler_iface
+	channel_types map[string]channel_controller_iface
+	fallback      channel_controller_iface
 }
 
 func NewSwitchMux() *SwitchMux {
 	return &SwitchMux{
-		channel_types: make(map[string]channel_handler_iface),
+		channel_types: make(map[string]channel_controller_iface),
 	}
 }
 
@@ -25,20 +25,20 @@ func (s *SwitchMux) serve_telehash(c *channel_t) {
 	}
 }
 
-func (s *SwitchMux) handle_fallback(h channel_handler_iface) {
+func (s *SwitchMux) handle_fallback(h channel_controller_iface) {
 	s.fallback = h
 }
 
 func (s *SwitchMux) handle_fallback_func(f func(*channel_t)) {
-	s.handle_fallback(channel_handler_func(f))
+	s.handle_fallback(channel_controller_func(f))
 }
 
-func (s *SwitchMux) handle(typ string, h channel_handler_iface) {
+func (s *SwitchMux) handle(typ string, h channel_controller_iface) {
 	s.channel_types[typ] = h
 }
 
 func (s *SwitchMux) handle_func(typ string, f func(*channel_t)) {
-	s.handle(typ, channel_handler_func(f))
+	s.handle(typ, channel_controller_func(f))
 }
 
 func (s *SwitchMux) HandleFallback(h Handler) {

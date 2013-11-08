@@ -6,11 +6,12 @@ import (
 )
 
 type Switch struct {
-	conn  *channel_handler
-	peers *peer_handler
-	addr  string
-	key   *rsa.PrivateKey
-	mux   *SwitchMux
+	net      *net_controller
+	channels *channel_controller
+	peers    *peer_controller
+	addr     string
+	key      *rsa.PrivateKey
+	mux      *SwitchMux
 }
 
 type Channel struct {
@@ -32,13 +33,25 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 }
 
 func (s *Switch) Start() error {
-	peers, err := peer_handler_open(s.key, s.mux)
+	net, err := net_controller_open(s.addr)
+	if err != nil {
+		return err
+	}
+	s.net = net
+
+	peers, err := peer_controller_open(s.key, s.mux)
 	if err != nil {
 		return err
 	}
 	s.peers = peers
 
-	conn, err := channel_handler_open(s.addr, s.key, s.mux, s.peers)
+	lines, err := line_controller_open(s)
+	if err != nil {
+		return nil, err
+	}
+	s.lines = lines
+
+	conn, err := channel_controller_open(s.addr, s.key, s.mux, s.peers)
 	if err != nil {
 		return err
 	}

@@ -17,20 +17,21 @@ type peer_t struct {
 	addr     *net.UDPAddr
 }
 
-type peer_handler struct {
-	conn           *channel_handler
+type peer_controller struct {
+	sw             *Switch
 	local_hashname Hashname
 	buckets        [][]*peer_t
 	peers_mtx      sync.RWMutex
 }
 
-func peer_handler_open(prvkey *rsa.PrivateKey, mux *SwitchMux) (*peer_handler, error) {
-	hashname, err := HashnameFromPublicKey(&prvkey.PublicKey)
+func peer_controller_open(sw *Switch, mux *SwitchMux) (*peer_controller, error) {
+	hashname, err := HashnameFromPublicKey(&sw.key.PublicKey)
 	if err != nil {
 		return nil, err
 	}
 
-	h := &peer_handler{
+	h := &peer_controller{
+		sw:             sw,
 		local_hashname: hashname,
 		buckets:        make([][]*peer_t, 32*8),
 	}
@@ -42,11 +43,11 @@ func peer_handler_open(prvkey *rsa.PrivateKey, mux *SwitchMux) (*peer_handler, e
 	return h, nil
 }
 
-func (h *peer_handler) get_local_hashname() Hashname {
+func (h *peer_controller) get_local_hashname() Hashname {
 	return h.local_hashname
 }
 
-func (h *peer_handler) add_peer(hashname Hashname, addr string, pubkey *rsa.PublicKey, via Hashname) (Hashname, error) {
+func (h *peer_controller) add_peer(hashname Hashname, addr string, pubkey *rsa.PublicKey, via Hashname) (Hashname, error) {
 	var (
 		err      error
 		udp_addr *net.UDPAddr
@@ -103,7 +104,7 @@ func (h *peer_handler) add_peer(hashname Hashname, addr string, pubkey *rsa.Publ
 	return hashname, nil
 }
 
-func (h *peer_handler) get_peer(hashname Hashname) *peer_t {
+func (h *peer_controller) get_peer(hashname Hashname) *peer_t {
 	bucket_index := kad_bucket_for(h.get_local_hashname(), hashname)
 
 	if bucket_index < 0 {
@@ -123,7 +124,7 @@ func (h *peer_handler) get_peer(hashname Hashname) *peer_t {
 	return nil
 }
 
-func (h *peer_handler) find_closest_peers(t Hashname, n int) []*peer_t {
+func (h *peer_controller) find_closest_peers(t Hashname, n int) []*peer_t {
 	bucket_index := kad_bucket_for(h.get_local_hashname(), t)
 	delta := 0
 
@@ -163,7 +164,7 @@ func (h *peer_handler) find_closest_peers(t Hashname, n int) []*peer_t {
 	return peers
 }
 
-func (h *peer_handler) seek(hashname Hashname, n int) []*peer_t {
+func (h *peer_controller) seek(hashname Hashname, n int) []*peer_t {
 	var (
 		wg   sync.WaitGroup
 		last = h.find_closest_peers(hashname, n)
@@ -205,7 +206,7 @@ RECURSOR:
 	return last
 }
 
-func (h *peer_handler) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
+func (h *peer_controller) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	local_hashname := h.get_local_hashname()
@@ -217,7 +218,7 @@ func (h *peer_handler) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 		},
 	}
 
-	channel, err := h.conn.open_channel(to, pkt)
+	channel, err := h.sw.channels.open_channel(to, pkt)
 	if err != nil {
 		Log.Debugf("failed to seek %s (error: %s)", to, err)
 		return
@@ -263,7 +264,7 @@ func (h *peer_handler) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 	}
 }
 
-func (h *peer_handler) serve_seek(channel *channel_t) {
+func (h *peer_controller) serve_seek(channel *channel_t) {
 	pkt, err := channel.receive()
 	if err != nil {
 		return // drop
@@ -282,12 +283,7 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		line := h.conn.conn.get_snd_line(peer.hashname)
-		if line == nil {
-			continue
-		}
-
-		if !line.opened {
+		if !h.sw.channels.conn.has_open_line_to(peer.hashname) {
 			continue
 		}
 
@@ -305,7 +301,7 @@ func (h *peer_handler) serve_seek(channel *channel_t) {
 	}
 }
 
-func (h *peer_handler) send_peer_cmd(hashname Hashname) error {
+func (h *peer_controller) send_peer_cmd(hashname Hashname) error {
 	to := h.get_peer(hashname)
 	if to == nil {
 		return fmt.Errorf("unknown peer: %s", hashname)
@@ -320,13 +316,13 @@ func (h *peer_handler) send_peer_cmd(hashname Hashname) error {
 	}
 
 	if to.addr != nil {
-		h.conn.conn.conn.send(&pkt_t{
+		h.sw.net.Send(hashname, &pkt_t{
 			hdr:  pkt_hdr_t{Type: "+ping"},
 			addr: to.addr,
 		})
 	}
 
-	conn_ch, err := h.conn.open_channel(via.hashname, &pkt_t{
+	conn_ch, err := h.sw.channels.open_channel(via.hashname, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "peer",
 			Peer: to.hashname.String(),
@@ -337,7 +333,7 @@ func (h *peer_handler) send_peer_cmd(hashname Hashname) error {
 	return err
 }
 
-func (h *peer_handler) serve_peer(channel *channel_t) {
+func (h *peer_controller) serve_peer(channel *channel_t) {
 	pkt, err := channel.receive()
 	if err != nil {
 		Log.Debugf("error: %s", err)
@@ -368,7 +364,7 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
-	conn_ch, err := h.conn.open_channel(peer, &pkt_t{
+	conn_ch, err := h.sw.channels.open_channel(peer, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "connect",
 			IP:   sender.addr.IP.String(),
@@ -384,7 +380,7 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 	}
 }
 
-func (h *peer_handler) serve_connect(channel *channel_t) {
+func (h *peer_controller) serve_connect(channel *channel_t) {
 	pkt, err := channel.receive()
 	if err != nil {
 		Log.Debugf("error: %s", err)
@@ -407,7 +403,7 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 
 	Log.Debugf("(l=%s) hashname=%s addr=%+q", h.get_local_hashname().Short(), hashname.Short(), addr)
 
-	err = h.conn.conn.open_line(hashname)
+	err = h.sw.channels.conn._snd_open_pkt(hashname)
 	if err != nil {
 		Log.Debugf("error: %s", err)
 		return

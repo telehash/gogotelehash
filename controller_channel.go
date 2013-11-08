@@ -4,14 +4,13 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"errors"
-	"runtime"
 	"runtime/debug"
 	"sync"
 	"time"
 )
 
 type channel_t struct {
-	conn *channel_handler
+	conn *channel_controller
 
 	id           string   // id of the channel
 	peer         Hashname // hashname of the peer
@@ -23,30 +22,29 @@ type channel_t struct {
 	ack *channel_ack_handler_t
 }
 
-type channel_handler_iface interface {
+type channel_controller_iface interface {
 	serve_telehash(channel *channel_t)
 }
 
-type channel_handler_func func(channel *channel_t)
+type channel_controller_func func(channel *channel_t)
 
-func (f channel_handler_func) serve_telehash(channel *channel_t) {
+func (f channel_controller_func) serve_telehash(channel *channel_t) {
 	f(channel)
 }
 
-type channel_handler struct {
-	conn         *line_handler
-	peers        *peer_handler
+type channel_controller struct {
+	sw           *Switch
 	channels     map[string]*channel_t
 	channels_mtx sync.Mutex
-	handler      channel_handler_iface
+	handler      channel_controller_iface
 }
 
-type channel_handler_snd struct {
+type channel_controller_snd struct {
 	pkt   *pkt_t
 	reply chan error
 }
 
-func (h *channel_handler) _close_channels() {
+func (h *channel_controller) _close_channels() {
 	h.channels_mtx.Lock()
 	defer h.channels_mtx.Unlock()
 
@@ -55,39 +53,23 @@ func (h *channel_handler) _close_channels() {
 	}
 }
 
-func (h *channel_handler) reader_loop() {
-	defer h._close_channels()
-
-	for pkt := range h.conn.rcv {
-		h.rcv_channel_pkt(pkt)
-	}
-}
-
-func channel_handler_open(addr string, prvkey *rsa.PrivateKey, handler channel_handler_iface, peers *peer_handler) (*channel_handler, error) {
-	conn, err := line_handler_open(addr, prvkey, peers)
+func channel_controller_open(addr string, prvkey *rsa.PrivateKey, handler channel_controller_iface, peers *peer_controller) (*channel_controller, error) {
+	conn, err := line_controller_open(addr, prvkey, peers)
 	if err != nil {
 		return nil, err
 	}
 
-	h := &channel_handler{
+	h := &channel_controller{
 		conn:     conn,
 		peers:    peers,
 		channels: make(map[string]*channel_t),
 		handler:  handler,
 	}
 
-	for i := 0; i < runtime.NumCPU(); i++ {
-		go h.reader_loop()
-	}
-
 	return h, nil
 }
 
-func (h *channel_handler) close() {
-	h.conn.close()
-}
-
-func (h *channel_handler) open_channel(hashname Hashname, pkt *pkt_t) (*channel_t, error) {
+func (h *channel_controller) open_channel(hashname Hashname, pkt *pkt_t) (*channel_t, error) {
 	id, err := make_rand(16)
 	if err != nil {
 		return nil, err
@@ -112,21 +94,21 @@ func (h *channel_handler) open_channel(hashname Hashname, pkt *pkt_t) (*channel_
 	return channel, nil
 }
 
-func (h *channel_handler) add_channel(c *channel_t) {
+func (h *channel_controller) add_channel(c *channel_t) {
 	h.channels_mtx.Lock()
 	defer h.channels_mtx.Unlock()
 
 	h.channels[c.id] = c
 }
 
-func (h *channel_handler) drop_channel(c *channel_t) {
+func (h *channel_controller) drop_channel(c *channel_t) {
 	h.channels_mtx.Lock()
 	defer h.channels_mtx.Unlock()
 
 	delete(h.channels, c.id)
 }
 
-func (h *channel_handler) make_channel(peer Hashname) *channel_t {
+func (h *channel_controller) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
 		conn: h,
 		peer: peer,
@@ -170,7 +152,7 @@ func (c *channel_t) send(pkt *pkt_t) error {
 	c.ack.add_ack_info(pkt)
 
 	// send the packet
-	err = c.conn.conn.send(c.peer, pkt)
+	err = c.conn.conn.conn._snd_pkt(c.peer, pkt)
 	if err != nil {
 		return err
 	}
@@ -191,7 +173,7 @@ func (c *channel_t) receive() (*pkt_t, error) {
 	return pkt, err
 }
 
-func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
+func (h *channel_controller) rcv_channel_pkt(pkt *pkt_t) {
 
 	if pkt.hdr.C == "" {
 		return // drop; unknown channel
@@ -217,14 +199,8 @@ func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
 	channel.ack.handle_ack_info(pkt)
 }
 
-func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
-	peer_hashname, err := HashnameFromString(pkt.peer)
-	if err != nil {
-		Log.Debug(err)
-		return // drop
-	}
-
-	channel := h.make_channel(peer_hashname)
+func (h *channel_controller) rcv_new_channel_pkt(pkt *pkt_t) {
+	channel := h.make_channel(pkt.peer)
 	channel.id = pkt.hdr.C
 	channel.channel_type = pkt.hdr.Type
 	// channel.snd_init_pkt = true

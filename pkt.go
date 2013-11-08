@@ -12,7 +12,7 @@ type pkt_t struct {
 	addr *net.UDPAddr
 	hdr  pkt_hdr_t
 	body []byte
-	peer string
+	peer Hashname
 }
 
 type pkt_hdr_t struct {
