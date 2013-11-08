@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"encoding/hex"
 	"errors"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -15,25 +16,11 @@ type channel_t struct {
 	id           string   // id of the channel
 	peer         Hashname // hashname of the peer
 	channel_type string   // type of the channel
-	snd_init_pkt bool
-	// snd_seq_next int
-	// snd_in_flght int
-	// snd_buf      map[int]*pkt_t
-	rcv_init_ack bool
-	// rcv_seq_next int
-	// rcv_seq_last int
-	// rcv_ack_last int
-	// rcv_buf      map[int]*pkt_t
-	// rcv_missing  int
+	// snd_init_pkt bool
+	// rcv_init_ack bool
 	snd *channel_snd_buffer_t
 	rcv *channel_rcv_buffer_t
-
-	ended bool
-
-	readable_pkt *pkt_t
-
-	a_ticker *time.Ticker
-	need_ack bool
+	ack *channel_ack_handler_t
 }
 
 type channel_handler_iface interface {
@@ -59,12 +46,17 @@ type channel_handler_snd struct {
 	reply chan error
 }
 
+func (h *channel_handler) _close_channels() {
+	h.channels_mtx.Lock()
+	defer h.channels_mtx.Unlock()
+
+	for _, c := range h.channels {
+		c.close_with_error("switch was terminated")
+	}
+}
+
 func (h *channel_handler) reader_loop() {
-	defer func() {
-		for _, c := range h.channels {
-			c.close_with_error("switch was terminated")
-		}
-	}()
+	defer h._close_channels()
 
 	for pkt := range h.conn.rcv {
 		h.rcv_channel_pkt(pkt)
@@ -84,7 +76,9 @@ func channel_handler_open(addr string, prvkey *rsa.PrivateKey, handler channel_h
 		handler:  handler,
 	}
 
-	go h.reader_loop()
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go h.reader_loop()
+	}
 
 	return h, nil
 }
@@ -103,7 +97,11 @@ func (h *channel_handler) open_channel(hashname Hashname, pkt *pkt_t) (*channel_
 	channel.id = hex.EncodeToString(id)
 	h.add_channel(channel)
 
-	go channel.control_loop()
+	Log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.id),
+		pkt.hdr.Type,
+		channel.conn.peers.get_local_hashname().Short(),
+		channel.peer.Short())
 
 	err = channel.send(pkt)
 	if err != nil {
@@ -130,48 +128,15 @@ func (h *channel_handler) drop_channel(c *channel_t) {
 
 func (h *channel_handler) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
-		conn:     h,
-		peer:     peer,
-		a_ticker: time.NewTicker(250 * time.Microsecond),
-		rcv:      make_channel_rcv_buffer(),
-		snd:      make_channel_snd_buffer(),
+		conn: h,
+		peer: peer,
+		rcv:  make_channel_rcv_buffer(),
+		snd:  make_channel_snd_buffer(),
 	}
+
+	c.ack = make_channel_ack_handler(c.rcv, c.snd, c)
 
 	return c
-}
-
-func (c *channel_t) control_loop() {
-	Log.Debugf("channel[%s](%s -> %s): opened",
-		short_hash(c.id),
-		c.conn.peers.get_local_hashname().Short(),
-		c.peer.Short())
-
-	defer Log.Debugf("channel[%s](%s -> %s): closed",
-		short_hash(c.id),
-		c.conn.peers.get_local_hashname().Short(),
-		c.peer.Short())
-
-	defer c.conn.drop_channel(c)
-
-	for {
-		var (
-			a_queue = c.a_ticker.C
-		)
-
-		if !c.snd_init_pkt {
-			// only allow sending packets
-			a_queue = nil
-		} else if !c.rcv_init_ack {
-			// only allow receiving acks
-			a_queue = nil
-		}
-
-		select {
-		case <-a_queue:
-			c.send_ack()
-
-		}
-	}
 }
 
 func (c *channel_t) SetReceiveDeadline(deadline time.Time) {
@@ -182,8 +147,13 @@ func (c *channel_t) close() error {
 	return c.close_with_error("")
 }
 
-func (c *channel_t) close_with_error(err string) error {
-	return c.send(&pkt_t{hdr: pkt_hdr_t{End: true, Err: err}})
+func (c *channel_t) close_with_error(err_message string) error {
+	err := c.send(&pkt_t{hdr: pkt_hdr_t{End: true, Err: err_message}})
+
+	c.ack.close()
+	c.rcv.close()
+
+	return err
 }
 
 func (c *channel_t) send(pkt *pkt_t) error {
@@ -196,6 +166,8 @@ func (c *channel_t) send(pkt *pkt_t) error {
 	if err != nil {
 		return err
 	}
+
+	c.ack.add_ack_info(pkt)
 
 	// send the packet
 	err = c.conn.conn.send(c.peer, pkt)
@@ -219,29 +191,8 @@ func (c *channel_t) receive() (*pkt_t, error) {
 	return pkt, err
 }
 
-func (c *channel_t) request_ack() {
-	c.need_ack = true
-}
-
-func (c *channel_t) send_ack() {
-	ack, miss := c.rcv.inspect()
-
-	pkt := &pkt_t{
-		hdr: pkt_hdr_t{
-			C:    c.id,
-			Ack:  &ack,
-			Miss: miss,
-		},
-	}
-
-	// Log.Debugf("channel[%s]: snd ack=%d missing=%+v", c.id[:8], *ack, missing)
-	err := c.conn.conn.send(c.peer, pkt)
-	if err != nil {
-		// Log.Debugf("channel[%s]: snd-ack err=%s", c.id[:8], err)
-	}
-}
-
 func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
+
 	if pkt.hdr.C == "" {
 		return // drop; unknown channel
 	}
@@ -258,7 +209,12 @@ func (h *channel_handler) rcv_channel_pkt(pkt *pkt_t) {
 		}
 	}
 
-	channel.rcv.put(pkt)
+	if !pkt.JustAck() { // not just an ack
+		channel.rcv.put(pkt)
+		channel.ack.received_packet()
+	}
+
+	channel.ack.handle_ack_info(pkt)
 }
 
 func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
@@ -271,24 +227,30 @@ func (h *channel_handler) rcv_new_channel_pkt(pkt *pkt_t) {
 	channel := h.make_channel(peer_hashname)
 	channel.id = pkt.hdr.C
 	channel.channel_type = pkt.hdr.Type
-	channel.snd_init_pkt = true
-	channel.rcv_init_ack = true
+	// channel.snd_init_pkt = true
+	// channel.rcv_init_ack = true
 	h.add_channel(channel)
 
-	go channel.control_loop()
+	Log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.id),
+		channel.channel_type,
+		channel.conn.peers.get_local_hashname().Short(),
+		channel.peer.Short())
+
 	go channel.run_user_handler()
 
 	channel.rcv.put(pkt)
+	channel.ack.received_packet()
 }
 
 func (c *channel_t) run_user_handler() {
-	defer c.close()
-
 	defer func() {
 		r := recover()
 		if r != nil {
 			Log.Errorf("panic: %s\n%s", r, debug.Stack())
 			c.close_with_error("internal server error")
+		} else {
+			c.close()
 		}
 	}()
 

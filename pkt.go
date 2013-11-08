@@ -38,6 +38,34 @@ type pkt_hdr_t struct {
 	Custom json.RawMessage `json:"_,omitempty"`
 }
 
+func (p *pkt_t) JustAck() bool {
+	return len(p.body) == 0 && p.hdr.JustAck()
+}
+
+func (p *pkt_hdr_t) JustAck() bool {
+	if p.Type == "" &&
+		p.Line == "" &&
+		p.Iv == "" &&
+		p.Open == "" &&
+		p.Sig == "" &&
+		p.To == "" &&
+		p.At == 0 &&
+		p.Family == "" &&
+		p.Seq == 0 &&
+		p.Ack != nil &&
+		p.End == false &&
+		p.Err == "" &&
+		p.Seek == "" &&
+		p.See == nil &&
+		p.Peer == "" &&
+		p.IP == "" &&
+		p.Port == 0 &&
+		len(p.Custom) == 0 {
+		return true
+	}
+	return false
+}
+
 func (p *pkt_t) format_pkt() ([]byte, error) {
 	if p == nil {
 		panic("p cannot be nil")

@@ -57,6 +57,39 @@ func (c *channel_rcv_buffer_t) received_end() bool {
 	return c.received_end_pkt
 }
 
+func (c *channel_rcv_buffer_t) ended() bool {
+	c.mtx.RLock()
+	defer c.mtx.RUnlock()
+
+	return c._ended()
+}
+
+func (c *channel_rcv_buffer_t) wait_for_ended() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	for !c._ended() {
+		c.cnd.Wait()
+	}
+
+	// signal next blocked reader (if any)
+	c.cnd.Signal()
+}
+
+func (c *channel_rcv_buffer_t) close() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	for !c._ended() {
+		c.cnd.Wait()
+	}
+
+	c.deadline.Stop()
+
+	// signal next blocked reader (if any)
+	c.cnd.Signal()
+}
+
 // blocks until the next pkt is ready
 // returns nil when the stream has ended
 func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
@@ -81,6 +114,7 @@ func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
 		n := len(c.buf)
 		pkt = c.buf[n-1]
 		c.buf = c.buf[:n-1]
+		// Log.Debugf("read pkt seq=%d", pkt.hdr.Seq)
 	}
 
 	// signal next blocked reader (if any)
@@ -117,6 +151,8 @@ func (c *channel_rcv_buffer_t) put(pkt *pkt_t) {
 
 	// signal next blocked reader (if any)
 	c.cnd.Signal()
+
+	// Log.Debugf("rcv  pkt seq=%d", pkt.hdr.Seq)
 }
 
 func (c *channel_rcv_buffer_t) set_deadline(t time.Time) {

@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"github.com/gokyle/ecdh"
 	"net"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -35,7 +36,7 @@ type line_t struct {
 }
 
 type line_handler struct {
-	conn          *pkt_handler
+	conn          *net_handler
 	peers         *peer_handler
 	key           *rsa.PrivateKey
 	snd_lines     map[Hashname]*line_t // hashname -> line
@@ -61,8 +62,13 @@ type line_handler_wait_open struct {
 	reply    chan error
 }
 
+func (h *line_handler) _close_rcv() {
+	defer func() { recover() }()
+	close(h.rcv)
+}
+
 func (h *line_handler) reader_loop() {
-	defer close(h.rcv)
+	defer h._close_rcv()
 
 	for pkt := range h.conn.rcv {
 
@@ -103,7 +109,7 @@ func (h *line_handler) command_loop() {
 }
 
 func line_handler_open(addr string, prvkey *rsa.PrivateKey, peers *peer_handler) (*line_handler, error) {
-	conn, err := pkt_handler_open(addr)
+	conn, err := net_handler_open(addr)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +128,10 @@ func line_handler_open(addr string, prvkey *rsa.PrivateKey, peers *peer_handler)
 		shutdown:      make(chan bool),
 	}
 
-	go h.reader_loop()
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go h.reader_loop()
+	}
+
 	go h.command_loop()
 
 	return h, nil

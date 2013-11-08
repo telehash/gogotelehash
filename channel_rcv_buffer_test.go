@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestBufIdeal(t *testing.T) {
+func TestBufRcvIdeal(t *testing.T) {
 	buf := make_channel_rcv_buffer()
 
 	buf.put(&pkt_t{hdr: pkt_hdr_t{Seq: 0}})
@@ -21,7 +21,7 @@ func TestBufIdeal(t *testing.T) {
 	expect_pkt(t, buf, nil, io.EOF)
 }
 
-func TestBufWrongOrder(t *testing.T) {
+func TestBufRcvWrongOrder(t *testing.T) {
 	buf := make_channel_rcv_buffer()
 
 	go func() {
@@ -60,7 +60,7 @@ func TestBufWrongOrder(t *testing.T) {
 	expect_pkt(t, buf, nil, io.EOF)
 }
 
-func TestBufDuplicates(t *testing.T) {
+func TestBufRcvDuplicates(t *testing.T) {
 	buf := make_channel_rcv_buffer()
 
 	go func() {
@@ -84,7 +84,7 @@ func TestBufDuplicates(t *testing.T) {
 	expect_pkt(t, buf, nil, io.EOF)
 }
 
-func TestBufDeadline(t *testing.T) {
+func TestBufRcvDeadline(t *testing.T) {
 	buf := make_channel_rcv_buffer()
 
 	go func() {

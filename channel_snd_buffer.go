@@ -53,17 +53,19 @@ func (c *channel_snd_buffer_t) purge_acked(ack int, miss []int) []*pkt_t {
 			new_buf = append(new_buf, pkt)
 			inflight++
 
-		} else if pkt.hdr.Seq == miss[miss_idx] {
-			// missed pkt
-			new_buf = append(new_buf, pkt)
-			miss_idx++
-			queue = append(queue, pkt)
-			inflight++
+		} else if len(miss) > miss_idx {
+			if pkt.hdr.Seq == miss[miss_idx] {
+				// missed pkt
+				new_buf = append(new_buf, pkt)
+				miss_idx++
+				queue = append(queue, pkt)
+				inflight++
 
-		} else if pkt.hdr.Seq > miss[miss_idx] {
-			// we know this miss was already acked
-			miss_idx++
+			} else if pkt.hdr.Seq > miss[miss_idx] {
+				// we know this miss was already acked
+				miss_idx++
 
+			}
 		}
 		// else acked
 	}
@@ -105,11 +107,13 @@ func (c *channel_snd_buffer_t) put(pkt *pkt_t) error {
 	// notify other senders
 	c.cnd.Signal()
 
+	// Log.Debugf("snd  pkt seq=%d", pkt.hdr.Seq)
+
 	return nil
 }
 
 func (c *channel_snd_buffer_t) _send_more() bool {
-	return c.inflight < 50
+	return c.inflight < 100
 }
 
 func (c *channel_snd_buffer_t) _ended() bool {

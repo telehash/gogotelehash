@@ -15,6 +15,8 @@ func init() {
 }
 
 func TestOpen(t *testing.T) {
+	defer capture_runtime_state().validate(t)
+
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	greetings := HandlerFunc(func(c *Channel) {
@@ -69,10 +71,12 @@ func TestOpen(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(4 * time.Second)
 }
 
 func TestSeek(t *testing.T) {
+	defer capture_runtime_state().validate(t)
+
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
@@ -145,5 +149,22 @@ func ping_pong(c *Channel) {
 		if err != nil {
 			return
 		}
+	}
+}
+
+type runtime_state struct {
+	NumGoroutine int
+}
+
+func capture_runtime_state() runtime_state {
+	return runtime_state{
+		NumGoroutine: runtime.NumGoroutine(),
+	}
+}
+
+func (a runtime_state) validate(t *testing.T) {
+	b := capture_runtime_state()
+	if a.NumGoroutine != b.NumGoroutine {
+		t.Logf("NumGoroutine: delta=%d", b.NumGoroutine-a.NumGoroutine)
 	}
 }
