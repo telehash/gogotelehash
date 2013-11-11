@@ -32,7 +32,7 @@ func (c *main_controller) close() {
 func (c *main_controller) _loop() {
 	defer c.wg.Done()
 
-	ticker := time.NewTimer(10 * time.Millisecond)
+	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -61,5 +61,4 @@ func (c *main_controller) _tick(now time.Time) {
 
 	// refresh DHT
 	// c.sw.peers.refresh_dht(now)
-
 }
