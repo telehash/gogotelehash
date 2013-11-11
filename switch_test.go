@@ -25,20 +25,26 @@ func TestOpen(t *testing.T) {
 	greetings := HandlerFunc(func(c *Channel) {
 		defer func() { done <- true }()
 
-		_, err := c.Receive(nil)
+		buf := make([]byte, 1500)
+
+		n, err := c.Receive(nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		// Log.Infof("msg=%q", msg)
 
 		for {
-			_, err = c.Receive(nil)
+			buf = buf[:cap(buf)]
+
+			n, err = c.Receive(nil, buf)
 			if err == io.EOF {
 				break
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			buf = buf[:n]
 
 			// Log.Infof("msg=%q", msg)
 		}
@@ -75,7 +81,7 @@ func TestOpen(t *testing.T) {
 		defer channel.Close()
 
 		for i := 0; i < 10000; i++ {
-			err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
+			_, err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,13 +157,17 @@ func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
 }
 
 func ping_pong(c *Channel) {
+	var (
+		buf = make([]byte, 1500)
+	)
+
 	for {
-		body, err := c.Receive(nil)
+		n, err := c.Receive(nil, buf)
 		if err != nil {
 			return
 		}
 
-		err = c.Send(nil, body)
+		_, err = c.Send(nil, buf[:n])
 		if err != nil {
 			return
 		}

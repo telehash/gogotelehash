@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"encoding/json"
+	"io"
 )
 
 type Switch struct {
@@ -109,34 +110,50 @@ func (c *Channel) Close() error {
 	return c.c.close()
 }
 
-func (c *Channel) Send(hdr interface{}, body []byte) error {
+func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
 	pkt := &pkt_t{}
 
 	if hdr != nil {
 		custom, err := json.Marshal(hdr)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		pkt.hdr.Custom = json.RawMessage(custom)
 	}
 
 	pkt.body = body
 
-	return c.c.send(pkt)
+	return len(body), c.c.send(pkt)
 }
 
-func (c *Channel) Receive(hdr interface{}) (body []byte, err error) {
+func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
 	pkt, err := c.c.receive()
 	if err != nil {
-		return nil, err
+		return 0, err
+	}
+
+	if body != nil {
+		if len(body) < len(pkt.body) {
+			return 0, io.ErrShortBuffer
+		}
+		copy(body, pkt.body)
+		n = len(pkt.body)
 	}
 
 	if len(pkt.hdr.Custom) > 0 {
 		err = json.Unmarshal([]byte(pkt.hdr.Custom), hdr)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 	}
 
-	return pkt.body, nil
+	return n, nil
+}
+
+func (c *Channel) Write(b []byte) (n int, err error) {
+	return c.Send(nil, b)
+}
+
+func (c *Channel) Read(b []byte) (n int, err error) {
+	return c.Receive(nil, b)
 }
