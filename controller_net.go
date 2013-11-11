@@ -53,7 +53,7 @@ func (h *net_controller) _reader_loop() {
 	)
 
 	for {
-		err := h._rcv_pkt(buf)
+		err := h._read_pkt(buf)
 		if err == ErrUDPConnClosed {
 			break
 		}
@@ -63,7 +63,7 @@ func (h *net_controller) _reader_loop() {
 	}
 }
 
-func (h *net_controller) _rcv_pkt(buf []byte) error {
+func (h *net_controller) _read_pkt(buf []byte) error {
 	var (
 		addr *net.UDPAddr
 		pkt  *pkt_t
@@ -73,6 +73,7 @@ func (h *net_controller) _rcv_pkt(buf []byte) error {
 	// read the udp packet
 	addr, err = _net_conn_read(h.conn, &buf)
 	if err != nil {
+		Log.Debugf("rcv pkt err=%s addr=%s", err, addr)
 		return err
 	}
 
@@ -81,13 +82,23 @@ func (h *net_controller) _rcv_pkt(buf []byte) error {
 	// unpack the outer packet
 	pkt, err = _pkt_unmarshal(buf, addr)
 	if err != nil {
+		Log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
 	}
+
+	return h._rcv_pkt(pkt)
+}
+
+func (h *net_controller) _rcv_pkt(pkt *pkt_t) error {
+	var (
+		err error
+	)
 
 	// pass through line handler
 	// (returns nil in case of an open pkt)
 	pkt, err = h.sw.lines.rcv_pkt(pkt)
 	if err != nil {
+		Log.Debugf("rcv pkt step=2 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 	if pkt == nil {
@@ -96,6 +107,7 @@ func (h *net_controller) _rcv_pkt(buf []byte) error {
 
 	err = h.sw.channels.rcv_pkt(pkt)
 	if err != nil {
+		Log.Debugf("rcv pkt step=3 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
@@ -135,6 +147,10 @@ func (h *net_controller) snd_pkt(to Hashname, pkt *pkt_t) error {
 	// Log.Debugf("udp snd pkt=(%d bytes)", len(data))
 
 	return err
+}
+
+func (c *net_controller) send_nat_breaker(addr *net.UDPAddr) error {
+	return _net_conn_write(c.conn, addr, []byte("hello"))
 }
 
 func _pkt_unmarshal(data []byte, addr *net.UDPAddr) (*pkt_t, error) {

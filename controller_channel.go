@@ -54,17 +54,17 @@ func (h *channel_controller) open_channel(hashname Hashname, pkt *pkt_t) (*chann
 	channel.channel_type = pkt.hdr.Type
 	h.add_channel(channel)
 
-	Log.Debugf("channel[%s:%s](%s -> %s): opened",
-		short_hash(channel.id),
-		pkt.hdr.Type,
-		h.sw.peers.get_local_hashname().Short(),
-		channel.peer.Short())
-
 	err = channel.send(pkt)
 	if err != nil {
 		channel.close()
 		return nil, err
 	}
+
+	Log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.id),
+		pkt.hdr.Type,
+		h.sw.peers.get_local_hashname().Short(),
+		channel.peer.Short())
 
 	return channel, nil
 }

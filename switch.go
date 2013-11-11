@@ -7,6 +7,7 @@ import (
 )
 
 type Switch struct {
+	main     *main_controller
 	net      *net_controller
 	channels *channel_controller
 	peers    *peer_controller
@@ -35,6 +36,12 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 }
 
 func (s *Switch) Start() error {
+
+	main, err := main_controller_open(s)
+	if err != nil {
+		return err
+	}
+	s.main = main
 
 	net, err := net_controller_open(s)
 	if err != nil {
@@ -66,6 +73,7 @@ func (s *Switch) Start() error {
 func (s *Switch) Stop() error {
 	s.channels.close()
 	s.net.close()
+	s.main.close()
 	return nil
 }
 

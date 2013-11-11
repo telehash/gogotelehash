@@ -227,7 +227,6 @@ func (h *peer_controller) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 
 	channel, err := h.sw.channels.open_channel(to, pkt)
 	if err != nil {
-		Log.Debugf("failed to seek %s (error: %s)", to, err)
 		return
 	}
 	defer channel.close()
@@ -324,21 +323,18 @@ func (h *peer_controller) send_peer_cmd(hashname Hashname) error {
 
 	if to.addr != nil {
 		// Deploy the nat breaker
-		h.sw.net.snd_pkt(hashname, &pkt_t{
-			hdr:  pkt_hdr_t{Type: "+ping"},
-			addr: to.addr,
-		})
+		h.sw.net.send_nat_breaker(to.addr)
 	}
 
 	conn_ch, err := h.sw.channels.open_channel(via.hashname, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "peer",
-			Peer: to.hashname.String(),
-			End:  true,
+			Peer: hashname.String(),
 		},
 	})
-	defer conn_ch.close()
+	conn_ch.close()
 
+	Log.Debugf("peer cmd done err=%s", err)
 	return err
 }
 
@@ -349,9 +345,12 @@ func (h *peer_controller) serve_peer(channel *channel_t) {
 		return
 	}
 
+	channel.close()
+
 	peer, err := HashnameFromString(pkt.hdr.Peer)
 	if err != nil {
 		Log.Debug(err)
+		return
 	}
 
 	if peer == h.get_local_hashname() {
@@ -378,14 +377,13 @@ func (h *peer_controller) serve_peer(channel *channel_t) {
 			Type: "connect",
 			IP:   sender.addr.IP.String(),
 			Port: sender.addr.Port,
-			End:  true,
 		},
 		body: pubkey,
 	})
 	conn_ch.close()
 
 	if err != nil {
-		channel.close_with_error(err.Error())
+		Log.Debugf("peer:connect err=%s", err)
 	}
 }
 
@@ -395,6 +393,8 @@ func (h *peer_controller) serve_connect(channel *channel_t) {
 		Log.Debugf("error: %s", err)
 		return
 	}
+
+	channel.close()
 
 	addr := net.JoinHostPort(pkt.hdr.IP, strconv.Itoa(pkt.hdr.Port))
 

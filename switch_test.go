@@ -122,7 +122,7 @@ func TestSeek(t *testing.T) {
 		}
 
 		// Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 	}()
 

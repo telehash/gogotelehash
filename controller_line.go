@@ -16,23 +16,25 @@ import (
 )
 
 type line_t struct {
-	hashname   Hashname         // hashname of target
-	pubkey     *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
-	ecc_prvkey *ecdh.PrivateKey // (non-nil during open phase)
-	ecc_pubkey *ecdh.PublicKey  // (non-nil during open phase)
-	addr       *net.UDPAddr     // address of target
-	snd_id     string           // line id used when sending packets
-	rcv_id     string           // line id used when receiving packets
-	snd_at     time.Time        // when the line was opened on the local side
-	rcv_at     time.Time        // when the line was opened on the remote side
-	enc_key    []byte           // aes key used when sending packets
-	dec_key    []byte           // aes key  used when receiving packets
-	// last_activity time.Time
-	// mtx           sync.RWMutex
+	hashname      Hashname         // hashname of target
+	pubkey        *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
+	ecc_prvkey    *ecdh.PrivateKey // (non-nil during open phase)
+	ecc_pubkey    *ecdh.PublicKey  // (non-nil during open phase)
+	addr          *net.UDPAddr     // address of target
+	snd_id        string           // line id used when sending packets
+	rcv_id        string           // line id used when receiving packets
+	snd_at        time.Time        // when the line was opened on the local side
+	rcv_at        time.Time        // when the line was opened on the remote side
+	enc_key       []byte           // aes key used when sending packets
+	dec_key       []byte           // aes key  used when receiving packets
+	last_activity time.Time
+	rcv_buf       []*pkt_t
+	mtx           sync.RWMutex
 }
 
 type line_controller struct {
 	sw            *Switch
+	peering_lines map[Hashname]bool    // hashname -> bool
 	opening_lines map[Hashname]*line_t // hashname -> line
 	snd_lines     map[Hashname]*line_t // hashname -> line
 	rcv_lines     map[string]*line_t   // line id  -> linex
@@ -45,8 +47,9 @@ func line_controller_open(sw *Switch) (*line_controller, error) {
 
 	h := &line_controller{
 		sw:            sw,
-		snd_lines:     make(map[Hashname]*line_t),
+		peering_lines: make(map[Hashname]bool),
 		opening_lines: make(map[Hashname]*line_t),
+		snd_lines:     make(map[Hashname]*line_t),
 		rcv_lines:     make(map[string]*line_t),
 		max_time_skew: 5 * time.Second,
 	}
@@ -66,6 +69,7 @@ func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
 		return h._rcv_line_pkt(outer_pkt)
 
 	default:
+		Log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
 		return nil, errInvalidPkt
 
 	}
@@ -73,9 +77,6 @@ func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
 
 func (h *line_controller) snd_pkt(to Hashname, pkt *pkt_t) (*pkt_t, error) {
 	switch pkt.hdr.Type {
-
-	case "+ping": // NAT breaker
-		return pkt, nil
 
 	case "open":
 		return pkt, nil
@@ -127,6 +128,7 @@ func (h *line_controller) _snd_line_pkt(to Hashname, ipkt *pkt_t) (*pkt_t, error
 		body: ipkt_data,
 		addr: line.addr,
 	}
+	line.touch()
 
 	return opkt, nil
 }
@@ -148,6 +150,14 @@ func (h *line_controller) _rcv_line_pkt(opkt *pkt_t) (*pkt_t, error) {
 		return nil, errUnknownLine
 	}
 
+	// line is not fully opend yet
+	if len(line.dec_key) == 0 {
+		line.mtx.Lock()
+		line.rcv_buf = append(line.rcv_buf, opkt)
+		line.mtx.Unlock()
+		return nil, nil
+	}
+
 	iv, err = hex.DecodeString(opkt.hdr.Iv)
 	if err != nil {
 		return nil, errInvalidPkt
@@ -164,6 +174,7 @@ func (h *line_controller) _rcv_line_pkt(opkt *pkt_t) (*pkt_t, error) {
 	}
 
 	ipkt.peer = line.hashname
+	line.touch()
 
 	return ipkt, nil
 }
@@ -187,14 +198,17 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 
 	peer = h.sw.peers.get_peer(to)
 	if peer == nil {
+		Log.Debugf("line: open err=%s", "unknown peer")
 		return errInvalidOpenReq
 	}
 
 	if peer.hashname.IsZero() {
+		Log.Debugf("line: open err=%s", "unknown peer (missing hashname)")
 		return errInvalidOpenReq
 	}
 
 	if peer.addr == nil {
+		Log.Debugf("line: open err=%s", "unknown peer (missing address)")
 		return errInvalidOpenReq
 	}
 
@@ -230,11 +244,13 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 			hashname: peer.hashname,
 			pubkey:   peer.pubkey,
 			addr:     peer.addr,
-			snd_id:   hex.EncodeToString(line_id),
+			rcv_id:   hex.EncodeToString(line_id),
 		}
 
 		// put in opening register _rcv_open_pkt() will activate the line later
 		h.opening_lines[peer.hashname] = line
+		h.rcv_lines[line.rcv_id] = line
+		line.touch()
 
 		h.mtx.Unlock()
 	}
@@ -284,7 +300,7 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 			hdr: pkt_hdr_t{
 				To:   line.hashname.String(),
 				At:   line.snd_at.Unix(),
-				Line: line.snd_id,
+				Line: line.rcv_id,
 			},
 			body: rsapub_der,
 		}
@@ -539,7 +555,7 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		}
 	}
 
-	line.rcv_id = hex.EncodeToString(line_id)
+	line.snd_id = hex.EncodeToString(line_id)
 	line.ecc_pubkey = ecc_pubkey
 
 	// ====> Line is now in opening state <=======================================
@@ -566,8 +582,8 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		return nil, err // drop
 	}
 
-	line.enc_key = hash_SHA256(shared_key, snd_id, rcv_id)
-	line.dec_key = hash_SHA256(shared_key, rcv_id, snd_id)
+	line.enc_key = hash_SHA256(shared_key, rcv_id, snd_id)
+	line.dec_key = hash_SHA256(shared_key, snd_id, rcv_id)
 
 	// activate line and notify waiters
 	{ //guarded section
@@ -577,12 +593,26 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		line.ecc_prvkey = nil
 		line.ecc_pubkey = nil
 
+		delete(h.peering_lines, line.hashname)
 		delete(h.opening_lines, line.hashname)
 		h.snd_lines[line.hashname] = line
 		h.rcv_lines[line.rcv_id] = line
 
 		h.cnd.Broadcast()
 		h.mtx.Unlock()
+
+		// handle buffered line packets
+		line.mtx.Lock()
+		buf := line.rcv_buf
+		line.rcv_buf = nil
+		line.mtx.Unlock()
+
+		for _, opkt := range buf {
+			err := h.sw.net._rcv_pkt(opkt)
+			if err != nil {
+				Log.Debugf("rcv buffer line packet err=%s", err)
+			}
+		}
 	}
 
 	Log.Debugf("line opened: %s:%s (%s -> %s)",
@@ -598,6 +628,7 @@ func (h *line_controller) _drop_line(line *line_t, err error) {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
 
+	delete(h.peering_lines, line.hashname)
 	delete(h.opening_lines, line.hashname)
 	delete(h.snd_lines, line.hashname)
 	delete(h.rcv_lines, line.rcv_id)
@@ -621,13 +652,24 @@ func (h *line_controller) _get_snd_line(id Hashname) (*line_t, error) {
 
 	line = h.snd_lines[id]
 	for line == nil {
-		if h.opening_lines[id] == nil {
+		if h.peering_lines[id] {
+			// wait
+
+		} else if h.opening_lines[id] == nil {
 
 			h.mtx.RUnlock()
 			err := h._snd_open_pkt(id)
 			h.mtx.RLock()
 
+			if err == errMissingPublicKey {
+				err = h.sw.peers.send_peer_cmd(id)
+				if err == nil {
+					h.peering_lines[id] = true
+				}
+			}
+
 			if err != nil {
+				Log.Debugf("line: open err=%s", err)
 				return nil, err
 			}
 		}
@@ -639,41 +681,39 @@ func (h *line_controller) _get_snd_line(id Hashname) (*line_t, error) {
 	return line, nil
 }
 
-/*
 func (l *line_t) touch() {
-  l.mtx.Lock()
-  defer l.mtx.Unlock()
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
 
-  l.last_activity = time.Now()
+	l.last_activity = time.Now()
 }
 
 func (l *line_t) get_last_activity() time.Time {
-  l.mtx.RLock()
-  defer l.mtx.RUnlock()
+	l.mtx.RLock()
+	defer l.mtx.RUnlock()
 
-  return l.last_activity
+	return l.last_activity
 }
 
-func (h *line_controller) drop_idle_lines() {
-  h.lines_mtx.Lock()
-  defer h.lines_mtx.Unlock()
+func (h *line_controller) invalidate_idle_lines(now time.Time) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
 
-  deadline := time.Now().Add(-15 * time.Second)
+	// if there was no activity on a line in the last 15 seconds
+	deadline := now.Add(-15 * time.Second)
 
-  for _, line := range h.snd_lines {
-    if line.get_last_activity().Before(deadline) {
-      delete(h.snd_lines, line.hashname)
-      delete(h.rcv_lines, line.rcv_id)
-      for _, waiter := range line.waiters {
-        waiter <- errors.New("line: closed (idle)")
-      }
+	for _, line := range h.snd_lines {
+		if line.get_last_activity().Before(deadline) {
 
-      Log.Debugf("line closed: %s:%s (%s -> %s)",
-        short_hash(line.rcv_id),
-        short_hash(line.snd_id),
-        h.sw.peers.get_local_hashname().Short(),
-        line.hashname.Short())
-    }
-  }
+			delete(h.snd_lines, line.hashname)
+			delete(h.rcv_lines, line.rcv_id)
+
+			Log.Debugf("line closed: %s:%s (%s -> %s)",
+				short_hash(line.rcv_id),
+				short_hash(line.snd_id),
+				h.sw.peers.get_local_hashname().Short(),
+				line.hashname.Short())
+
+		}
+	}
 }
-*/
