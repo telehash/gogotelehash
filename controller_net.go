@@ -73,7 +73,7 @@ func (h *net_controller) _read_pkt(buf []byte) error {
 	// read the udp packet
 	addr, err = _net_conn_read(h.conn, &buf)
 	if err != nil {
-		Log.Debugf("rcv pkt err=%s addr=%s", err, addr)
+		// Log.Debugf("rcv pkt err=%s addr=%s", err, addr)
 		return err
 	}
 

@@ -87,10 +87,10 @@ func (h *channel_controller) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
 		sw:   h.sw,
 		peer: peer,
-		rcv:  make_channel_rcv_buffer(),
-		snd:  make_channel_snd_buffer(),
 	}
 
+	c.rcv = make_channel_rcv_buffer(c)
+	c.snd = make_channel_snd_buffer(c)
 	c.ack = make_channel_ack_handler(c.rcv, c.snd, c)
 
 	return c
@@ -144,6 +144,7 @@ func (c *channel_t) send(pkt *pkt_t) error {
 }
 
 func (c *channel_t) receive() (*pkt_t, error) {
+
 	pkt, err := c.rcv.get()
 	if err != nil {
 		return nil, err

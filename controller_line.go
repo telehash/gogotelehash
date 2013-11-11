@@ -69,7 +69,7 @@ func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
 		return h._rcv_line_pkt(outer_pkt)
 
 	default:
-		Log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
+		// Log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
 		return nil, errInvalidPkt
 
 	}

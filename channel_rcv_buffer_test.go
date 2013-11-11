@@ -8,7 +8,7 @@ import (
 )
 
 func TestBufRcvIdeal(t *testing.T) {
-	buf := make_channel_rcv_buffer()
+	buf := make_channel_rcv_buffer(nil)
 
 	buf.put(&pkt_t{hdr: pkt_hdr_t{Seq: 0}})
 	buf.put(&pkt_t{hdr: pkt_hdr_t{Seq: 1}})
@@ -22,7 +22,7 @@ func TestBufRcvIdeal(t *testing.T) {
 }
 
 func TestBufRcvWrongOrder(t *testing.T) {
-	buf := make_channel_rcv_buffer()
+	buf := make_channel_rcv_buffer(nil)
 
 	go func() {
 		expect_miss(t, buf, -1, []int{})
@@ -61,7 +61,7 @@ func TestBufRcvWrongOrder(t *testing.T) {
 }
 
 func TestBufRcvDuplicates(t *testing.T) {
-	buf := make_channel_rcv_buffer()
+	buf := make_channel_rcv_buffer(nil)
 
 	go func() {
 		buf.put(&pkt_t{hdr: pkt_hdr_t{Seq: 2}})
@@ -85,7 +85,7 @@ func TestBufRcvDuplicates(t *testing.T) {
 }
 
 func TestBufRcvDeadline(t *testing.T) {
-	buf := make_channel_rcv_buffer()
+	buf := make_channel_rcv_buffer(nil)
 
 	go func() {
 		buf.put(&pkt_t{hdr: pkt_hdr_t{Seq: 2}})

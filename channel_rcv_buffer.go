@@ -8,11 +8,13 @@ import (
 )
 
 type channel_rcv_buffer_t struct {
+	ch               *channel_t
 	read_seq         int
 	max_seq          int
 	miss             []int
 	buf              pkt_queue_t
 	received_end_pkt bool
+	send_end_pkt     bool
 	deadline         *time.Timer
 	deadline_reached bool
 
@@ -20,8 +22,9 @@ type channel_rcv_buffer_t struct {
 	cnd *sync.Cond
 }
 
-func make_channel_rcv_buffer() *channel_rcv_buffer_t {
+func make_channel_rcv_buffer(ch *channel_t) *channel_rcv_buffer_t {
 	b := &channel_rcv_buffer_t{
+		ch:      ch,
 		max_seq: -1,
 		buf:     make(pkt_queue_t, 0, 100), // pre allocate memory
 		miss:    make([]int, 0, 100),       // pre allocate memory
@@ -109,6 +112,8 @@ func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
 		err = ErrTimeout
 	} else if c._read_ended() {
 		err = io.EOF
+	} else if c.send_end_pkt {
+		err = io.EOF
 	} else {
 		c.read_seq++
 		n := len(c.buf)
@@ -135,6 +140,9 @@ func (c *channel_rcv_buffer_t) put(pkt *pkt_t) {
 	// mark end pkt
 	if pkt.hdr.End {
 		c.received_end_pkt = true
+		if c.ch != nil {
+			c.ch.snd.end_pkt_was_received()
+		}
 	}
 
 	// mark new max seq
@@ -232,8 +240,16 @@ func (c *channel_rcv_buffer_t) _should_drop(pkt *pkt_t) bool {
 	return false
 }
 
+func (c *channel_rcv_buffer_t) end_pkt_was_send() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.send_end_pkt = true
+	c.cnd.Broadcast()
+}
+
 func (c *channel_rcv_buffer_t) _rcv_ended() bool {
-	return len(c.miss) == 0 && c.received_end_pkt
+	return c.send_end_pkt || len(c.miss) == 0 && c.received_end_pkt
 }
 
 func (c *channel_rcv_buffer_t) _read_ended() bool {
