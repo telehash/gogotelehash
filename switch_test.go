@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"github.com/fd/go-util/log"
+	"io"
 	"runtime"
 	"testing"
 	"time"
@@ -19,21 +20,30 @@ func TestOpen(t *testing.T) {
 
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
+	done := make(chan bool, 2)
+
 	greetings := HandlerFunc(func(c *Channel) {
-		msg, err := c.Receive(nil)
+		defer func() { done <- true }()
+
+		_, err := c.Receive(nil)
 		if err != nil {
 			t.Fatal(err)
 		}
-		Log.Infof("msg=%q", msg)
+		// Log.Infof("msg=%q", msg)
 
-		for i := 0; i < 1000; i++ {
-			msg, err = c.Receive(nil)
+		for {
+			_, err = c.Receive(nil)
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
 
-			Log.Infof("msg=%q", msg)
+			// Log.Infof("msg=%q", msg)
 		}
+
+		time.Sleep(time.Second)
 	})
 
 	var (
@@ -50,6 +60,7 @@ func TestOpen(t *testing.T) {
 	defer b.Stop()
 
 	go func() {
+		defer func() { done <- true }()
 
 		hashname, err := a.Seed("127.0.0.1:4001", &key_b.PublicKey)
 		if err != nil {
@@ -63,7 +74,7 @@ func TestOpen(t *testing.T) {
 
 		defer channel.Close()
 
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 10000; i++ {
 			err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)
@@ -71,7 +82,8 @@ func TestOpen(t *testing.T) {
 		}
 	}()
 
-	time.Sleep(4 * time.Second)
+	<-done
+	<-done
 }
 
 func TestSeek(t *testing.T) {

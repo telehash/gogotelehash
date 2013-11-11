@@ -1,7 +1,6 @@
 package telehash
 
 import (
-	"crypto/rsa"
 	"encoding/hex"
 	"errors"
 	"runtime/debug"
@@ -10,7 +9,7 @@ import (
 )
 
 type channel_t struct {
-	conn *channel_controller
+	sw *Switch
 
 	id           string   // id of the channel
 	peer         Hashname // hashname of the peer
@@ -22,48 +21,23 @@ type channel_t struct {
 	ack *channel_ack_handler_t
 }
 
-type channel_controller_iface interface {
-	serve_telehash(channel *channel_t)
-}
-
-type channel_controller_func func(channel *channel_t)
-
-func (f channel_controller_func) serve_telehash(channel *channel_t) {
-	f(channel)
-}
-
 type channel_controller struct {
-	sw           *Switch
-	channels     map[string]*channel_t
-	channels_mtx sync.Mutex
-	handler      channel_controller_iface
+	sw       *Switch
+	channels map[string]*channel_t
+	mtx      sync.Mutex
 }
 
-type channel_controller_snd struct {
-	pkt   *pkt_t
-	reply chan error
-}
-
-func (h *channel_controller) _close_channels() {
-	h.channels_mtx.Lock()
-	defer h.channels_mtx.Unlock()
-
+func (h *channel_controller) close() {
 	for _, c := range h.channels {
 		c.close_with_error("switch was terminated")
 	}
 }
 
-func channel_controller_open(addr string, prvkey *rsa.PrivateKey, handler channel_controller_iface, peers *peer_controller) (*channel_controller, error) {
-	conn, err := line_controller_open(addr, prvkey, peers)
-	if err != nil {
-		return nil, err
-	}
+func channel_controller_open(sw *Switch) (*channel_controller, error) {
 
 	h := &channel_controller{
-		conn:     conn,
-		peers:    peers,
+		sw:       sw,
 		channels: make(map[string]*channel_t),
-		handler:  handler,
 	}
 
 	return h, nil
@@ -77,12 +51,13 @@ func (h *channel_controller) open_channel(hashname Hashname, pkt *pkt_t) (*chann
 
 	channel := h.make_channel(hashname)
 	channel.id = hex.EncodeToString(id)
+	channel.channel_type = pkt.hdr.Type
 	h.add_channel(channel)
 
 	Log.Debugf("channel[%s:%s](%s -> %s): opened",
 		short_hash(channel.id),
 		pkt.hdr.Type,
-		channel.conn.peers.get_local_hashname().Short(),
+		h.sw.peers.get_local_hashname().Short(),
 		channel.peer.Short())
 
 	err = channel.send(pkt)
@@ -95,22 +70,22 @@ func (h *channel_controller) open_channel(hashname Hashname, pkt *pkt_t) (*chann
 }
 
 func (h *channel_controller) add_channel(c *channel_t) {
-	h.channels_mtx.Lock()
-	defer h.channels_mtx.Unlock()
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
 
 	h.channels[c.id] = c
 }
 
 func (h *channel_controller) drop_channel(c *channel_t) {
-	h.channels_mtx.Lock()
-	defer h.channels_mtx.Unlock()
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
 
 	delete(h.channels, c.id)
 }
 
 func (h *channel_controller) make_channel(peer Hashname) *channel_t {
 	c := &channel_t{
-		conn: h,
+		sw:   h.sw,
 		peer: peer,
 		rcv:  make_channel_rcv_buffer(),
 		snd:  make_channel_snd_buffer(),
@@ -132,8 +107,16 @@ func (c *channel_t) close() error {
 func (c *channel_t) close_with_error(err_message string) error {
 	err := c.send(&pkt_t{hdr: pkt_hdr_t{End: true, Err: err_message}})
 
-	c.ack.close()
+	c.snd.close()
 	c.rcv.close()
+	c.ack.close()
+	c.sw.channels.drop_channel(c)
+
+	Log.Debugf("channel[%s:%s](%s -> %s): closed",
+		short_hash(c.id),
+		c.channel_type,
+		c.sw.peers.get_local_hashname().Short(),
+		c.peer.Short())
 
 	return err
 }
@@ -152,7 +135,7 @@ func (c *channel_t) send(pkt *pkt_t) error {
 	c.ack.add_ack_info(pkt)
 
 	// send the packet
-	err = c.conn.conn.conn._snd_pkt(c.peer, pkt)
+	err = c.sw.net.snd_pkt(c.peer, pkt)
 	if err != nil {
 		return err
 	}
@@ -173,10 +156,10 @@ func (c *channel_t) receive() (*pkt_t, error) {
 	return pkt, err
 }
 
-func (h *channel_controller) rcv_channel_pkt(pkt *pkt_t) {
+func (h *channel_controller) rcv_pkt(pkt *pkt_t) error {
 
 	if pkt.hdr.C == "" {
-		return // drop; unknown channel
+		return errInvalidPkt
 	}
 
 	// Log.Debugf("channel[%s]: rcv %+v", pkt.hdr.C[:8], pkt)
@@ -185,9 +168,9 @@ func (h *channel_controller) rcv_channel_pkt(pkt *pkt_t) {
 	if channel == nil {
 		if pkt.hdr.Type != "" {
 			h.rcv_new_channel_pkt(pkt)
-			return
+			return nil
 		} else {
-			return // drop; unknown channel
+			return errUnknownChannel
 		}
 	}
 
@@ -197,6 +180,7 @@ func (h *channel_controller) rcv_channel_pkt(pkt *pkt_t) {
 	}
 
 	channel.ack.handle_ack_info(pkt)
+	return nil
 }
 
 func (h *channel_controller) rcv_new_channel_pkt(pkt *pkt_t) {
@@ -210,7 +194,7 @@ func (h *channel_controller) rcv_new_channel_pkt(pkt *pkt_t) {
 	Log.Debugf("channel[%s:%s](%s -> %s): opened",
 		short_hash(channel.id),
 		channel.channel_type,
-		channel.conn.peers.get_local_hashname().Short(),
+		h.sw.peers.get_local_hashname().Short(),
 		channel.peer.Short())
 
 	go channel.run_user_handler()
@@ -230,5 +214,5 @@ func (c *channel_t) run_user_handler() {
 		}
 	}()
 
-	c.conn.handler.serve_telehash(c)
+	c.sw.mux.serve_telehash(c)
 }

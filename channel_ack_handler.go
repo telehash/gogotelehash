@@ -14,6 +14,7 @@ type channel_ack_handler_t struct {
 	ack_timer *time.Timer
 
 	mtx sync.RWMutex
+	cnd *sync.Cond
 }
 
 func make_channel_ack_handler(
@@ -22,14 +23,17 @@ func make_channel_ack_handler(
 	channel *channel_t,
 ) *channel_ack_handler_t {
 	h := &channel_ack_handler_t{rcv: rcv, snd: snd, channel: channel}
+	h.cnd = sync.NewCond(&h.mtx)
 	return h
 }
 
 func (c *channel_ack_handler_t) close() {
-	c.rcv.wait_for_ended()
-
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+
+	for c.unacked_count > 0 {
+		c.cnd.Wait()
+	}
 
 	if c.ack_timer != nil {
 		c.ack_timer.Stop()
@@ -46,8 +50,10 @@ func (c *channel_ack_handler_t) received_packet() {
 	if c.unacked_count > 30 {
 		go c._auto_ack()
 	} else if c.ack_timer == nil {
-		c.ack_timer = time.AfterFunc(time.Second, c._auto_ack)
+		c.ack_timer = time.AfterFunc(2*time.Second, c._auto_ack)
 	}
+
+	c.cnd.Broadcast()
 }
 
 func (c *channel_ack_handler_t) add_ack_info(pkt *pkt_t) {
@@ -66,6 +72,8 @@ func (c *channel_ack_handler_t) add_ack_info(pkt *pkt_t) {
 		c.ack_timer.Stop()
 		c.ack_timer = nil
 	}
+
+	c.cnd.Broadcast()
 }
 
 func (c *channel_ack_handler_t) handle_ack_info(pkt *pkt_t) {
@@ -86,7 +94,7 @@ func (c *channel_ack_handler_t) handle_ack_info(pkt *pkt_t) {
 			// Log.Debugf("snd ack=%d miss=%+v", ack, miss)
 		}
 
-		err := c.channel.conn.conn.send(c.channel.peer, pkt)
+		err := c.channel.sw.net.snd_pkt(c.channel.peer, pkt)
 		if err != nil {
 			Log.Debugf("error while resending pkt: %s", err)
 		}
@@ -98,7 +106,7 @@ func (c *channel_ack_handler_t) _auto_ack() {
 
 	c.add_ack_info(pkt)
 
-	err := c.channel.conn.conn.send(c.channel.peer, pkt)
+	err := c.channel.sw.net.snd_pkt(c.channel.peer, pkt)
 	if err != nil {
 		Log.Debugf("error while sending auto ack: %s (%+v)", err, pkt.hdr)
 	}

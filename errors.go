@@ -14,4 +14,5 @@ var (
 	errEmptyPkt         = errors.New("net: empty packet")
 	errInvalidPkt       = errors.New("net: invalid packet")
 	errUnknownLine      = errors.New("net: unknown line")
+	errUnknownChannel   = errors.New("net: unknown channel")
 )

@@ -9,6 +9,7 @@ type Switch struct {
 	net      *net_controller
 	channels *channel_controller
 	peers    *peer_controller
+	lines    *line_controller
 	addr     string
 	key      *rsa.PrivateKey
 	mux      *SwitchMux
@@ -33,13 +34,14 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 }
 
 func (s *Switch) Start() error {
-	net, err := net_controller_open(s.addr)
+
+	net, err := net_controller_open(s)
 	if err != nil {
 		return err
 	}
 	s.net = net
 
-	peers, err := peer_controller_open(s.key, s.mux)
+	peers, err := peer_controller_open(s)
 	if err != nil {
 		return err
 	}
@@ -47,22 +49,22 @@ func (s *Switch) Start() error {
 
 	lines, err := line_controller_open(s)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	s.lines = lines
 
-	conn, err := channel_controller_open(s.addr, s.key, s.mux, s.peers)
+	channels, err := channel_controller_open(s)
 	if err != nil {
 		return err
 	}
+	s.channels = channels
 
-	peers.conn = conn
-	s.conn = conn
 	return nil
 }
 
 func (s *Switch) Stop() error {
-	s.conn.close()
+	s.channels.close()
+	s.net.close()
 	return nil
 }
 
@@ -92,7 +94,7 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 }
 
 func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
-	channel, err := s.conn.open_channel(hashname, &pkt_t{
+	channel, err := s.channels.open_channel(hashname, &pkt_t{
 		hdr: pkt_hdr_t{Type: typ},
 	})
 

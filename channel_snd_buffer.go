@@ -28,6 +28,18 @@ func make_channel_snd_buffer() *channel_snd_buffer_t {
 	return b
 }
 
+func (c *channel_snd_buffer_t) close() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	for !c._ended_and_idle() {
+		c.cnd.Wait()
+	}
+
+	// notify senders
+	c.cnd.Signal()
+}
+
 func (c *channel_snd_buffer_t) purge_acked(ack int, miss []int) []*pkt_t {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -112,10 +124,18 @@ func (c *channel_snd_buffer_t) put(pkt *pkt_t) error {
 	return nil
 }
 
+func (c *channel_snd_buffer_t) _idle() bool {
+	return c.inflight == 0
+}
+
 func (c *channel_snd_buffer_t) _send_more() bool {
 	return c.inflight < 100
 }
 
 func (c *channel_snd_buffer_t) _ended() bool {
 	return c.send_end_pkt
+}
+
+func (c *channel_snd_buffer_t) _ended_and_idle() bool {
+	return c._idle() && c._ended()
 }

@@ -35,14 +35,7 @@ type line_controller struct {
 	sw            *Switch
 	opening_lines map[Hashname]*line_t // hashname -> line
 	snd_lines     map[Hashname]*line_t // hashname -> line
-	rcv_lines     map[string]*line_t   // line id  -> line
-
-	// rcv       chan *pkt_t
-	// rcv_open  chan *pkt_t
-	// snd_open      chan line_controller_snd_open
-	// wait_open     chan line_controller_wait_open
-	// shutdown      chan bool
-
+	rcv_lines     map[string]*line_t   // line id  -> linex
 	max_time_skew time.Duration
 	mtx           sync.RWMutex
 	cnd           *sync.Cond
@@ -55,17 +48,10 @@ func line_controller_open(sw *Switch) (*line_controller, error) {
 		snd_lines:     make(map[Hashname]*line_t),
 		opening_lines: make(map[Hashname]*line_t),
 		rcv_lines:     make(map[string]*line_t),
-		// rcv:           make(chan *pkt_t),
-		// rcv_open:      make(chan *pkt_t),
-		// snd_open:      make(chan line_controller_snd_open),
-		// wait_open:     make(chan line_controller_wait_open),
 		max_time_skew: 5 * time.Second,
-		// shutdown:      make(chan bool),
 	}
 
 	h.cnd = sync.NewCond(h.mtx.RLocker())
-
-	// go h.command_loop()
 
 	return h, nil
 }
@@ -85,20 +71,17 @@ func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
 	}
 }
 
-func (h *line_controller) snd_pkt(to Hashname, outer_pkt *pkt_t) (*pkt_t, error) {
-	switch outer_pkt.hdr.Type {
+func (h *line_controller) snd_pkt(to Hashname, pkt *pkt_t) (*pkt_t, error) {
+	switch pkt.hdr.Type {
 
 	case "+ping": // NAT breaker
-		return outer_pkt, nil
+		return pkt, nil
 
 	case "open":
-		return outer_pkt, nil
+		return pkt, nil
 
-	case "line":
-		return h._snd_line_pkt(to, outer_pkt)
-
-	default:
-		return nil, errInvalidPkt
+	default: // is outer packet
+		return h._snd_line_pkt(to, pkt)
 
 	}
 }
@@ -109,86 +92,6 @@ func (h *line_controller) has_open_line_to(hn Hashname) bool {
 
 	return h.snd_lines[hn] != nil
 }
-
-// type line_controller_snd_open struct {
-//   hashname Hashname
-//   pubkey   *rsa.PublicKey
-//   addr     *net.UDPAddr
-//   reply    chan error
-// }
-
-// type line_controller_wait_open struct {
-//   hashname Hashname
-//   reply    chan error
-// }
-
-// func (h *line_controller) command_loop() {
-//   idle_line_ticker := time.NewTicker(1 * time.Second)
-//   defer idle_line_ticker.Stop()
-
-//   for {
-//     select {
-
-//     case <-h.shutdown:
-//       return
-
-//     case <-idle_line_ticker.C:
-//       h.drop_idle_lines()
-
-//     case pkt := <-h.rcv_open:
-//       h.rcv_open_pkt(pkt)
-//     case cmd := <-h.snd_open:
-//       h.snd_open_pkt(cmd, true)
-//     case cmd := <-h.wait_open:
-//       h.wait_open_cmd(cmd)
-
-//     }
-//   }
-// }
-
-// func (h *line_controller) close() {
-//   h.shutdown <- true
-//   h.conn.close()
-// }
-
-// func (h *line_controller) open_line(hashname Hashname) error {
-//   peer := h.sw.peers.get_peer(hashname)
-//   if peer == nil {
-//     return fmt.Errorf("unknown peer: %s", hashname)
-//   }
-
-//   reply := make(chan error, 1)
-
-//   if peer.pubkey == nil {
-//     if !peer.via.IsZero() {
-//       h.wait_open <- line_controller_wait_open{
-//         hashname: hashname,
-//         reply:    reply,
-//       }
-
-//       err := h.sw.peers.send_peer_cmd(hashname)
-//       if err != nil {
-//         return err
-//       }
-
-//       return <-reply
-//     }
-//     return errMissingPublicKey
-//   }
-
-//   if h.get_snd_line(hashname) != nil {
-//     return nil
-//   }
-
-//   h.snd_open <- line_controller_snd_open{
-//     hashname: hashname,
-//     pubkey:   peer.pubkey,
-//     addr:     peer.addr,
-//     reply:    reply,
-//   }
-
-//   return <-reply
-// }
 
 // Send a packet over a line.
 // This function will wrap the packet in a line packet.
@@ -450,7 +353,7 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 			addr: line.addr,
 		}
 
-		err = h.sw.net.Send(to, &opkt)
+		err = h.sw.net.snd_pkt(to, &opkt)
 		if err != nil {
 			h._drop_line(line, err)
 			return err
@@ -611,6 +514,9 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 
 	// ====> Open packet is now verified <========================================
 
+	// Update the peer data if nececery
+	h.sw.peers.add_peer(hashname, opkt.addr.String(), rsa_pubkey, ZeroHashname)
+
 	// STEP 11:
 	// - If an open packet has not already been sent to this hashname, do so by
 	//   creating one following the steps above
@@ -663,9 +569,6 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	line.enc_key = hash_SHA256(shared_key, snd_id, rcv_id)
 	line.dec_key = hash_SHA256(shared_key, rcv_id, snd_id)
 
-	// Update the peer data if nececery
-	h.sw.peers.add_peer(line.hashname, line.addr.String(), line.pubkey, ZeroHashname)
-
 	// activate line and notify waiters
 	{ //guarded section
 		h.mtx.Lock()
@@ -716,7 +619,8 @@ func (h *line_controller) _get_snd_line(id Hashname) (*line_t, error) {
 		line *line_t
 	)
 
-	for line = h.snd_lines[id]; line == nil; {
+	line = h.snd_lines[id]
+	for line == nil {
 		if h.opening_lines[id] == nil {
 
 			h.mtx.RUnlock()
@@ -726,11 +630,10 @@ func (h *line_controller) _get_snd_line(id Hashname) (*line_t, error) {
 			if err != nil {
 				return nil, err
 			}
-
-			continue
 		}
 
 		h.cnd.Wait()
+		line = h.snd_lines[id]
 	}
 
 	return line, nil

@@ -24,7 +24,7 @@ type peer_controller struct {
 	peers_mtx      sync.RWMutex
 }
 
-func peer_controller_open(sw *Switch, mux *SwitchMux) (*peer_controller, error) {
+func peer_controller_open(sw *Switch) (*peer_controller, error) {
 	hashname, err := HashnameFromPublicKey(&sw.key.PublicKey)
 	if err != nil {
 		return nil, err
@@ -36,9 +36,9 @@ func peer_controller_open(sw *Switch, mux *SwitchMux) (*peer_controller, error) 
 		buckets:        make([][]*peer_t, 32*8),
 	}
 
-	mux.handle_func("seek", h.serve_seek)
-	mux.handle_func("peer", h.serve_peer)
-	mux.handle_func("connect", h.serve_connect)
+	sw.mux.handle_func("seek", h.serve_seek)
+	sw.mux.handle_func("peer", h.serve_peer)
+	sw.mux.handle_func("connect", h.serve_connect)
 
 	return h, nil
 }
@@ -166,8 +166,9 @@ func (h *peer_controller) find_closest_peers(t Hashname, n int) []*peer_t {
 
 func (h *peer_controller) seek(hashname Hashname, n int) []*peer_t {
 	var (
-		wg   sync.WaitGroup
-		last = h.find_closest_peers(hashname, n)
+		wg    sync.WaitGroup
+		last  = h.find_closest_peers(hashname, n)
+		cache = map[Hashname]bool{}
 	)
 
 	tag := time.Now().UnixNano()
@@ -179,6 +180,12 @@ RECURSOR:
 
 		Log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
 		for _, via := range last {
+			if cache[via.hashname] {
+				continue
+			}
+
+			cache[via.hashname] = true
+
 			wg.Add(1)
 			go h.send_seek_cmd(via.hashname, hashname, &wg)
 		}
@@ -223,7 +230,7 @@ func (h *peer_controller) send_seek_cmd(to, seek Hashname, wg *sync.WaitGroup) {
 		Log.Debugf("failed to seek %s (error: %s)", to, err)
 		return
 	}
-	// defer channel.close()
+	defer channel.close()
 
 	channel.SetReceiveDeadline(time.Now().Add(15 * time.Second))
 
@@ -283,7 +290,7 @@ func (h *peer_controller) serve_seek(channel *channel_t) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		if !h.sw.channels.conn.has_open_line_to(peer.hashname) {
+		if !h.sw.lines.has_open_line_to(peer.hashname) {
 			continue
 		}
 
@@ -316,7 +323,8 @@ func (h *peer_controller) send_peer_cmd(hashname Hashname) error {
 	}
 
 	if to.addr != nil {
-		h.sw.net.Send(hashname, &pkt_t{
+		// Deploy the nat breaker
+		h.sw.net.snd_pkt(hashname, &pkt_t{
 			hdr:  pkt_hdr_t{Type: "+ping"},
 			addr: to.addr,
 		})
@@ -330,6 +338,7 @@ func (h *peer_controller) send_peer_cmd(hashname Hashname) error {
 		},
 	})
 	defer conn_ch.close()
+
 	return err
 }
 
@@ -403,9 +412,13 @@ func (h *peer_controller) serve_connect(channel *channel_t) {
 
 	Log.Debugf("(l=%s) hashname=%s addr=%+q", h.get_local_hashname().Short(), hashname.Short(), addr)
 
-	err = h.sw.channels.conn._snd_open_pkt(hashname)
+	err = h.sw.lines._snd_open_pkt(hashname)
 	if err != nil {
 		Log.Debugf("error: %s", err)
 		return
 	}
+}
+
+func (p *peer_t) String() string {
+	return fmt.Sprintf("<peer:%s addr=%s>", p.hashname.Short(), p.addr)
 }

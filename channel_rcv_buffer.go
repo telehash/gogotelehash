@@ -61,33 +61,33 @@ func (c *channel_rcv_buffer_t) ended() bool {
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
 
-	return c._ended()
+	return c._rcv_ended()
 }
 
-func (c *channel_rcv_buffer_t) wait_for_ended() {
+func (c *channel_rcv_buffer_t) wait_for_rcv_ended() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	for !c._ended() {
+	for !c._rcv_ended() {
 		c.cnd.Wait()
 	}
 
 	// signal next blocked reader (if any)
-	c.cnd.Signal()
+	c.cnd.Broadcast()
 }
 
 func (c *channel_rcv_buffer_t) close() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	for !c._ended() {
+	for !c._rcv_ended() {
 		c.cnd.Wait()
 	}
 
 	c.deadline.Stop()
 
 	// signal next blocked reader (if any)
-	c.cnd.Signal()
+	c.cnd.Broadcast()
 }
 
 // blocks until the next pkt is ready
@@ -96,7 +96,7 @@ func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	for !c._ended() && !c._pkt_available() && !c.deadline_reached {
+	for !c._rcv_ended() && !c._pkt_available() && !c.deadline_reached {
 		c.cnd.Wait()
 	}
 
@@ -107,7 +107,7 @@ func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
 
 	if c.deadline_reached {
 		err = ErrTimeout
-	} else if c._ended() {
+	} else if c._read_ended() {
 		err = io.EOF
 	} else {
 		c.read_seq++
@@ -118,7 +118,7 @@ func (c *channel_rcv_buffer_t) get() (*pkt_t, error) {
 	}
 
 	// signal next blocked reader (if any)
-	c.cnd.Signal()
+	c.cnd.Broadcast()
 
 	return pkt, err
 }
@@ -150,7 +150,7 @@ func (c *channel_rcv_buffer_t) put(pkt *pkt_t) {
 	c._update_miss_list()
 
 	// signal next blocked reader (if any)
-	c.cnd.Signal()
+	c.cnd.Broadcast()
 
 	// Log.Debugf("rcv  pkt seq=%d", pkt.hdr.Seq)
 }
@@ -171,8 +171,9 @@ func (c *channel_rcv_buffer_t) _mark_deadline_reached() {
 	defer c.mtx.Unlock()
 
 	c.deadline_reached = true
+
 	// signal next blocked reader (if any)
-	c.cnd.Signal()
+	c.cnd.Broadcast()
 }
 
 func (c *channel_rcv_buffer_t) _update_miss_list() {
@@ -231,7 +232,11 @@ func (c *channel_rcv_buffer_t) _should_drop(pkt *pkt_t) bool {
 	return false
 }
 
-func (c *channel_rcv_buffer_t) _ended() bool {
+func (c *channel_rcv_buffer_t) _rcv_ended() bool {
+	return len(c.miss) == 0 && c.received_end_pkt
+}
+
+func (c *channel_rcv_buffer_t) _read_ended() bool {
 	return c.read_seq > c.max_seq && c.received_end_pkt
 }
 
