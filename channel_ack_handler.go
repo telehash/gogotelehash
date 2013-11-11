@@ -50,7 +50,7 @@ func (c *channel_ack_handler_t) received_packet() {
 	if c.unacked_count > 30 {
 		go c._auto_ack()
 	} else if c.ack_timer == nil {
-		c.ack_timer = time.AfterFunc(2*time.Second, c._auto_ack)
+		c.ack_timer = time.AfterFunc(1*time.Second, c._auto_ack)
 	}
 
 	c.cnd.Broadcast()
