@@ -3,18 +3,19 @@ package telehash
 import (
 	"crypto/rsa"
 	"encoding/json"
+	"github.com/fd/go-util/log"
 	"io"
 )
 
 type Switch struct {
-	main     *main_controller
-	net      *net_controller
-	channels *channel_controller
-	peers    *peer_controller
-	lines    *line_controller
-	addr     string
-	key      *rsa.PrivateKey
-	mux      *SwitchMux
+	main  *main_controller
+	net   *net_controller
+	peers *peer_controller
+	lines *line_controller
+	addr  string
+	key   *rsa.PrivateKey
+	mux   *SwitchMux
+	log   log.Logger
 }
 
 type Channel struct {
@@ -30,6 +31,7 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 		addr: addr,
 		key:  key,
 		mux:  mux,
+		log:  Log.Sub(log.DEFAULT, "switch["+addr+"]"),
 	}
 
 	return s, nil
@@ -61,17 +63,10 @@ func (s *Switch) Start() error {
 	}
 	s.lines = lines
 
-	channels, err := channel_controller_open(s)
-	if err != nil {
-		return err
-	}
-	s.channels = channels
-
 	return nil
 }
 
 func (s *Switch) Stop() error {
-	s.channels.close()
 	s.net.close()
 	s.main.close()
 	return nil
@@ -82,13 +77,15 @@ func (s *Switch) LocalHashname() Hashname {
 }
 
 func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
-	hashname, err := s.peers.add_peer(ZeroHashname, addr, key, ZeroHashname)
+	paddr, err := make_addr(ZeroHashname, ZeroHashname, addr, key)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
-	s.Seek(hashname, 15)
-	return hashname, nil
+	peer := s.peers.add_peer(paddr)
+
+	s.Seek(peer.addr.hashname, 15)
+	return peer.addr.hashname, nil
 }
 
 func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
@@ -96,14 +93,19 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 	hashnames := make([]Hashname, len(peers))
 
 	for i, peer := range peers {
-		hashnames[i] = peer.hashname
+		hashnames[i] = peer.addr.hashname
 	}
 
 	return hashnames
 }
 
 func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
-	channel, err := s.channels.open_channel(hashname, &pkt_t{
+	peer := s.peers.get_peer(hashname)
+	if peer == nil {
+		return nil, ErrUnknownPeer
+	}
+
+	channel, err := peer.open_channel(&pkt_t{
 		hdr: pkt_hdr_t{Type: typ},
 	})
 
@@ -115,7 +117,7 @@ func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
 }
 
 func (c *Channel) Close() error {
-	return c.c.close()
+	return c.c.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true}})
 }
 
 func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
@@ -131,11 +133,11 @@ func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
 
 	pkt.body = body
 
-	return len(body), c.c.send(pkt)
+	return len(body), c.c.snd_pkt(pkt)
 }
 
 func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
-	pkt, err := c.c.receive()
+	pkt, err := c.c.pop_rcv_pkt()
 	if err != nil {
 		return 0, err
 	}

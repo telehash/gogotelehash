@@ -32,7 +32,7 @@ func (c *main_controller) close() {
 func (c *main_controller) _loop() {
 	defer c.wg.Done()
 
-	ticker := time.NewTicker(50 * time.Millisecond)
+	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -51,7 +51,7 @@ func (c *main_controller) _loop() {
 func (c *main_controller) _tick(now time.Time) {
 
 	// auto-ack channels
-	// c.sw.channels.auto_ack(now)
+	c.sw.peers.tick(now)
 
 	// invalidate idle lines
 	c.sw.lines.invalidate_idle_lines(now)

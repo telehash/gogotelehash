@@ -9,38 +9,22 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"github.com/fd/go-util/log"
 	"github.com/gokyle/ecdh"
-	"net"
+
 	"sync"
 	"time"
 )
-
-type line_t struct {
-	hashname      Hashname         // hashname of target
-	pubkey        *rsa.PublicKey   // rsa pubkey of target (non-nil during open phase)
-	ecc_prvkey    *ecdh.PrivateKey // (non-nil during open phase)
-	ecc_pubkey    *ecdh.PublicKey  // (non-nil during open phase)
-	addr          *net.UDPAddr     // address of target
-	snd_id        string           // line id used when sending packets
-	rcv_id        string           // line id used when receiving packets
-	snd_at        time.Time        // when the line was opened on the local side
-	rcv_at        time.Time        // when the line was opened on the remote side
-	enc_key       []byte           // aes key used when sending packets
-	dec_key       []byte           // aes key  used when receiving packets
-	last_activity time.Time
-	rcv_buf       []*pkt_t
-	mtx           sync.RWMutex
-}
 
 type line_controller struct {
 	sw            *Switch
 	peering_lines map[Hashname]bool    // hashname -> bool
 	opening_lines map[Hashname]*line_t // hashname -> line
-	snd_lines     map[Hashname]*line_t // hashname -> line
 	rcv_lines     map[string]*line_t   // line id  -> linex
 	max_time_skew time.Duration
 	mtx           sync.RWMutex
 	cnd           *sync.Cond
+	log           log.Logger
 }
 
 func line_controller_open(sw *Switch) (*line_controller, error) {
@@ -49,9 +33,9 @@ func line_controller_open(sw *Switch) (*line_controller, error) {
 		sw:            sw,
 		peering_lines: make(map[Hashname]bool),
 		opening_lines: make(map[Hashname]*line_t),
-		snd_lines:     make(map[Hashname]*line_t),
 		rcv_lines:     make(map[string]*line_t),
 		max_time_skew: 5 * time.Second,
+		log:           sw.log.Sub(log.INFO, "lines"),
 	}
 
 	h.cnd = sync.NewCond(h.mtx.RLocker())
@@ -59,7 +43,7 @@ func line_controller_open(sw *Switch) (*line_controller, error) {
 	return h, nil
 }
 
-func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
+func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) error {
 	switch outer_pkt.hdr.Type {
 
 	case "open":
@@ -69,120 +53,24 @@ func (h *line_controller) rcv_pkt(outer_pkt *pkt_t) (*pkt_t, error) {
 		return h._rcv_line_pkt(outer_pkt)
 
 	default:
-		// Log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
-		return nil, errInvalidPkt
+		// h.log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
+		return errInvalidPkt
 
 	}
 }
 
-func (h *line_controller) snd_pkt(to Hashname, pkt *pkt_t) (*pkt_t, error) {
-	switch pkt.hdr.Type {
-
-	case "open":
-		return pkt, nil
-
-	default: // is outer packet
-		return h._snd_line_pkt(to, pkt)
-
-	}
-}
-
-func (h *line_controller) has_open_line_to(hn Hashname) bool {
-	h.mtx.RLock()
-	defer h.mtx.RUnlock()
-
-	return h.snd_lines[hn] != nil
-}
-
-// Send a packet over a line.
-// This function will wrap the packet in a line packet.
-func (h *line_controller) _snd_line_pkt(to Hashname, ipkt *pkt_t) (*pkt_t, error) {
-
-	// get an open line; open one if necessary
-	line, err := h._get_snd_line(to)
-	if err != nil {
-		return nil, err
-	}
-
-	ipkt_data, err := ipkt.format_pkt()
-	if err != nil {
-		return nil, err
-	}
-
-	iv, err := make_rand(16)
-	if err != nil {
-		return nil, err
-	}
-
-	ipkt_data, err = enc_AES_256_CTR(line.enc_key, iv, ipkt_data)
-	if err != nil {
-		return nil, err
-	}
-
-	opkt := &pkt_t{
-		hdr: pkt_hdr_t{
-			Type: "line",
-			Line: line.snd_id,
-			Iv:   hex.EncodeToString(iv),
-		},
-		body: ipkt_data,
-		addr: line.addr,
-	}
-	line.touch()
-
-	return opkt, nil
-}
-
-func (h *line_controller) _rcv_line_pkt(opkt *pkt_t) (*pkt_t, error) {
-	var (
-		line *line_t
-		ipkt *pkt_t
-		iv   []byte
-		err  error
-	)
-
-	if opkt.hdr.Type != "line" {
-		return nil, errInvalidPkt
-	}
-
-	line = h._get_rcv_line(opkt.hdr.Line)
+func (h *line_controller) _rcv_line_pkt(opkt *pkt_t) error {
+	line := h._get_rcv_line(opkt.hdr.Line)
 	if line == nil {
-		return nil, errUnknownLine
+		return errUnknownLine
 	}
 
-	// line is not fully opend yet
-	if len(line.dec_key) == 0 {
-		line.mtx.Lock()
-		line.rcv_buf = append(line.rcv_buf, opkt)
-		line.mtx.Unlock()
-		return nil, nil
-	}
-
-	iv, err = hex.DecodeString(opkt.hdr.Iv)
-	if err != nil {
-		return nil, errInvalidPkt
-	}
-
-	opkt.body, err = dec_AES_256_CTR(line.dec_key, iv, opkt.body)
-	if err != nil {
-		return nil, errInvalidPkt
-	}
-
-	ipkt, err = parse_pkt(opkt.body, opkt.addr)
-	if err != nil {
-		return nil, errInvalidPkt
-	}
-
-	ipkt.peer = line.hashname
-	line.touch()
-
-	return ipkt, nil
+	return line.rcv_pkt(opkt)
 }
 
 // See https://github.com/telehash/telehash.org/blob/feb3421b36a03e97f395f014a494f5dc90695f04/protocol.md#packet-generation
-func (h *line_controller) _snd_open_pkt(to Hashname) error {
+func (h *line_controller) _snd_open_pkt(peer *peer_t) error {
 	var (
-		peer       *peer_t
 		err        error
 		ecc_prvkey *ecdh.PrivateKey
 		ecc_pubkey []byte
@@ -195,39 +83,30 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 		iv         []byte
 		line_id    []byte
 	)
-
-	peer = h.sw.peers.get_peer(to)
 	if peer == nil {
-		Log.Debugf("line: open err=%s", "unknown peer")
+		h.log.Debugf("line: open err=%s", "unknown peer")
 		return errInvalidOpenReq
 	}
 
-	if peer.hashname.IsZero() {
-		Log.Debugf("line: open err=%s", "unknown peer (missing hashname)")
+	if peer.addr.hashname.IsZero() {
+		h.log.Debugf("line: open err=%s", "unknown peer (missing hashname)")
 		return errInvalidOpenReq
 	}
 
-	if peer.addr == nil {
-		Log.Debugf("line: open err=%s", "unknown peer (missing address)")
+	if peer.addr.addr == nil {
+		h.log.Debugf("line: open err=%s", "unknown peer (missing address)")
 		return errInvalidOpenReq
 	}
 
-	if peer.pubkey == nil {
+	if peer.addr.pubkey == nil {
 		return errMissingPublicKey
 	}
 
 	{ // guarded section
 		h.mtx.Lock()
 
-		// check if line is already opened
-		line = h.snd_lines[peer.hashname]
-		if line != nil {
-			h.mtx.Unlock()
-			return nil
-		}
-
 		// check if line is already opening
-		line = h.opening_lines[peer.hashname]
+		line = h.opening_lines[peer.addr.hashname]
 		if line != nil {
 			h.mtx.Unlock()
 			return nil
@@ -240,15 +119,10 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 			return err
 		}
 
-		line = &line_t{
-			hashname: peer.hashname,
-			pubkey:   peer.pubkey,
-			addr:     peer.addr,
-			rcv_id:   hex.EncodeToString(line_id),
-		}
+		line = make_line(h.sw, peer, hex.EncodeToString(line_id))
 
 		// put in opening register _rcv_open_pkt() will activate the line later
-		h.opening_lines[peer.hashname] = line
+		h.opening_lines[peer.addr.hashname] = line
 		h.rcv_lines[line.rcv_id] = line
 		line.touch()
 
@@ -298,7 +172,7 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 
 		pkt := pkt_t{
 			hdr: pkt_hdr_t{
-				To:   line.hashname.String(),
+				To:   line.peer.addr.hashname.String(),
 				At:   line.snd_at.Unix(),
 				Line: line.rcv_id,
 			},
@@ -348,7 +222,7 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 		// - Create an open param, by encrypting the public elliptic curve key you
 		//   generated (in uncompressed form, aka ANSI X9.63) with the recipient's
 		//   RSA public key and OAEP padding.
-		open, err = rsa.EncryptOAEP(sha1.New(), rand.Reader, line.pubkey, ecc_pubkey, nil)
+		open, err = rsa.EncryptOAEP(sha1.New(), rand.Reader, line.peer.addr.pubkey, ecc_pubkey, nil)
 		if err != nil {
 			h._drop_line(line, err)
 			return err
@@ -366,10 +240,10 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 				Iv:   hex.EncodeToString(iv),
 			},
 			body: inner_pkt,
-			addr: line.addr,
+			addr: line.peer.addr,
 		}
 
-		err = h.sw.net.snd_pkt(to, &opkt)
+		err = h.sw.net.snd_pkt(&opkt)
 		if err != nil {
 			h._drop_line(line, err)
 			return err
@@ -380,7 +254,7 @@ func (h *line_controller) _snd_open_pkt(to Hashname) error {
 }
 
 // See https://github.com/telehash/telehash.org/blob/feb3421b36a03e97f395f014a494f5dc90695f04/protocol.md#packet-processing-1
-func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
+func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) error {
 	var (
 		ipkt            *pkt_t
 		err             error
@@ -400,22 +274,22 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	)
 
 	if opkt.hdr.Type != "open" {
-		return nil, errors.New("open: type is not `open`")
+		return errors.New("open: type is not `open`")
 	}
 
 	// decode IV
 	iv, err = hex.DecodeString(opkt.hdr.Iv)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(iv) != 16 {
-		return nil, errors.New("open: invalid iv")
+		return errors.New("open: invalid iv")
 	}
 
 	// decode Sig
 	sig, err = base64.StdEncoding.DecodeString(opkt.hdr.Sig)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// STEP 1:
@@ -423,15 +297,15 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   extracting the ECC public key (in uncompressed form) of the sender
 	ecc_pubkey_data, err = base64.StdEncoding.DecodeString(opkt.hdr.Open)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ecc_pubkey_data, err = rsa.DecryptOAEP(sha1.New(), rand.Reader, h.sw.key, ecc_pubkey_data, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ecc_pubkey, err = ecdh.UnmarshalPublic(ecc_pubkey_data)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// STEP 2:
@@ -443,28 +317,28 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   AES-256-CTR algorithm.
 	data, err = dec_AES_256_CTR(aes_key_1, iv, opkt.body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// parse inner pkt
 	ipkt, err = parse_pkt(data, opkt.addr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// decode Line
 	line_id, err = hex.DecodeString(ipkt.hdr.Line)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if len(line_id) != 16 {
-		return nil, errors.New("open: invalid line_id")
+		return errors.New("open: invalid line_id")
 	}
 
 	// STEP 4:
 	// - Verify the to value of the inner packet matches your hashname
 	if ipkt.hdr.To != h.sw.peers.get_local_hashname().String() {
-		return nil, errors.New("open: hashname mismatch")
+		return errors.New("open: hashname mismatch")
 	}
 
 	// STEP 5:
@@ -472,14 +346,14 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   (binary DER format)
 	rsa_pubkey, err = dec_DER_RSA(ipkt.body)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// STEP 6:
 	// - SHA-256 hash the RSA public key to derive the sender's hashname
 	hashname, err = HashnameFromBytes(hash_SHA256(ipkt.body))
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// STEP 7:
@@ -488,20 +362,15 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   'open' requests received from the sender.
 	at = time.Unix(ipkt.hdr.At, 0)
 	if at.Before(now.Add(-h.max_time_skew)) || at.After(now.Add(h.max_time_skew)) {
-		return nil, errors.New("open: open.at is too far of")
+		return errors.New("open: open.at is too far of")
 	}
 
 	{ // guarded section
 		h.mtx.RLock()
 
-		if line := h.snd_lines[hashname]; line != nil && line.rcv_at.After(at) {
-			h.mtx.RUnlock()
-			return nil, errors.New("open: open.rcv_at is older than another line")
-		}
-
 		if line := h.opening_lines[hashname]; line != nil && line.rcv_at.After(at) {
 			h.mtx.RUnlock()
-			return nil, errors.New("open: open.rcv_at is older than another line")
+			return errors.New("open: open.rcv_at is older than another line")
 		}
 
 		h.mtx.RUnlock()
@@ -517,7 +386,7 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   and the same IV value as #3.
 	sig, err = dec_AES_256_CTR(aes_key_2, iv, sig)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// STEP 10:
@@ -525,13 +394,18 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	//   in #9) of the original (encrypted) form of the inner packet
 	err = rsa.VerifyPKCS1v15(rsa_pubkey, crypto.SHA256, hash_SHA256(opkt.body), sig)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	// ====> Open packet is now verified <========================================
 
 	// Update the peer data if nececery
-	h.sw.peers.add_peer(hashname, opkt.addr.String(), rsa_pubkey, ZeroHashname)
+	addr, err := make_addr(hashname, ZeroHashname, opkt.addr.addr.String(), rsa_pubkey)
+	if err != nil {
+		return err
+	}
+
+	peer := h.sw.peers.add_peer(addr)
 
 	// STEP 11:
 	// - If an open packet has not already been sent to this hashname, do so by
@@ -543,9 +417,9 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		h.mtx.RUnlock()
 	}
 	if line == nil {
-		err = h._snd_open_pkt(hashname)
+		err = h._snd_open_pkt(peer)
 		if err != nil {
-			return nil, err // drop
+			return err // drop
 		}
 
 		{ // guarded section
@@ -555,6 +429,7 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		}
 	}
 
+	line.peer = peer
 	line.snd_id = hex.EncodeToString(line_id)
 	line.ecc_pubkey = ecc_pubkey
 
@@ -567,19 +442,19 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	shared_key, err := line.ecc_prvkey.GenerateShared(line.ecc_pubkey, ecdh.MaxSharedKeyLength(line.ecc_pubkey))
 	if err != nil {
 		h._drop_line(line, err)
-		return nil, err // drop
+		return err // drop
 	}
 
 	snd_id, err := hex.DecodeString(line.snd_id)
 	if err != nil {
 		h._drop_line(line, err)
-		return nil, err // drop
+		return err // drop
 	}
 
 	rcv_id, err := hex.DecodeString(line.rcv_id)
 	if err != nil {
 		h._drop_line(line, err)
-		return nil, err // drop
+		return err // drop
 	}
 
 	line.enc_key = hash_SHA256(shared_key, rcv_id, snd_id)
@@ -589,13 +464,13 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 	{ //guarded section
 		h.mtx.Lock()
 
-		line.pubkey = nil
 		line.ecc_prvkey = nil
 		line.ecc_pubkey = nil
 
-		delete(h.peering_lines, line.hashname)
-		delete(h.opening_lines, line.hashname)
-		h.snd_lines[line.hashname] = line
+		delete(h.peering_lines, line.peer.addr.hashname)
+		delete(h.opening_lines, line.peer.addr.hashname)
+		peer.activate_line(line)
+
 		h.rcv_lines[line.rcv_id] = line
 
 		h.cnd.Broadcast()
@@ -608,30 +483,30 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) (*pkt_t, error) {
 		line.mtx.Unlock()
 
 		for _, opkt := range buf {
-			err := h.sw.net._rcv_pkt(opkt)
+			err := line.rcv_pkt(opkt)
 			if err != nil {
-				Log.Debugf("rcv buffer line packet err=%s", err)
+				h.log.Debugf("rcv buffer line packet err=%s", err)
 			}
 		}
 	}
 
-	Log.Debugf("line opened: %s:%s (%s -> %s)",
+	h.log.Infof("line opened: %s:%s (%s -> %s)",
 		short_hash(line.rcv_id),
 		short_hash(line.snd_id),
 		h.sw.peers.get_local_hashname().Short(),
-		line.hashname.Short())
+		line.peer.addr.hashname.Short())
 
-	return nil, nil
+	return nil
 }
 
 func (h *line_controller) _drop_line(line *line_t, err error) {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
 
-	delete(h.peering_lines, line.hashname)
-	delete(h.opening_lines, line.hashname)
-	delete(h.snd_lines, line.hashname)
+	delete(h.peering_lines, line.peer.addr.hashname)
+	delete(h.opening_lines, line.peer.addr.hashname)
 	delete(h.rcv_lines, line.rcv_id)
+	line.peer.deactivate_line(line)
 	h.cnd.Broadcast()
 }
 
@@ -640,45 +515,6 @@ func (h *line_controller) _get_rcv_line(id string) *line_t {
 	defer h.mtx.RUnlock()
 
 	return h.rcv_lines[id]
-}
-
-func (h *line_controller) _get_snd_line(id Hashname) (*line_t, error) {
-	h.mtx.RLock()
-	defer h.mtx.RUnlock()
-
-	var (
-		line *line_t
-	)
-
-	line = h.snd_lines[id]
-	for line == nil {
-		if h.peering_lines[id] {
-			// wait
-
-		} else if h.opening_lines[id] == nil {
-
-			h.mtx.RUnlock()
-			err := h._snd_open_pkt(id)
-			h.mtx.RLock()
-
-			if err == errMissingPublicKey {
-				err = h.sw.peers.send_peer_cmd(id)
-				if err == nil {
-					h.peering_lines[id] = true
-				}
-			}
-
-			if err != nil {
-				Log.Debugf("line: open err=%s", err)
-				return nil, err
-			}
-		}
-
-		h.cnd.Wait()
-		line = h.snd_lines[id]
-	}
-
-	return line, nil
 }
 
 func (l *line_t) touch() {
@@ -700,19 +536,19 @@ func (h *line_controller) invalidate_idle_lines(now time.Time) {
 	defer h.mtx.Unlock()
 
 	// if there was no activity on a line in the last 15 seconds
-	deadline := now.Add(-15 * time.Second)
+	deadline := now.Add(-60 * time.Second)
 
-	for _, line := range h.snd_lines {
+	for _, line := range h.rcv_lines {
 		if line.get_last_activity().Before(deadline) {
 
-			delete(h.snd_lines, line.hashname)
+			line.peer.deactivate_line(line)
 			delete(h.rcv_lines, line.rcv_id)
 
-			Log.Debugf("line closed: %s:%s (%s -> %s)",
+			h.log.Infof("line closed: %s:%s (%s -> %s)",
 				short_hash(line.rcv_id),
 				short_hash(line.snd_id),
 				h.sw.peers.get_local_hashname().Short(),
-				line.hashname.Short())
+				line.peer.addr.hashname.Short())
 
 		}
 	}

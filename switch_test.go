@@ -31,13 +31,14 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		// Log.Infof("msg=%q", msg)
+		Log.Infof("msg=%q", buf[:0])
 
 		for {
 			buf = buf[:cap(buf)]
 
 			n, err = c.Receive(nil, buf)
 			if err == io.EOF {
+				Log.Infof("err=EOF")
 				break
 			}
 			if err != nil {
@@ -46,7 +47,7 @@ func TestOpen(t *testing.T) {
 
 			buf = buf[:n]
 
-			// Log.Infof("msg=%q", msg)
+			// Log.Infof("msg=%q", buf)
 		}
 
 		time.Sleep(time.Second)
@@ -80,7 +81,7 @@ func TestOpen(t *testing.T) {
 
 		defer channel.Close()
 
-		for i := 0; i < 10000; i++ {
+		for i := 0; i < 1000; i++ {
 			_, err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)

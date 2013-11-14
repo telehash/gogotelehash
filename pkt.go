@@ -5,14 +5,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net"
 )
 
 type pkt_t struct {
-	addr *net.UDPAddr
 	hdr  pkt_hdr_t
 	body []byte
-	peer Hashname
+	addr addr_t
 }
 
 type pkt_hdr_t struct {
@@ -25,9 +23,9 @@ type pkt_hdr_t struct {
 	To     string          `json:"to,omitempty"`
 	At     int64           `json:"at,omitempty"`
 	Family string          `json:"family,omitempty"`
-	Seq    int             `json:"seq,omitempty"`
-	Ack    *int            `json:"ack,omitempty"`
-	Miss   []int           `json:"miss,omitempty"`
+	Seq    seq_t           `json:"seq,omitempty"`
+	Ack    seq_t           `json:"ack,omitempty"`
+	Miss   []seq_t         `json:"miss,omitempty"`
 	End    bool            `json:"end,omitempty"`
 	Err    string          `json:"err,omitempty"`
 	Seek   string          `json:"seek,omitempty"`
@@ -36,34 +34,6 @@ type pkt_hdr_t struct {
 	IP     string          `json:"ip,omitempty"`
 	Port   int             `json:"port,omitempty"`
 	Custom json.RawMessage `json:"_,omitempty"`
-}
-
-func (p *pkt_t) JustAck() bool {
-	return len(p.body) == 0 && p.hdr.JustAck()
-}
-
-func (p *pkt_hdr_t) JustAck() bool {
-	if p.Type == "" &&
-		p.Line == "" &&
-		p.Iv == "" &&
-		p.Open == "" &&
-		p.Sig == "" &&
-		p.To == "" &&
-		p.At == 0 &&
-		p.Family == "" &&
-		p.Seq == 0 &&
-		p.Ack != nil &&
-		p.End == false &&
-		p.Err == "" &&
-		p.Seek == "" &&
-		p.See == nil &&
-		p.Peer == "" &&
-		p.IP == "" &&
-		p.Port == 0 &&
-		len(p.Custom) == 0 {
-		return true
-	}
-	return false
 }
 
 func (p *pkt_t) format_pkt() ([]byte, error) {
@@ -105,7 +75,7 @@ func (p *pkt_t) format_pkt() ([]byte, error) {
 	return data, nil
 }
 
-func parse_pkt(in []byte, addr *net.UDPAddr) (*pkt_t, error) {
+func parse_pkt(in []byte, addr addr_t) (*pkt_t, error) {
 	var (
 		hdr_len  int
 		body_len int

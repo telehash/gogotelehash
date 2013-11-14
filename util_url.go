@@ -2,7 +2,7 @@ package telehash
 
 import (
 	"crypto/rsa"
-	"encoding/base64"
+	"encoding/hex"
 	"net/url"
 	"path"
 )
@@ -13,7 +13,7 @@ func (s *Switch) SeedURL() (string, error) {
 		return "", err
 	}
 
-	b64 := base64.URLEncoding.EncodeToString(der)
+	b64 := hex.EncodeToString(der)
 
 	u := url.URL{
 		Scheme: "telehash",
@@ -32,7 +32,7 @@ func ParseSeedURL(rawurl string) (addr string, pubkey *rsa.PublicKey, err error)
 
 	addr = u.Host
 
-	der, err := base64.URLEncoding.DecodeString(path.Base(u.Path))
+	der, err := hex.DecodeString(path.Base(u.Path))
 	if err != nil {
 		return "", nil, err
 	}

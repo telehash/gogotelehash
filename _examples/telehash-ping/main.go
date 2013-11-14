@@ -5,13 +5,16 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"github.com/fd/go-util/log"
-	"github.com/fd/gogotelehash"
+	"github.com/telehash/gogotelehash"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 )
 
 func main() {
+	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
+
 	telehash.Log.SetLevel(log.DEBUG)
 
 	port := os.Getenv("PORT")
@@ -56,7 +59,12 @@ func main() {
 			continue
 		}
 
-		fmt.Printf("connected to %s\n", hn[:8])
+		fmt.Printf("connected to %s\n", hn.Short())
+	}
+
+	peers := s.Seek(s.LocalHashname(), 15)
+	for _, peer := range peers {
+		fmt.Printf("discovered: %s\n", peer.Short())
 	}
 
 	c := make(chan os.Signal)
@@ -73,13 +81,17 @@ func make_key() *rsa.PrivateKey {
 }
 
 func pong(c *telehash.Channel) {
+	var (
+		body = make([]byte, 1500)
+	)
+
 	for {
-		body, err := c.Receive(nil)
+		n, err := c.Receive(nil, body)
 		if err != nil {
 			return
 		}
 
-		err = c.Send(nil, body)
+		_, err = c.Send(nil, body[:n])
 		if err != nil {
 			return
 		}

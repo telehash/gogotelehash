@@ -1,6 +1,7 @@
 package telehash
 
 import (
+	"github.com/fd/go-util/log"
 	"net"
 	"runtime"
 	"sync"
@@ -14,6 +15,7 @@ type net_controller struct {
 	sw   *Switch
 	conn *net.UDPConn
 	wg   sync.WaitGroup
+	log  log.Logger
 }
 
 func net_controller_open(sw *Switch) (*net_controller, error) {
@@ -30,6 +32,7 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 	h := &net_controller{
 		sw:   sw,
 		conn: upd_conn,
+		log:  sw.log.Sub(log.NOTICE, "net"),
 	}
 
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -58,7 +61,7 @@ func (h *net_controller) _reader_loop() {
 			break
 		}
 		if err != nil {
-			Log.Debugf("dropped pkt: %s", err)
+			h.log.Debugf("dropped pkt: %s", err)
 		}
 	}
 }
@@ -73,16 +76,16 @@ func (h *net_controller) _read_pkt(buf []byte) error {
 	// read the udp packet
 	addr, err = _net_conn_read(h.conn, &buf)
 	if err != nil {
-		// Log.Debugf("rcv pkt err=%s addr=%s", err, addr)
+		// h.log.Debugf("rcv pkt err=%s addr=%s", err, addr)
 		return err
 	}
 
-	// Log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
+	// h.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
 
 	// unpack the outer packet
-	pkt, err = _pkt_unmarshal(buf, addr)
+	pkt, err = _pkt_unmarshal(buf, addr_t{addr: addr})
 	if err != nil {
-		Log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
+		h.log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
@@ -94,43 +97,29 @@ func (h *net_controller) _rcv_pkt(pkt *pkt_t) error {
 		err error
 	)
 
-	// pass through line handler
-	// (returns nil in case of an open pkt)
-	pkt, err = h.sw.lines.rcv_pkt(pkt)
-	if err != nil {
-		Log.Debugf("rcv pkt step=2 err=%s pkt=%#v", err, pkt)
-		return err
-	}
-	if pkt == nil {
-		return nil
-	}
+	h.log.Debugf("rcv pkt: addr=%s hdr=%+v",
+		pkt.addr, pkt.hdr)
 
-	err = h.sw.channels.rcv_pkt(pkt)
+	// pass through line handler
+	err = h.sw.lines.rcv_pkt(pkt)
 	if err != nil {
-		Log.Debugf("rcv pkt step=3 err=%s pkt=%#v", err, pkt)
+		h.log.Debugf("rcv pkt step=2 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
 	return nil
 }
 
-func (h *net_controller) snd_pkt(to Hashname, pkt *pkt_t) error {
+func (h *net_controller) snd_pkt(pkt *pkt_t) error {
 	var (
 		data []byte
 		err  error
 	)
 
-	// Log.Debugf("tsh snd inner-pkt=%+v", pkt.hdr)
+	h.log.Debugf("snd pkt: addr=%s hdr=%+v",
+		pkt.addr, pkt.hdr)
 
-	// pass through line handler
-	// (this will also open a line if it is not already openend)
-	// (open packets fall through)
-	pkt, err = h.sw.lines.snd_pkt(to, pkt)
-	if err != nil {
-		return err
-	}
-
-	// Log.Debugf("tsh snd outer-pkt=%+v", pkt.hdr)
+	// h.log.Debugf("tsh snd outer-pkt=%+v", pkt.hdr)
 
 	// marshal the packet
 	data, err = _pkt_marshal(pkt)
@@ -139,12 +128,12 @@ func (h *net_controller) snd_pkt(to Hashname, pkt *pkt_t) error {
 	}
 
 	// send the packet
-	err = _net_conn_write(h.conn, pkt.addr, data)
+	err = _net_conn_write(h.conn, pkt.addr.addr, data)
 	if err != nil {
 		return err
 	}
 
-	// Log.Debugf("udp snd pkt=(%d bytes)", len(data))
+	// h.log.Debugf("udp snd pkt=(%d bytes)", len(data))
 
 	return err
 }
@@ -153,7 +142,7 @@ func (c *net_controller) send_nat_breaker(addr *net.UDPAddr) error {
 	return _net_conn_write(c.conn, addr, []byte("hello"))
 }
 
-func _pkt_unmarshal(data []byte, addr *net.UDPAddr) (*pkt_t, error) {
+func _pkt_unmarshal(data []byte, addr addr_t) (*pkt_t, error) {
 	return parse_pkt(data, addr)
 }
 

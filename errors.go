@@ -5,9 +5,13 @@ import (
 )
 
 var (
-	ErrUDPConnClosed   = errors.New("upd: connection closed")
-	ErrInvalidHashname = errors.New("telehash: invalid hashname")
-	ErrTimeout         = errors.New("telehash: timeout")
+	ErrUDPConnClosed          = errors.New("upd: connection closed")
+	ErrInvalidHashname        = errors.New("telehash: invalid hashname")
+	ErrTimeout                = errors.New("telehash: timeout")
+	ErrChannelBroken          = errors.New("telehash: broken channel")
+	ErrUnknownPeer            = errors.New("telehash: unknwon peer")
+	ErrSendOnClosedChannel    = errors.New("telehash: send on closed channel")
+	ErrReceiveOnClosedChannel = errors.New("telehash: receive on closed channel")
 
 	errInvalidOpenReq   = errors.New("line: invalid open request")
 	errMissingPublicKey = errors.New("line: missing public key")
@@ -15,4 +19,6 @@ var (
 	errInvalidPkt       = errors.New("net: invalid packet")
 	errUnknownLine      = errors.New("net: unknown line")
 	errUnknownChannel   = errors.New("net: unknown channel")
+	errNoOpenLine       = errors.New("peer: no open line")
+	errDuplicatePacket  = errors.New("channel: duplicate packet")
 )
