@@ -20,6 +20,7 @@ type line_t struct {
 	enc_key       []byte           // aes key used when sending packets
 	dec_key       []byte           // aes key  used when receiving packets
 	last_activity time.Time
+	last_rcv      time.Time
 	rcv_buf       []*pkt_t
 	mtx           sync.RWMutex
 	log           log.Logger
@@ -67,7 +68,7 @@ func (line *line_t) snd_pkt(ipkt *pkt_t) error {
 		addr: line.peer.addr,
 	}
 
-	line.touch()
+	line.touch(false)
 
 	return line.sw.net.snd_pkt(opkt)
 }
@@ -106,7 +107,7 @@ func (line *line_t) rcv_pkt(opkt *pkt_t) error {
 		return errInvalidPkt
 	}
 
-	line.touch()
+	line.touch(true)
 
 	line.log.Debugf("rcv pkt: line=%s:%s addr=%s hdr=%+v",
 		short_hash(line.snd_id),
@@ -114,4 +115,29 @@ func (line *line_t) rcv_pkt(opkt *pkt_t) error {
 		line.peer, ipkt.hdr)
 
 	return line.peer.push_rcv_pkt(ipkt)
+}
+
+func (l *line_t) touch(is_rcv bool) {
+	l.mtx.Lock()
+	defer l.mtx.Unlock()
+
+	now := time.Now()
+	l.last_activity = now
+	if is_rcv {
+		l.last_rcv = now
+	}
+}
+
+func (l *line_t) get_last_activity() time.Time {
+	l.mtx.RLock()
+	defer l.mtx.RUnlock()
+
+	return l.last_activity
+}
+
+func (l *line_t) get_last_rcv() time.Time {
+	l.mtx.RLock()
+	defer l.mtx.RUnlock()
+
+	return l.last_activity
 }

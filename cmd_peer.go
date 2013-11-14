@@ -109,14 +109,10 @@ func (h *peer_controller) serve_connect(channel *channel_t) {
 		return
 	}
 
-	peer := h.add_peer(addr)
+	peer, _ := h.add_peer(addr)
 
-	Log.Debugf("(l=%s) addr=%s",
+	h.log.Debugf("(l=%s) addr=%s",
 		h.get_local_hashname().Short(), addr)
 
-	err = h.sw.lines._snd_open_pkt(peer)
-	if err != nil {
-		Log.Debugf("error: %s", err)
-		return
-	}
+	peer.send_seek_cmd(h.get_local_hashname())
 }

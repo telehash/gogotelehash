@@ -81,7 +81,7 @@ func TestOpen(t *testing.T) {
 
 		defer channel.Close()
 
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 10000; i++ {
 			_, err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)
@@ -138,7 +138,7 @@ func TestSeek(t *testing.T) {
 		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 	}()
 
-	time.Sleep(30 * time.Second)
+	time.Sleep(60 * time.Second)
 }
 
 func make_key() *rsa.PrivateKey {

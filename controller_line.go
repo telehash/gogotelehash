@@ -124,7 +124,7 @@ func (h *line_controller) _snd_open_pkt(peer *peer_t) error {
 		// put in opening register _rcv_open_pkt() will activate the line later
 		h.opening_lines[peer.addr.hashname] = line
 		h.rcv_lines[line.rcv_id] = line
-		line.touch()
+		line.touch(true)
 
 		h.mtx.Unlock()
 	}
@@ -405,7 +405,7 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) error {
 		return err
 	}
 
-	peer := h.sw.peers.add_peer(addr)
+	peer, _ := h.sw.peers.add_peer(addr)
 
 	// STEP 11:
 	// - If an open packet has not already been sent to this hashname, do so by
@@ -517,21 +517,7 @@ func (h *line_controller) _get_rcv_line(id string) *line_t {
 	return h.rcv_lines[id]
 }
 
-func (l *line_t) touch() {
-	l.mtx.Lock()
-	defer l.mtx.Unlock()
-
-	l.last_activity = time.Now()
-}
-
-func (l *line_t) get_last_activity() time.Time {
-	l.mtx.RLock()
-	defer l.mtx.RUnlock()
-
-	return l.last_activity
-}
-
-func (h *line_controller) invalidate_idle_lines(now time.Time) {
+func (h *line_controller) tick(now time.Time) {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
 
@@ -539,6 +525,7 @@ func (h *line_controller) invalidate_idle_lines(now time.Time) {
 	deadline := now.Add(-60 * time.Second)
 
 	for _, line := range h.rcv_lines {
+
 		if line.get_last_activity().Before(deadline) {
 
 			line.peer.deactivate_line(line)
@@ -550,6 +537,21 @@ func (h *line_controller) invalidate_idle_lines(now time.Time) {
 				h.sw.peers.get_local_hashname().Short(),
 				line.peer.addr.hashname.Short())
 
+			continue
+		}
+
+		if line.get_last_rcv().Before(deadline) {
+
+			line.peer.deactivate_line(line)
+			delete(h.rcv_lines, line.rcv_id)
+
+			h.log.Infof("line broken: %s:%s (%s -> %s)",
+				short_hash(line.rcv_id),
+				short_hash(line.snd_id),
+				h.sw.peers.get_local_hashname().Short(),
+				line.peer.addr.hashname.Short())
+
+			continue
 		}
 	}
 }

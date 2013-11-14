@@ -17,12 +17,12 @@ func (h *peer_controller) seek(hashname Hashname, n int) []*peer_t {
 
 	tag := time.Now().UnixNano()
 
-	Log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
+	h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
 
 RECURSOR:
 	for {
 
-		Log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
+		h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last)
 		for _, via := range last {
 			if cache[via.addr.hashname] {
 				continue
@@ -37,7 +37,7 @@ RECURSOR:
 		wg.Wait()
 
 		curr := h.find_closest_peers(hashname, n)
-		Log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last, curr)
+		h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.get_local_hashname().Short(), hashname.Short(), last, curr)
 
 		if len(curr) != len(last) {
 			last = curr
@@ -87,7 +87,7 @@ func (peer *peer_t) send_seek_cmd(seek Hashname) {
 		return
 	}
 
-	peer.log.Noticef("rcv seek: see=%+v", reply.hdr.See)
+	peer.log.Infof("rcv seek: see=%+v", reply.hdr.See)
 
 	for _, rec := range reply.hdr.See {
 		fields := strings.Split(rec, ",")
@@ -118,8 +118,11 @@ func (peer *peer_t) send_seek_cmd(seek Hashname) {
 			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
 		}
 
-		peer.log.Noticef("seek: discoverd peer addr=%s", addr)
-		peer.sw.peers.add_peer(addr)
+		peer, discovered := peer.sw.peers.add_peer(addr)
+		if discovered {
+			peer.log.Infof("seek: discoverd peer addr=%s", addr)
+			go peer.send_seek_cmd(peer.sw.LocalHashname())
+		}
 	}
 }
 
@@ -153,7 +156,7 @@ func (h *peer_controller) serve_seek(channel *channel_t) {
 		))
 	}
 
-	h.log.Noticef("rcv seek: see=%+v closest=%+v", see, closest)
+	h.log.Infof("rcv seek: see=%+v closest=%+v", see, closest)
 
 	err = channel.snd_pkt(&pkt_t{
 		hdr: pkt_hdr_t{

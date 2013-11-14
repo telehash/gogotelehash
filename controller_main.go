@@ -54,11 +54,7 @@ func (c *main_controller) _tick(now time.Time) {
 	c.sw.peers.tick(now)
 
 	// invalidate idle lines
-	c.sw.lines.invalidate_idle_lines(now)
+	// detect broken lines
+	c.sw.lines.tick(now)
 
-	// invalidate idle channels
-	// c.sw.channels.invalidate_idle_channels(now)
-
-	// refresh DHT
-	// c.sw.peers.refresh_dht(now)
 }

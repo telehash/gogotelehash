@@ -14,11 +14,12 @@ type peer_i interface {
 type peer_t struct {
 	addr addr_t
 
-	sw              *Switch
-	line            *line_t
-	peer_cmd_snd_at time.Time
-	open_cmd_snd_at time.Time
-	channels        map[string]*channel_t
+	sw               *Switch
+	line             *line_t
+	peer_cmd_snd_at  time.Time
+	open_cmd_snd_at  time.Time
+	last_dht_refresh time.Time
+	channels         map[string]*channel_t
 
 	mtx sync.RWMutex
 	cnd sync.Cond
@@ -30,7 +31,7 @@ func make_peer(sw *Switch, hashname Hashname) *peer_t {
 		addr:     addr_t{hashname: hashname},
 		sw:       sw,
 		channels: make(map[string]*channel_t, 100),
-		log:      sw.peers.log.Sub(log.INFO, hashname.Short()),
+		log:      sw.peers.log.Sub(log.DEFAULT, hashname.Short()),
 	}
 
 	peer.cnd.L = peer.mtx.RLocker()
@@ -48,7 +49,7 @@ func (p *peer_t) open_channel(pkt *pkt_t) (*channel_t, error) {
 		return nil, err
 	}
 
-	channel.log.Infof("channel[%s:%s](%s -> %s): opened",
+	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
 		short_hash(channel.channel_id),
 		pkt.hdr.Type,
 		p.sw.peers.get_local_hashname().Short(),
@@ -90,7 +91,7 @@ func (p *peer_t) push_rcv_pkt(pkt *pkt_t) error {
 
 		p.log.Debugf("rcv pkt: addr=%s hdr=%+v", p, pkt.hdr)
 
-		channel.log.Infof("channel[%s:%s](%s -> %s): opened",
+		channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
 			short_hash(channel.channel_id),
 			pkt.hdr.Type,
 			p.sw.peers.get_local_hashname().Short(),
@@ -208,13 +209,13 @@ func (p *peer_t) tick(now time.Time) {
 			closed = append(closed, c.channel_id)
 
 			if c.broken {
-				c.log.Infof("channel[%s:%s](%s -> %s): broken",
+				c.log.Debugf("channel[%s:%s](%s -> %s): broken",
 					short_hash(c.channel_id),
 					c.channel_type,
 					p.sw.peers.get_local_hashname().Short(),
 					p.addr.hashname.Short())
 			} else {
-				c.log.Infof("channel[%s:%s](%s -> %s): closed",
+				c.log.Debugf("channel[%s:%s](%s -> %s): closed",
 					short_hash(c.channel_id),
 					c.channel_type,
 					p.sw.peers.get_local_hashname().Short(),
@@ -229,6 +230,11 @@ func (p *peer_t) tick(now time.Time) {
 			delete(p.channels, id)
 		}
 		p.mtx.Unlock()
+	}
+
+	if p.last_dht_refresh.Before(now.Add(-30 * time.Second)) {
+		p.last_dht_refresh = now
+		go p.send_seek_cmd(p.sw.LocalHashname())
 	}
 }
 

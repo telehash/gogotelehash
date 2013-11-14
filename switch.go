@@ -82,9 +82,12 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		return ZeroHashname, err
 	}
 
-	peer := s.peers.add_peer(paddr)
+	peer, dicovered := s.peers.add_peer(paddr)
 
-	s.Seek(peer.addr.hashname, 15)
+	if dicovered {
+		peer.send_seek_cmd(s.LocalHashname())
+	}
+
 	return peer.addr.hashname, nil
 }
 

@@ -23,7 +23,8 @@ type channel_t struct {
 	rcv_end              bool      // was a `end` packet received?
 	rcv_err              string    // the err that was received
 	rcv_last_ack         seq_t     // the last `ack` seq received (-1 when no acks have been received)
-	rcv_last_at          time.Time // the last time any packet was recieved
+	rcv_last_ack_at      time.Time // the last time any ack was received
+	rcv_last_pkt_at      time.Time // the last time any packet was recieved
 	rcv_last_seq         seq_t     // the seq of the last received seq (-1 when no pkts have been received)
 	rcv_unacked          int       // number of unacked received packets
 	read_end             bool      // did the user read the end packet
@@ -287,7 +288,7 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 
 	c.log.Debugf("rcv pkt: bufferd=%d hdr=%+v", len(c.rcv_buf), pkt.hdr)
 
-	c.rcv_last_at = time.Now()
+	c.rcv_last_pkt_at = time.Now()
 	c.rcv_unacked++
 
 	// add pkt to buffer
@@ -349,6 +350,7 @@ func (c *channel_t) _rcv_ack(pkt *pkt_t) {
 		// other wise drop
 	}
 
+	c.rcv_last_ack_at = time.Now()
 	c.snd_inflight = len(rcv_buf)
 
 	c.rcv_buf = rcv_buf
@@ -533,8 +535,12 @@ func (c *channel_t) detect_broken(now time.Time) {
 
 	breaking_point := now.Add(-5 * time.Second)
 
-	if c.rcv_last_at.IsZero() {
-		c.rcv_last_at = now
+	if c.rcv_last_ack_at.IsZero() {
+		c.rcv_last_ack_at = now
+	}
+
+	if c.rcv_last_pkt_at.IsZero() {
+		c.rcv_last_pkt_at = now
 	}
 
 	if c.snd_last_ack_at.IsZero() {
@@ -545,9 +551,8 @@ func (c *channel_t) detect_broken(now time.Time) {
 		c.snd_last_pkt_at = now
 	}
 
-	if c.rcv_last_at.Before(breaking_point) ||
-		c.snd_last_ack_at.Before(breaking_point) ||
-		c.snd_last_pkt_at.Before(breaking_point) {
+	if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
+		c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
 		c.broken = true
 		c.cnd.Broadcast()
 	}

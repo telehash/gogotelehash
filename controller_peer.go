@@ -7,12 +7,11 @@ import (
 )
 
 type peer_controller struct {
-	sw               *Switch
-	local_hashname   Hashname
-	buckets          [][]*peer_t
-	mtx              sync.RWMutex
-	last_dht_refresh time.Time
-	log              log.Logger
+	sw             *Switch
+	local_hashname Hashname
+	buckets        [][]*peer_t
+	mtx            sync.RWMutex
+	log            log.Logger
 }
 
 func peer_controller_open(sw *Switch) (*peer_controller, error) {
@@ -39,11 +38,7 @@ func (h *peer_controller) get_local_hashname() Hashname {
 	return h.local_hashname
 }
 
-func (h *peer_controller) add_peer(addr addr_t) *peer_t {
-	var (
-		peer *peer_t
-	)
-
+func (h *peer_controller) add_peer(addr addr_t) (peer *peer_t, discovered bool) {
 	h.mtx.Lock()
 	defer h.mtx.Unlock()
 
@@ -60,11 +55,13 @@ func (h *peer_controller) add_peer(addr addr_t) *peer_t {
 		l := h.buckets[bucket]
 		l = append(l, peer)
 		h.buckets[bucket] = l
+
+		discovered = true
 	}
 
 	peer.addr.update(addr)
 
-	return peer
+	return peer, discovered
 }
 
 func (h *peer_controller) get_peer(hashname Hashname) *peer_t {
@@ -158,16 +155,5 @@ func (c *peer_controller) tick(now time.Time) {
 
 	for _, peer := range peers {
 		peer.tick(now)
-	}
-
-	if c.last_dht_refresh.Before(now.Add(-30 * time.Second)) {
-		c.last_dht_refresh = now
-		go c.refersh_dht(peers)
-	}
-}
-
-func (p *peer_controller) refersh_dht(peers []*peer_t) {
-	for _, peer := range peers {
-		peer.send_seek_cmd(p.get_local_hashname())
 	}
 }
