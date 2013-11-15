@@ -202,6 +202,7 @@ func (p *peer_t) tick(now time.Time) {
 			p.log.Debugf("auto-ack: error=%s", err)
 		}
 
+		c.send_missing_packets(now)
 		c.detect_rcv_deadline(now)
 		c.detect_broken(now)
 

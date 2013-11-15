@@ -37,6 +37,7 @@ type channel_t struct {
 	snd_last_ack_at      time.Time // the last time any ack was send
 	snd_last_pkt_at      time.Time // the last time any packet was send
 	snd_last_seq         seq_t     // the seq of the last send packet (-1 when no pkts have been send)
+	snd_miss_at          time.Time // the last time the missing packets were sent
 
 	mtx sync.RWMutex
 	cnd sync.Cond
@@ -103,7 +104,7 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 	pkt.hdr.C = c.channel_id
 	pkt.hdr.Seq = c.snd_last_seq.Incr()
 	pkt.hdr.Miss = c.miss
-	pkt.hdr.Ack = c.rcv_last_seq
+	pkt.hdr.Ack = c.read_last_seq
 
 	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 
@@ -190,7 +191,7 @@ func (c *channel_t) snd_ack() error {
 
 	pkt := &pkt_t{}
 	pkt.hdr.C = c.channel_id
-	pkt.hdr.Ack = c.rcv_last_seq
+	pkt.hdr.Ack = c.read_last_seq
 	pkt.hdr.Miss = c.miss
 
 	c.log.Debugf("snd ack: hdr=%+v", pkt.hdr)
@@ -215,7 +216,11 @@ func (c *channel_t) snd_ack() error {
 
 func (c *channel_t) _needs_auto_ack(now time.Time) bool {
 	if c.snd_last_ack_at.IsZero() {
-		c.snd_last_ack_at = now
+		if !c.initiator && c.read_last_seq.IsSet() {
+			return true
+		} else {
+			c.snd_last_ack_at = now
+		}
 	}
 
 	if c.rcv_end && !c.snd_end_ack {
@@ -485,19 +490,32 @@ func (c *channel_t) detect_rcv_deadline(now time.Time) {
 	}
 }
 
-func (c *channel_t) send_missing_packets() {
+func (c *channel_t) send_missing_packets(now time.Time) {
 	c.mtx.Lock()
+
+	if c.snd_miss_at.After(now.Add(-1 * time.Second)) {
+		c.mtx.Unlock()
+		return
+	}
+
+	c.snd_miss_at = now
+
+	if len(c.rcv_buf) == 0 {
+		c.mtx.Unlock()
+		return
+	}
+
 	var (
-		buf          = make([]*pkt_t, len(c.rcv_buf))
-		miss         = make([]seq_t, len(c.miss))
-		rcv_last_seq = c.rcv_last_seq
+		buf           = make([]*pkt_t, len(c.rcv_buf))
+		miss          = make([]seq_t, len(c.miss))
+		read_last_seq = c.read_last_seq
 	)
 	copy(buf, c.rcv_buf)
 	copy(miss, c.miss)
 	c.mtx.Unlock()
 
 	for _, pkt := range buf {
-		pkt.hdr.Ack = rcv_last_seq
+		pkt.hdr.Ack = read_last_seq
 		pkt.hdr.Miss = miss
 		c.peer.snd_pkt(pkt)
 	}
