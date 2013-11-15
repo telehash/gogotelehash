@@ -13,6 +13,8 @@ import (
 )
 
 func main() {
+	defer fmt.Println("BYE!")
+
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
 
 	telehash.Log.SetLevel(log.DEBUG)
@@ -70,6 +72,8 @@ func main() {
 	c := make(chan os.Signal)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	<-c
+
+	fmt.Println("shutting down...")
 }
 
 func make_key() *rsa.PrivateKey {
