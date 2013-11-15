@@ -11,6 +11,8 @@ const (
 	c_ClosedNet = "use of closed network connection"
 )
 
+var ()
+
 type net_controller struct {
 	sw   *Switch
 	conn *net.UDPConn
@@ -32,7 +34,7 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 	h := &net_controller{
 		sw:   sw,
 		conn: upd_conn,
-		log:  sw.log.Sub(log.NOTICE, "net"),
+		log:  sw.log.Sub(log_level_for("NET", log.DEFAULT), "net"),
 	}
 
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -85,7 +87,7 @@ func (h *net_controller) _read_pkt(buf []byte) error {
 	// unpack the outer packet
 	pkt, err = _pkt_unmarshal(buf, addr_t{addr: addr})
 	if err != nil {
-		h.log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
+		h.log.Noticef("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
@@ -103,7 +105,7 @@ func (h *net_controller) _rcv_pkt(pkt *pkt_t) error {
 	// pass through line handler
 	err = h.sw.lines.rcv_pkt(pkt)
 	if err != nil {
-		h.log.Debugf("rcv pkt step=2 err=%s pkt=%#v", err, pkt)
+		h.log.Noticef("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
 		return err
 	}
 

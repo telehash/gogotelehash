@@ -6,11 +6,6 @@ import (
 	"time"
 )
 
-type peer_i interface {
-	snd_pkt(*pkt_t) error          // sends a packet over a line if there is one.
-	snd_pkt_blocking(*pkt_t) error // like snd_pkt() but wait for a line
-}
-
 type peer_t struct {
 	addr addr_t
 
@@ -34,7 +29,7 @@ func make_peer(sw *Switch, hashname Hashname) *peer_t {
 		sw:       sw,
 		channels: make(map[string]*channel_t, 100),
 		lines:    make(map[string]*line_t, 5),
-		log:      sw.peers.log.Sub(log.DEFAULT, hashname.Short()),
+		log:      sw.peers.log.Sub(log_level_for("PEER", log.DEFAULT), hashname.Short()),
 	}
 
 	peer.cnd.L = peer.mtx.RLocker()
@@ -188,6 +183,10 @@ func (p *peer_t) activate_line(line *line_t) {
 	p.lines[line.snd_id] = line
 	p.line = line
 	p.cnd.Broadcast()
+
+	for _, c := range p.channels {
+		c.cnd.Broadcast()
+	}
 }
 
 func (p *peer_t) deactivate_line(line *line_t) {
@@ -231,6 +230,7 @@ func (p *peer_t) tick(now time.Time) {
 	p.mtx.Unlock()
 
 	for _, c := range channels {
+
 		err := c.snd_ack()
 		if err != nil {
 			p.log.Debugf("auto-ack: error=%s", err)
@@ -257,6 +257,7 @@ func (p *peer_t) tick(now time.Time) {
 					p.addr.hashname.Short())
 			}
 		}
+
 	}
 
 	if len(closed) > 0 {

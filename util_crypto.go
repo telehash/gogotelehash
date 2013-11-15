@@ -7,7 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"encoding/asn1"
+	"crypto/x509"
 	"fmt"
 	"io"
 )
@@ -88,14 +88,17 @@ func enc_AES_256_CTR(key, iv, data []byte) ([]byte, error) {
 }
 
 func enc_DER_RSA(pub *rsa.PublicKey) ([]byte, error) {
-	return asn1.Marshal(*pub)
+	return x509.MarshalPKIXPublicKey(pub)
 }
 
 func dec_DER_RSA(der []byte) (*rsa.PublicKey, error) {
-	pub := &rsa.PublicKey{}
-	_, err := asn1.Unmarshal(der, pub)
+	key, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
 		return nil, err
+	}
+	pub, ok := key.(*rsa.PublicKey)
+	if !ok || key == nil {
+		return nil, fmt.Errorf("telehash: not an RSA key")
 	}
 	if pub.N.Sign() <= 0 {
 		return nil, fmt.Errorf("telehash: RSA modulus is not a positive number")

@@ -109,10 +109,11 @@ func (h *peer_controller) serve_connect(channel *channel_t) {
 		return
 	}
 
-	peer, _ := h.add_peer(addr)
+	peer, discovered := h.add_peer(addr)
+	if discovered {
+		h.log.Noticef("(l=%s) peer=%s",
+			h.get_local_hashname().Short(), peer.String())
 
-	h.log.Debugf("(l=%s) addr=%s",
-		h.get_local_hashname().Short(), addr)
-
-	peer.send_seek_cmd(h.get_local_hashname())
+		peer.send_seek_cmd(h.get_local_hashname())
+	}
 }

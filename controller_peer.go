@@ -24,7 +24,7 @@ func peer_controller_open(sw *Switch) (*peer_controller, error) {
 		sw:             sw,
 		local_hashname: hashname,
 		buckets:        make([][]*peer_t, 32*8),
-		log:            sw.log.Sub(log.NOTICE, "peers"),
+		log:            sw.log.Sub(log_level_for("PEERS", log.DEFAULT), "peers"),
 	}
 
 	sw.mux.handle_func("seek", h.serve_seek)

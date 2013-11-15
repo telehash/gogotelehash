@@ -9,9 +9,9 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"github.com/fd/go-util/log"
 	"github.com/gokyle/ecdh"
-
 	"sync"
 	"time"
 )
@@ -34,8 +34,8 @@ func line_controller_open(sw *Switch) (*line_controller, error) {
 		peering_lines: make(map[Hashname]bool),
 		opening_lines: make(map[Hashname]*line_t),
 		rcv_lines:     make(map[string]*line_t),
-		max_time_skew: 5 * time.Second,
-		log:           sw.log.Sub(log.INFO, "lines"),
+		max_time_skew: 15 * time.Minute,
+		log:           sw.log.Sub(log_level_for("LINES", log.DEFAULT), "lines"),
 	}
 
 	h.cnd = sync.NewCond(h.mtx.RLocker())
@@ -152,11 +152,12 @@ func (h *line_controller) _snd_open_pkt(peer *peer_t) error {
 	{ // STEP 4:
 		// - SHA-256 hash the public elliptic key to form the encryption key for the
 		//   inner packet
-		ecc_pubkey, err = ecc_prvkey.PublicKey.Marshal()
-		if err != nil {
-			h._drop_line(line, err)
-			return err
-		}
+		ecc_pubkey = elliptic.Marshal(ecc_prvkey.PublicKey.Curve, ecc_prvkey.PublicKey.X, ecc_prvkey.PublicKey.Y)
+		// ecc_pubkey, err = ecc_prvkey.PublicKey.Marshal()
+		// if err != nil {
+		//   h._drop_line(line, err)
+		//   return err
+		// }
 	}
 
 	{ // STEP 5:
@@ -173,11 +174,16 @@ func (h *line_controller) _snd_open_pkt(peer *peer_t) error {
 		pkt := pkt_t{
 			hdr: pkt_hdr_t{
 				To:   line.peer.addr.hashname.String(),
-				At:   line.snd_at.Unix(),
+				At:   line.snd_at.UnixNano() / 1000000,
 				Line: line.rcv_id,
 			},
 			body: rsapub_der,
 		}
+
+		line.log.Debugf("snd pkt: line=%s:%s addr=%s hdr=%+v",
+			short_hash(line.snd_id),
+			short_hash(line.rcv_id),
+			line.peer, pkt.hdr)
 
 		inner_pkt, err = pkt.format_pkt()
 		if err != nil {
@@ -303,9 +309,14 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) error {
 	if err != nil {
 		return err
 	}
-	ecc_pubkey, err = ecdh.UnmarshalPublic(ecc_pubkey_data)
-	if err != nil {
-		return err
+
+	{
+		x, y := elliptic.Unmarshal(elliptic.P256(), ecc_pubkey_data)
+		// ecc_pubkey, err = ecdh.UnmarshalPublic(ecc_pubkey_data)
+		// if err != nil {
+		//   return err
+		// }
+		ecc_pubkey = &ecdh.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
 	}
 
 	// STEP 2:
@@ -360,9 +371,9 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) error {
 	// - Verify the at timestamp is both within a reasonable amount of time to
 	//   account for network delays and clock skew, and is newer than any other
 	//   'open' requests received from the sender.
-	at = time.Unix(ipkt.hdr.At, 0)
+	at = time.Unix(ipkt.hdr.At/1000, (ipkt.hdr.At%1000)*1000000)
 	if at.Before(now.Add(-h.max_time_skew)) || at.After(now.Add(h.max_time_skew)) {
-		return errors.New("open: open.at is too far of")
+		return fmt.Errorf("open: open.at is too far of (delta=%s snd-at=%s rcv-at=%s)", now.Sub(at), now, at)
 	}
 
 	{ // guarded section
@@ -428,6 +439,11 @@ func (h *line_controller) _rcv_open_pkt(opkt *pkt_t) error {
 			h.mtx.RUnlock()
 		}
 	}
+
+	line.log.Debugf("rcv pkt: line=%s:%s addr=%s hdr=%+v",
+		short_hash(line.snd_id),
+		short_hash(line.rcv_id),
+		line.peer, ipkt.hdr)
 
 	line.peer = peer
 	line.snd_id = hex.EncodeToString(line_id)

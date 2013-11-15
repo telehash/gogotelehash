@@ -11,7 +11,7 @@ import (
 
 type channel_t struct {
 	sw                   *Switch
-	peer                 peer_i // *peer_t
+	peer                 *peer_t
 	channel_id           string
 	channel_type         string
 	initiator            bool      // is this side of the channel the initiating side?
@@ -63,7 +63,7 @@ func make_channel(sw *Switch, peer *peer_t, id, typ string, initiator bool) (*ch
 		c.channel_id = hex.EncodeToString(bin_id)
 	}
 
-	c.log = peer.log.Sub(log.DEFAULT, "channel["+c.channel_id[:8]+"]")
+	c.log = peer.log.Sub(log_level_for("CHANNEL", log.DEFAULT), "channel["+c.channel_id[:8]+"]")
 	c.cnd.L = &c.mtx
 
 	return c, nil
@@ -89,6 +89,10 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+
+	if !c.peer.has_open_line() {
+		go c.peer.open_line()
+	}
 
 	for {
 		blocked, err = c._snd_pkt_blocked()
@@ -148,6 +152,10 @@ func (c *channel_t) _snd_pkt_blocked() (bool, error) {
 
 	if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
 		// wait for first ack
+		return true, nil
+	}
+
+	if !c.peer.has_open_line() {
 		return true, nil
 	}
 
@@ -335,19 +343,19 @@ func (c *channel_t) _rcv_ack(pkt *pkt_t) {
 		c.rcv_last_ack = pkt.hdr.Ack
 	}
 
-	rcv_buf := make([]*pkt_t, 0, 100)
+	snd_buf := make([]*pkt_t, 0, 100)
 
-	for _, p := range c.rcv_buf {
+	for _, p := range c.snd_buf {
 		if p.hdr.Seq > pkt.hdr.Ack {
 			// not acked yet keep in buffer
-			rcv_buf = append(rcv_buf, p)
+			snd_buf = append(snd_buf, p)
 			continue
 		}
 
 		for _, missed := range pkt.hdr.Miss {
 			if p.hdr.Seq == missed {
 				// missing keep
-				rcv_buf = append(rcv_buf, p)
+				snd_buf = append(snd_buf, p)
 				break
 			}
 		}
@@ -356,9 +364,9 @@ func (c *channel_t) _rcv_ack(pkt *pkt_t) {
 	}
 
 	c.rcv_last_ack_at = time.Now()
-	c.snd_inflight = len(rcv_buf)
+	c.snd_inflight = len(snd_buf)
 
-	c.rcv_buf = rcv_buf
+	c.snd_buf = snd_buf
 }
 
 func (c *channel_t) _update_miss_list() {
@@ -500,17 +508,17 @@ func (c *channel_t) send_missing_packets(now time.Time) {
 
 	c.snd_miss_at = now
 
-	if len(c.rcv_buf) == 0 {
+	if len(c.snd_buf) == 0 {
 		c.mtx.Unlock()
 		return
 	}
 
 	var (
-		buf           = make([]*pkt_t, len(c.rcv_buf))
+		buf           = make([]*pkt_t, len(c.snd_buf))
 		miss          = make([]seq_t, len(c.miss))
 		read_last_seq = c.read_last_seq
 	)
-	copy(buf, c.rcv_buf)
+	copy(buf, c.snd_buf)
 	copy(miss, c.miss)
 	c.mtx.Unlock()
 
@@ -580,6 +588,8 @@ func (c *channel_t) mark_as_broken() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	c.broken = true
-	c.cnd.Broadcast()
+	if !c.broken {
+		c.broken = true
+		c.cnd.Broadcast()
+	}
 }

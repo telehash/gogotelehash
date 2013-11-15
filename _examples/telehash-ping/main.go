@@ -3,8 +3,10 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
-	"github.com/fd/go-util/log"
 	"github.com/telehash/gogotelehash"
 	"os"
 	"os/signal"
@@ -16,8 +18,6 @@ func main() {
 	defer fmt.Println("BYE!")
 
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
-
-	telehash.Log.SetLevel(log.DEBUG)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -40,6 +40,8 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// parse_main_seed(s)
 
 	defer func() {
 		err := s.Stop()
@@ -99,5 +101,68 @@ func pong(c *telehash.Channel) {
 		if err != nil {
 			return
 		}
+	}
+}
+
+const seed = `
+[
+{
+    "ip": "208.68.164.253",
+    "port": 42424,
+    "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
+    "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
+}
+]
+`
+
+func parse_main_seed(s *telehash.Switch) {
+	var (
+		seeds []struct {
+			IP       string
+			Port     int
+			Hashname string
+			Pubkey   string
+		}
+		pem_block *pem.Block
+	)
+
+	err := json.Unmarshal([]byte(seed), &seeds)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, seed := range seeds {
+		pem_block, _ = pem.Decode([]byte(seed.Pubkey))
+
+		if pem_block.Type != "PUBLIC KEY" {
+			continue
+		}
+
+		addr := fmt.Sprintf("%s:%d", seed.IP, seed.Port)
+
+		keyi, err := x509.ParsePKIXPublicKey(pem_block.Bytes)
+		if err != nil {
+			fmt.Printf("failed to seed: %s\n  %s\n", err, addr)
+			continue
+		}
+
+		key, ok := keyi.(*rsa.PublicKey)
+		if key == nil {
+			fmt.Printf("failed to seed: %s\n  %s\n", "not an rsa key", addr)
+			continue
+		}
+		if !ok {
+			fmt.Printf("failed to seed: %s\n  %s\n", "not an rsa key", addr)
+			continue
+		}
+
+		hn, err := s.Seed(addr, key)
+
+		if err != nil {
+			fmt.Printf("failed to seed: %s\n  %s\n", err, addr)
+			continue
+		}
+
+		fmt.Printf("connected to %s\n", hn.Short())
 	}
 }

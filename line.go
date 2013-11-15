@@ -31,7 +31,7 @@ func make_line(sw *Switch, peer *peer_t, line_id string) *line_t {
 		sw:     sw,
 		peer:   peer,
 		rcv_id: line_id,
-		log:    sw.lines.log.Sub(log.DEFAULT, short_hash(line_id)),
+		log:    sw.lines.log.Sub(log_level_for("LINE", log.DEFAULT), short_hash(line_id)),
 	}
 }
 
