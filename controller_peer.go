@@ -64,6 +64,35 @@ func (h *peer_controller) add_peer(addr addr_t) (peer *peer_t, discovered bool) 
 	return peer, discovered
 }
 
+func (h *peer_controller) remove_peer(peer *peer_t) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+
+	var (
+		bucket_idx = kad_bucket_for(h.get_local_hashname(), peer.addr.hashname)
+		bucket     = h.buckets[bucket_idx]
+		idx        = -1
+	)
+
+	for i, p := range bucket {
+		if p == peer {
+			idx = i
+			break
+		}
+	}
+
+	if idx == -1 {
+		return
+	}
+
+	if len(bucket)-1 > idx {
+		copy(bucket[idx:], bucket[idx+1:])
+	}
+	bucket = bucket[:len(bucket)-1]
+
+	h.buckets[bucket_idx] = bucket
+}
+
 func (h *peer_controller) get_peer(hashname Hashname) *peer_t {
 	bucket_index := kad_bucket_for(h.get_local_hashname(), hashname)
 

@@ -575,3 +575,11 @@ func (c *channel_t) detect_broken(now time.Time) {
 		c.cnd.Broadcast()
 	}
 }
+
+func (c *channel_t) mark_as_broken() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.broken = true
+	c.cnd.Broadcast()
+}

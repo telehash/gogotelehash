@@ -139,5 +139,5 @@ func (l *line_t) get_last_rcv() time.Time {
 	l.mtx.RLock()
 	defer l.mtx.RUnlock()
 
-	return l.last_activity
+	return l.last_rcv
 }

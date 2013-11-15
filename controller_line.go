@@ -545,6 +545,8 @@ func (h *line_controller) tick(now time.Time) {
 			line.peer.deactivate_line(line)
 			delete(h.rcv_lines, line.rcv_id)
 
+			line.peer.mark_as_broken()
+
 			h.log.Infof("line broken: %s:%s (%s -> %s)",
 				short_hash(line.rcv_id),
 				short_hash(line.snd_id),

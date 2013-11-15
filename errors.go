@@ -9,6 +9,7 @@ var (
 	ErrInvalidHashname        = errors.New("telehash: invalid hashname")
 	ErrTimeout                = errors.New("telehash: timeout")
 	ErrChannelBroken          = errors.New("telehash: broken channel")
+	ErrPeerBroken             = errors.New("telehash: broken peer")
 	ErrUnknownPeer            = errors.New("telehash: unknwon peer")
 	ErrSendOnClosedChannel    = errors.New("telehash: send on closed channel")
 	ErrReceiveOnClosedChannel = errors.New("telehash: receive on closed channel")

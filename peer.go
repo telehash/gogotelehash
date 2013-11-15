@@ -16,10 +16,12 @@ type peer_t struct {
 
 	sw               *Switch
 	line             *line_t
+	lines            map[string]*line_t
 	peer_cmd_snd_at  time.Time
 	open_cmd_snd_at  time.Time
 	last_dht_refresh time.Time
 	channels         map[string]*channel_t
+	broken           bool
 
 	mtx sync.RWMutex
 	cnd sync.Cond
@@ -31,6 +33,7 @@ func make_peer(sw *Switch, hashname Hashname) *peer_t {
 		addr:     addr_t{hashname: hashname},
 		sw:       sw,
 		channels: make(map[string]*channel_t, 100),
+		lines:    make(map[string]*line_t, 5),
 		log:      sw.peers.log.Sub(log.DEFAULT, hashname.Short()),
 	}
 
@@ -131,6 +134,10 @@ func (p *peer_t) snd_pkt(pkt *pkt_t) error {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
+	if p.broken {
+		return ErrPeerBroken
+	}
+
 	if p.line == nil {
 		// drop
 		return errNoOpenLine
@@ -147,11 +154,18 @@ func (p *peer_t) snd_pkt_blocking(pkt *pkt_t) error {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
+	if p.broken {
+		return ErrPeerBroken
+	}
+
 	if p.line == nil {
 		go p.open_line()
 	}
 
-	for p.line == nil {
+	for p.line == nil && p.broken == false {
+		if p.broken {
+			return ErrPeerBroken
+		}
 		p.cnd.Wait()
 	}
 
@@ -171,6 +185,7 @@ func (p *peer_t) activate_line(line *line_t) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
+	p.lines[line.snd_id] = line
 	p.line = line
 	p.cnd.Broadcast()
 }
@@ -179,8 +194,27 @@ func (p *peer_t) deactivate_line(line *line_t) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
+	delete(p.lines, line.snd_id)
+
 	if p.line == line {
 		p.line = nil
+		p.cnd.Broadcast()
+	}
+}
+
+func (p *peer_t) mark_as_broken() {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	if len(p.lines) == 0 {
+		p.broken = true
+
+		for _, c := range p.channels {
+			c.mark_as_broken()
+		}
+
+		p.sw.peers.remove_peer(p)
+
 		p.cnd.Broadcast()
 	}
 }
