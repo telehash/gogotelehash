@@ -10,8 +10,8 @@ type peer_t struct {
 	addr addr_t
 
 	sw               *Switch
-	line             *line_t
-	lines            map[string]*line_t
+	prv_line_half    *private_line_half
+	line             *open_line
 	peer_cmd_snd_at  time.Time
 	open_cmd_snd_at  time.Time
 	last_dht_refresh time.Time
@@ -285,13 +285,39 @@ func (p *peer_t) open_line() {
 	}
 }
 
-func (p *peer_t) self_open_line() {
-	p.open_cmd_snd_at = time.Now()
+func (peer *peer_t) self_open_line() error {
+	peer.open_cmd_snd_at = time.Now()
 
-	err := p.sw.lines._snd_open_pkt(p)
-	if err != nil {
-		p.log.Debugf("open-line: error=%s", err)
+	if peer.addr.hashname.IsZero() {
+		p.log.Debugf("line: open err=%s", "unreachable peer (missing hashname)")
+		return errInvalidOpenReq
 	}
+
+	if peer.addr.addr == nil {
+		p.log.Debugf("line: open err=%s", "unreachable peer (missing address)")
+		return errInvalidOpenReq
+	}
+
+	if peer.addr.pubkey == nil {
+		return errMissingPublicKey
+	}
+
+	if peer.prv_line_half == nil {
+		prv_line_half, err := make_line_half(peer.addr.hashname, peer.sw.key, peer.addr.pubkey)
+		if err != nil {
+			return err
+		}
+		peer.prv_line_half = prv_line_half
+	}
+
+	pkt, err := peer.prv_line_half.compose_open_pkt()
+
+	err = peer.sw.net.snd_pkt(pkt)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (p *peer_t) peer_open_line() {
