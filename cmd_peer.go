@@ -27,7 +27,7 @@ func (to *peer_t) send_peer_cmd() error {
 			Peer: to.addr.hashname.String(),
 			End:  true,
 		},
-	})
+	}, true)
 
 	if err != nil {
 		Log.Debugf("peer cmd err=%s", err)
@@ -64,6 +64,10 @@ func (h *peer_controller) serve_peer(channel *channel_t) {
 		return
 	}
 
+	if sender_addr.pubkey == nil {
+		return
+	}
+
 	pubkey, err := enc_DER_RSA(sender_addr.pubkey)
 	if err != nil {
 		Log.Debugf("error: %s", err)
@@ -78,7 +82,7 @@ func (h *peer_controller) serve_peer(channel *channel_t) {
 			End:  true,
 		},
 		body: pubkey,
-	})
+	}, true)
 
 	if err != nil {
 		Log.Debugf("peer:connect err=%s", err)

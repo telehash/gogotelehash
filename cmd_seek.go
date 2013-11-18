@@ -72,7 +72,7 @@ func (peer *peer_t) send_seek_cmd(seek Hashname) {
 		},
 	}
 
-	channel, err := peer.open_channel(pkt)
+	channel, err := peer.open_channel(pkt, true)
 	if err != nil {
 		return
 	}

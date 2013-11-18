@@ -11,7 +11,6 @@ type Switch struct {
 	main  *main_controller
 	net   *net_controller
 	peers *peer_controller
-	lines *line_controller
 	addr  string
 	key   *rsa.PrivateKey
 	mux   *SwitchMux
@@ -57,12 +56,6 @@ func (s *Switch) Start() error {
 	}
 	s.peers = peers
 
-	lines, err := line_controller_open(s)
-	if err != nil {
-		return err
-	}
-	s.lines = lines
-
 	return nil
 }
 
@@ -82,9 +75,9 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		return ZeroHashname, err
 	}
 
-	peer, dicovered := s.peers.add_peer(paddr)
+	peer, discovered := s.peers.add_peer(paddr)
 
-	if dicovered {
+	if discovered {
 		peer.send_seek_cmd(s.LocalHashname())
 	}
 
@@ -110,7 +103,7 @@ func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
 
 	channel, err := peer.open_channel(&pkt_t{
 		hdr: pkt_hdr_t{Type: typ},
-	})
+	}, false)
 
 	if err != nil {
 		return nil, err

@@ -36,14 +36,14 @@ type public_line_half struct {
 	at time.Time
 }
 
-type open_line struct {
+type line_t struct {
 	prv_half *private_line_half
 	pub_half *public_line_half
 	enc_key  []byte
 	dec_key  []byte
 }
 
-func make_line_half(hashname Hashname, local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line_half, error) {
+func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line_half, error) {
 
 	bin_line_id, err := make_rand(16)
 	if err != nil {
@@ -51,6 +51,11 @@ func make_line_half(hashname Hashname, local *rsa.PrivateKey, remote *rsa.Public
 	}
 
 	hex_line_id := hex.EncodeToString(bin_line_id)
+
+	hashname, err := HashnameFromPublicKey(remote)
+	if err != nil {
+		return nil, err
+	}
 
 	ecc_prvkey, err := ecdh.GenerateKey(rand.Reader, elliptic.P256())
 	if err != nil {
@@ -210,7 +215,7 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, 
 		return nil, err
 	}
 
-	hashname, err := HashnameFromBytes(hash_SHA256(rsa_pubkey_der))
+	hashname, err := HashnameFromPublicKey(rsa_pubkey)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +227,7 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, 
 		return nil, err
 	}
 
-	err = rsa.VerifyPKCS1v15(rsa_pubkey, crypto.SHA256, hash_SHA256(ipkt_data), ipkt_data_sig)
+	err = rsa.VerifyPKCS1v15(rsa_pubkey, crypto.SHA256, hash_SHA256(ipkt_data_enc), ipkt_data_sig)
 	if err != nil {
 		return nil, err
 	}
@@ -240,8 +245,8 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, 
 	return pub, nil
 }
 
-func (pub *public_line_half) verify(other *public_line_half, prv *private_line_half) error {
-	if prv.public_line_half.hashname != other.to {
+func (pub *public_line_half) verify(other *public_line_half, self Hashname) error {
+	if self != pub.to {
 		return errors.New("hashname mismatch")
 	}
 
@@ -254,7 +259,7 @@ func (pub *public_line_half) verify(other *public_line_half, prv *private_line_h
 	return nil
 }
 
-func line_activate(prv *private_line_half, pub *public_line_half) (*open_line, error) {
+func line_activate(prv *private_line_half, pub *public_line_half) (*line_t, error) {
 	shared_key, err := prv.ecc_prvkey.GenerateShared(pub.ecc_pubkey, ecdh.MaxSharedKeyLength(pub.ecc_pubkey))
 	if err != nil {
 		return nil, err
@@ -273,7 +278,7 @@ func line_activate(prv *private_line_half, pub *public_line_half) (*open_line, e
 	enc_key := hash_SHA256(shared_key, rcv_id, snd_id)
 	dec_key := hash_SHA256(shared_key, snd_id, rcv_id)
 
-	return &open_line{
+	return &line_t{
 		prv_half: prv,
 		pub_half: pub,
 		enc_key:  enc_key,
@@ -281,7 +286,7 @@ func line_activate(prv *private_line_half, pub *public_line_half) (*open_line, e
 	}, nil
 }
 
-func (l *open_line) enc(i *pkt_t) (*pkt_t, error) {
+func (l *line_t) enc(i *pkt_t) (*pkt_t, error) {
 	ipkt_data, err := i.format_pkt()
 	if err != nil {
 		return nil, err
@@ -304,12 +309,13 @@ func (l *open_line) enc(i *pkt_t) (*pkt_t, error) {
 			Iv:   hex.EncodeToString(iv),
 		},
 		body: ipkt_data_enc,
+		addr: i.addr,
 	}
 
 	return o, nil
 }
 
-func (l *open_line) dec(i *pkt_t) (*pkt_t, error) {
+func (l *line_t) dec(i *pkt_t) (*pkt_t, error) {
 	if i.hdr.Type != "line" {
 		return nil, errInvalidPkt
 	}

@@ -51,10 +51,8 @@ func (c *main_controller) _loop() {
 func (c *main_controller) _tick(now time.Time) {
 
 	// auto-ack channels
+	// invalidate idle lines (TODO)
+	// detect broken lines (TODO)
 	c.sw.peers.tick(now)
-
-	// invalidate idle lines
-	// detect broken lines
-	c.sw.lines.tick(now)
 
 }

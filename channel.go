@@ -14,6 +14,7 @@ type channel_t struct {
 	peer                 *peer_t
 	channel_id           string
 	channel_type         string
+	raw                  bool
 	initiator            bool      // is this side of the channel the initiating side?
 	broken               bool      // is the channel broken?
 	miss                 []seq_t   // missing packets (yet to be received)
@@ -44,12 +45,13 @@ type channel_t struct {
 	log log.Logger
 }
 
-func make_channel(sw *Switch, peer *peer_t, id, typ string, initiator bool) (*channel_t, error) {
+func make_channel(sw *Switch, peer *peer_t, id, typ string, initiator bool, raw bool) (*channel_t, error) {
 	c := &channel_t{
 		sw:           sw,
 		peer:         peer,
 		channel_id:   id,
 		channel_type: typ,
+		raw:          raw,
 		initiator:    initiator,
 		rcv_buf:      make([]*pkt_t, 0, 100),
 	}
@@ -106,9 +108,11 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 	}
 
 	pkt.hdr.C = c.channel_id
-	pkt.hdr.Seq = c.snd_last_seq.Incr()
-	pkt.hdr.Miss = c.miss
-	pkt.hdr.Ack = c.read_last_seq
+	if !c.raw {
+		pkt.hdr.Seq = c.snd_last_seq.Incr()
+		pkt.hdr.Miss = c.miss
+		pkt.hdr.Ack = c.read_last_seq
+	}
 
 	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 
@@ -125,13 +129,15 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 	if pkt.hdr.End {
 		c.snd_end = true
 	}
-	c.snd_last_ack = pkt.hdr.Ack
-	c.snd_last_seq = pkt.hdr.Seq
-	c.snd_inflight++
-	c.snd_buf = append(c.snd_buf, pkt)
-	c.rcv_unacked = 0
+	if !c.raw {
+		c.snd_last_ack = pkt.hdr.Ack
+		c.snd_last_seq = pkt.hdr.Seq
+		c.snd_inflight++
+		c.snd_buf = append(c.snd_buf, pkt)
+		c.rcv_unacked = 0
+		c.snd_last_ack_at = now
+	}
 	c.snd_last_pkt_at = now
-	c.snd_last_ack_at = now
 
 	// state changed
 	c.cnd.Broadcast()
@@ -145,14 +151,16 @@ func (c *channel_t) _snd_pkt_blocked() (bool, error) {
 		return false, c._snd_pkt_err()
 	}
 
-	if c.snd_inflight >= 100 {
-		// wait for progress
-		return true, nil
-	}
+	if !c.raw {
+		if c.snd_inflight >= 100 {
+			// wait for progress
+			return true, nil
+		}
 
-	if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
-		// wait for first ack
-		return true, nil
+		if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
+			// wait for first ack
+			return true, nil
+		}
 	}
 
 	if !c.peer.has_open_line() {
@@ -187,6 +195,10 @@ func (c *channel_t) snd_ack() error {
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
+
+	if c.raw {
+		return nil
+	}
 
 	if !c._needs_auto_ack(now) {
 		return nil
@@ -263,10 +275,14 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 	}
 
 	if !pkt.hdr.Seq.IsSet() {
-		// pkt is just an ack
-		c.log.Debugf("rcv ack: hdr=%+v", pkt.hdr)
-		err = nil
-		goto EXIT
+		if c.raw {
+			pkt.hdr.Seq = c.rcv_last_seq.Incr()
+		} else {
+			// pkt is just an ack
+			c.log.Debugf("rcv ack: hdr=%+v", pkt.hdr)
+			err = nil
+			goto EXIT
+		}
 	}
 
 	if c.snd_end {
@@ -501,6 +517,11 @@ func (c *channel_t) detect_rcv_deadline(now time.Time) {
 func (c *channel_t) send_missing_packets(now time.Time) {
 	c.mtx.Lock()
 
+	if c.raw {
+		c.mtx.Unlock()
+		return
+	}
+
 	if c.snd_miss_at.After(now.Add(-1 * time.Second)) {
 		c.mtx.Unlock()
 		return
@@ -534,6 +555,10 @@ func (c *channel_t) is_closed() bool {
 	defer c.mtx.Unlock()
 
 	if c.broken {
+		return true
+	}
+
+	if c.raw && (c.snd_end || c.rcv_end) {
 		return true
 	}
 

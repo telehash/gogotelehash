@@ -11,10 +11,13 @@ type peer_t struct {
 
 	sw               *Switch
 	prv_line_half    *private_line_half
-	line             *open_line
+	pub_line_half    *public_line_half
+	line             *line_t
 	peer_cmd_snd_at  time.Time
 	open_cmd_snd_at  time.Time
 	last_dht_refresh time.Time
+	snd_last_at      time.Time
+	rcv_last_at      time.Time
 	channels         map[string]*channel_t
 	broken           bool
 
@@ -25,11 +28,12 @@ type peer_t struct {
 
 func make_peer(sw *Switch, hashname Hashname) *peer_t {
 	peer := &peer_t{
-		addr:     addr_t{hashname: hashname},
-		sw:       sw,
-		channels: make(map[string]*channel_t, 100),
-		lines:    make(map[string]*line_t, 5),
-		log:      sw.peers.log.Sub(log_level_for("PEER", log.DEFAULT), hashname.Short()),
+		addr:        addr_t{hashname: hashname},
+		sw:          sw,
+		channels:    make(map[string]*channel_t, 100),
+		log:         sw.peers.log.Sub(log_level_for("PEER", log.DEFAULT), hashname.Short()),
+		snd_last_at: time.Now(),
+		rcv_last_at: time.Now(),
 	}
 
 	peer.cnd.L = peer.mtx.RLocker()
@@ -41,8 +45,8 @@ func (p *peer_t) String() string {
 	return p.addr.String()
 }
 
-func (p *peer_t) open_channel(pkt *pkt_t) (*channel_t, error) {
-	channel, err := p.make_channel("", pkt.hdr.Type, true)
+func (p *peer_t) open_channel(pkt *pkt_t, raw bool) (*channel_t, error) {
+	channel, err := p.make_channel("", pkt.hdr.Type, true, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -61,6 +65,87 @@ func (p *peer_t) open_channel(pkt *pkt_t) (*channel_t, error) {
 	return channel, nil
 }
 
+func (p *peer_t) rcv_line_pkt(opkt *pkt_t) error {
+	p.mtx.RLock()
+	line := p.line
+	p.mtx.RUnlock()
+
+	if line == nil {
+		return errUnknownLine
+	}
+
+	ipkt, err := line.dec(opkt)
+	if err != nil {
+		return err
+	}
+
+	err = p.push_rcv_pkt(ipkt)
+	if err != nil {
+		return err
+	}
+
+	p.mtx.Lock()
+	p.rcv_last_at = time.Now()
+	p.mtx.Unlock()
+
+	return nil
+}
+
+func (p *peer_t) rcv_open_pkt(pub *public_line_half) error {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	var (
+		err error
+	)
+
+	prv := p.prv_line_half
+	if prv == nil {
+		prv, err = make_line_half(p.sw.key, pub.rsa_pubkey)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = pub.verify(p.pub_line_half, p.sw.peers.get_local_hashname())
+	if err != nil {
+		return err
+	}
+
+	line, err := line_activate(prv, pub)
+	if err != nil {
+		return err
+	}
+
+	if p.prv_line_half == nil || (p.pub_line_half != nil && p.pub_line_half.id != pub.id) {
+		pkt, err := prv.compose_open_pkt()
+		if err != nil {
+			return err
+		}
+		pkt.addr = p.addr
+
+		err = p.sw.net.snd_pkt(pkt)
+		if err != nil {
+			return err
+		}
+	}
+
+	p.prv_line_half = prv
+	p.pub_line_half = pub
+	p.line = line
+	p.rcv_last_at = time.Now()
+
+	p.log.Infof("line opened: id=%s:%s",
+		short_hash(prv.id),
+		short_hash(pub.id))
+
+	for _, c := range p.channels {
+		c.cnd.Broadcast()
+	}
+
+	return nil
+}
+
 func (p *peer_t) push_rcv_pkt(pkt *pkt_t) error {
 	pkt.addr = p.addr
 
@@ -75,45 +160,44 @@ func (p *peer_t) push_rcv_pkt(pkt *pkt_t) error {
 	}
 
 	// open new channel
-	if pkt.hdr.Seq.IsSet() && pkt.hdr.Seq.Get() == 0 {
-		// first packet in sequence
-
-		if pkt.hdr.Type == "" {
-			return errInvalidPkt
-		}
-
-		channel, err := p.make_channel(pkt.hdr.C, pkt.hdr.Type, false)
-		if err != nil {
-			return err
-		}
-
-		p.log.Debugf("rcv pkt: addr=%s hdr=%+v", p, pkt.hdr)
-
-		channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
-			short_hash(channel.channel_id),
-			pkt.hdr.Type,
-			p.sw.peers.get_local_hashname().Short(),
-			p.addr.hashname.Short())
-
-		err = channel.push_rcv_pkt(pkt)
-		if err != nil {
-			return err
-		}
-
-		go channel.run_user_handler()
-
-		return nil
+	if pkt.hdr.Type == "" {
+		return errInvalidPkt
 	}
 
-	// else:
-	return errInvalidPkt
+	raw := !pkt.hdr.Seq.IsSet()
+
+	if !raw && pkt.hdr.Seq.Get() != 0 {
+		return errInvalidPkt
+	}
+
+	channel, err := p.make_channel(pkt.hdr.C, pkt.hdr.Type, false, raw)
+	if err != nil {
+		return err
+	}
+
+	p.log.Debugf("rcv pkt: addr=%s hdr=%+v", p, pkt.hdr)
+
+	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.channel_id),
+		pkt.hdr.Type,
+		p.sw.peers.get_local_hashname().Short(),
+		p.addr.hashname.Short())
+
+	err = channel.push_rcv_pkt(pkt)
+	if err != nil {
+		return err
+	}
+
+	go channel.run_user_handler()
+
+	return nil
 }
 
-func (p *peer_t) make_channel(id, typ string, initiator bool) (*channel_t, error) {
+func (p *peer_t) make_channel(id, typ string, initiator bool, raw bool) (*channel_t, error) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
-	channel, err := make_channel(p.sw, p, id, typ, initiator)
+	channel, err := make_channel(p.sw, p, id, typ, initiator, raw)
 	if err != nil {
 		return nil, err
 	}
@@ -126,47 +210,80 @@ func (p *peer_t) make_channel(id, typ string, initiator bool) (*channel_t, error
 func (p *peer_t) snd_pkt(pkt *pkt_t) error {
 	p.log.Debugf("snd pkt: addr=%s hdr=%+v", p, pkt.hdr)
 
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
+	p.mtx.RLock()
+	var (
+		broken = p.broken
+		line   = p.line
+		addr   = p.addr
+	)
+	p.mtx.RUnlock()
 
-	if p.broken {
+	if broken {
 		return ErrPeerBroken
 	}
 
-	if p.line == nil {
+	if line == nil {
 		// drop
 		return errNoOpenLine
 	}
 
-	pkt.addr = p.addr
+	pkt.addr = addr
 
-	return p.line.snd_pkt(pkt)
+	pkt, err := line.enc(pkt)
+	if err != nil {
+		return err
+	}
+
+	err = p.sw.net.snd_pkt(pkt)
+	if err != nil {
+		return err
+	}
+
+	p.mtx.Lock()
+	p.snd_last_at = time.Now()
+	p.mtx.Unlock()
+
+	return nil
 }
 
 func (p *peer_t) snd_pkt_blocking(pkt *pkt_t) error {
 	p.log.Debugf("snd pkt: addr=%s hdr=%+v", p, pkt.hdr)
 
 	p.mtx.RLock()
-	defer p.mtx.RUnlock()
-
-	if p.broken {
-		return ErrPeerBroken
-	}
-
 	if p.line == nil {
 		go p.open_line()
 	}
-
 	for p.line == nil && p.broken == false {
-		if p.broken {
-			return ErrPeerBroken
-		}
 		p.cnd.Wait()
 	}
+	var (
+		broken = p.broken
+		line   = p.line
+		addr   = p.addr
+	)
+	p.mtx.RUnlock()
 
-	pkt.addr = p.addr
+	if broken {
+		return ErrPeerBroken
+	}
 
-	return p.line.snd_pkt(pkt)
+	pkt.addr = addr
+
+	pkt, err := line.enc(pkt)
+	if err != nil {
+		return err
+	}
+
+	err = p.sw.net.snd_pkt(pkt)
+	if err != nil {
+		return err
+	}
+
+	p.mtx.Lock()
+	p.snd_last_at = time.Now()
+	p.mtx.Unlock()
+
+	return nil
 }
 
 func (p *peer_t) has_open_line() bool {
@@ -176,50 +293,13 @@ func (p *peer_t) has_open_line() bool {
 	return p.line != nil
 }
 
-func (p *peer_t) activate_line(line *line_t) {
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
-
-	p.lines[line.snd_id] = line
-	p.line = line
-	p.cnd.Broadcast()
-
-	for _, c := range p.channels {
-		c.cnd.Broadcast()
-	}
-}
-
-func (p *peer_t) deactivate_line(line *line_t) {
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
-
-	delete(p.lines, line.snd_id)
-
-	if p.line == line {
-		p.line = nil
-		p.cnd.Broadcast()
-	}
-}
-
-func (p *peer_t) mark_as_broken() {
-	p.mtx.Lock()
-	defer p.mtx.Unlock()
-
-	if len(p.lines) == 0 {
-		p.broken = true
-
-		for _, c := range p.channels {
-			c.mark_as_broken()
-		}
-
-		p.sw.peers.remove_peer(p)
-
-		p.cnd.Broadcast()
-	}
-}
-
 func (p *peer_t) tick(now time.Time) {
+	deadline := now.Add(-60 * time.Second)
+
 	p.mtx.Lock()
+	if !p.snd_last_at.Before(deadline) && p.rcv_last_at.Before(deadline) {
+		p.broken = true
+	}
 	var (
 		channels = make([]*channel_t, 0, len(p.channels))
 		closed   []string
@@ -230,7 +310,6 @@ func (p *peer_t) tick(now time.Time) {
 	p.mtx.Unlock()
 
 	for _, c := range channels {
-
 		err := c.snd_ack()
 		if err != nil {
 			p.log.Debugf("auto-ack: error=%s", err)
@@ -239,6 +318,10 @@ func (p *peer_t) tick(now time.Time) {
 		c.send_missing_packets(now)
 		c.detect_rcv_deadline(now)
 		c.detect_broken(now)
+
+		if p.broken {
+			c.mark_as_broken()
+		}
 
 		if c.is_closed() {
 			closed = append(closed, c.channel_id)
@@ -289,12 +372,12 @@ func (peer *peer_t) self_open_line() error {
 	peer.open_cmd_snd_at = time.Now()
 
 	if peer.addr.hashname.IsZero() {
-		p.log.Debugf("line: open err=%s", "unreachable peer (missing hashname)")
+		peer.log.Debugf("line: open err=%s", "unreachable peer (missing hashname)")
 		return errInvalidOpenReq
 	}
 
 	if peer.addr.addr == nil {
-		p.log.Debugf("line: open err=%s", "unreachable peer (missing address)")
+		peer.log.Debugf("line: open err=%s", "unreachable peer (missing address)")
 		return errInvalidOpenReq
 	}
 
@@ -303,7 +386,7 @@ func (peer *peer_t) self_open_line() error {
 	}
 
 	if peer.prv_line_half == nil {
-		prv_line_half, err := make_line_half(peer.addr.hashname, peer.sw.key, peer.addr.pubkey)
+		prv_line_half, err := make_line_half(peer.sw.key, peer.addr.pubkey)
 		if err != nil {
 			return err
 		}
@@ -311,6 +394,7 @@ func (peer *peer_t) self_open_line() error {
 	}
 
 	pkt, err := peer.prv_line_half.compose_open_pkt()
+	pkt.addr = peer.addr
 
 	err = peer.sw.net.snd_pkt(pkt)
 	if err != nil {

@@ -41,7 +41,7 @@ func main() {
 		panic(err)
 	}
 
-	// parse_main_seed(s)
+	parse_main_seed(s)
 
 	defer func() {
 		err := s.Stop()

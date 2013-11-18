@@ -11,8 +11,6 @@ const (
 	c_ClosedNet = "use of closed network connection"
 )
 
-var ()
-
 type net_controller struct {
 	sw   *Switch
 	conn *net.UDPConn
@@ -31,44 +29,44 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 		return nil, err
 	}
 
-	h := &net_controller{
+	c := &net_controller{
 		sw:   sw,
 		conn: upd_conn,
 		log:  sw.log.Sub(log_level_for("NET", log.DEFAULT), "net"),
 	}
 
 	for i := 0; i < runtime.NumCPU(); i++ {
-		h.wg.Add(1)
-		go h._reader_loop()
+		c.wg.Add(1)
+		go c._reader_loop()
 	}
 
-	return h, nil
+	return c, nil
 }
 
-func (h *net_controller) close() {
-	h.conn.Close()
-	h.wg.Wait()
+func (c *net_controller) close() {
+	c.conn.Close()
+	c.wg.Wait()
 }
 
-func (h *net_controller) _reader_loop() {
-	defer h.wg.Done()
+func (c *net_controller) _reader_loop() {
+	defer c.wg.Done()
 
 	var (
 		buf = make([]byte, 16*1024)
 	)
 
 	for {
-		err := h._read_pkt(buf)
+		err := c._read_pkt(buf)
 		if err == ErrUDPConnClosed {
 			break
 		}
 		if err != nil {
-			h.log.Debugf("dropped pkt: %s", err)
+			c.log.Debugf("dropped pkt: %s", err)
 		}
 	}
 }
 
-func (h *net_controller) _read_pkt(buf []byte) error {
+func (c *net_controller) _read_pkt(buf []byte) error {
 	var (
 		addr *net.UDPAddr
 		pkt  *pkt_t
@@ -76,52 +74,52 @@ func (h *net_controller) _read_pkt(buf []byte) error {
 	)
 
 	// read the udp packet
-	addr, err = _net_conn_read(h.conn, &buf)
+	addr, err = _net_conn_read(c.conn, &buf)
 	if err != nil {
-		// h.log.Debugf("rcv pkt err=%s addr=%s", err, addr)
+		// c.log.Debugf("rcv pkt err=%s addr=%s", err, addr)
 		return err
 	}
 
-	// h.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
+	// c.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
 
 	// unpack the outer packet
 	pkt, err = _pkt_unmarshal(buf, addr_t{addr: addr})
 	if err != nil {
-		h.log.Noticef("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
+		c.log.Noticef("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
-	return h._rcv_pkt(pkt)
+	return c._rcv_pkt(pkt)
 }
 
-func (h *net_controller) _rcv_pkt(pkt *pkt_t) error {
+func (c *net_controller) _rcv_pkt(pkt *pkt_t) error {
 	var (
 		err error
 	)
 
-	h.log.Debugf("rcv pkt: addr=%s hdr=%+v",
+	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
 		pkt.addr, pkt.hdr)
 
 	// pass through line handler
-	err = h.sw.lines.rcv_pkt(pkt)
+	err = c.sw.peers.rcv_pkt(pkt)
 	if err != nil {
-		h.log.Noticef("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
+		c.log.Noticef("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
 		return err
 	}
 
 	return nil
 }
 
-func (h *net_controller) snd_pkt(pkt *pkt_t) error {
+func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	var (
 		data []byte
 		err  error
 	)
 
-	h.log.Debugf("snd pkt: addr=%s hdr=%+v",
+	c.log.Debugf("snd pkt: addr=%s hdr=%+v",
 		pkt.addr, pkt.hdr)
 
-	// h.log.Debugf("tsh snd outer-pkt=%+v", pkt.hdr)
+	// c.log.Debugf("tsh snd outer-pkt=%+v", pkt.hdr)
 
 	// marshal the packet
 	data, err = _pkt_marshal(pkt)
@@ -130,12 +128,12 @@ func (h *net_controller) snd_pkt(pkt *pkt_t) error {
 	}
 
 	// send the packet
-	err = _net_conn_write(h.conn, pkt.addr.addr, data)
+	err = _net_conn_write(c.conn, pkt.addr.addr, data)
 	if err != nil {
 		return err
 	}
 
-	// h.log.Debugf("udp snd pkt=(%d bytes)", len(data))
+	// c.log.Debugf("udp snd pkt=(%d bytes)", len(data))
 
 	return err
 }

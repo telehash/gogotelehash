@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
-	"github.com/fd/go-util/log"
+	// "github.com/fd/go-util/log"
 	"io"
 	"runtime"
 	"testing"
@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	Log.SetLevel(log.DEBUG)
+	// Log.SetLevel(log.DEBUG)
 }
 
 func TestOpen(t *testing.T) {
@@ -61,8 +61,15 @@ func TestOpen(t *testing.T) {
 		b     = make_switch("0.0.0.0:4001", key_b, greetings)
 	)
 
-	a.Start()
-	b.Start()
+	err := a.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = b.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	defer a.Stop()
 	defer b.Stop()
 
