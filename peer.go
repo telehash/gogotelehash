@@ -10,9 +10,9 @@ type peer_t struct {
 	addr addr_t
 
 	sw               *Switch
-	prv_line_half    *private_line_half
-	pub_line_half    *public_line_half
-	line             *line_t
+	prv_line_half    *private_line_key
+	pub_line_half    *public_line_key
+	line             *shared_line_key
 	peer_cmd_snd_at  time.Time
 	open_cmd_snd_at  time.Time
 	last_dht_refresh time.Time
@@ -91,7 +91,7 @@ func (p *peer_t) rcv_line_pkt(opkt *pkt_t) error {
 	return nil
 }
 
-func (p *peer_t) rcv_open_pkt(pub *public_line_half) error {
+func (p *peer_t) rcv_open_pkt(pub *public_line_key) error {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
@@ -117,7 +117,7 @@ func (p *peer_t) rcv_open_pkt(pub *public_line_half) error {
 		return err
 	}
 
-	if p.prv_line_half == nil || (p.pub_line_half != nil && p.pub_line_half.id != pub.id) {
+	if p.prv_line_half == nil || p.pub_line_half != nil && p.pub_line_half.id != pub.id {
 		pkt, err := prv.compose_open_pkt()
 		if err != nil {
 			return err
@@ -135,7 +135,7 @@ func (p *peer_t) rcv_open_pkt(pub *public_line_half) error {
 	p.line = line
 	p.rcv_last_at = time.Now()
 
-	p.log.Infof("line opened: id=%s:%s",
+	p.log.Noticef("line opened: id=%s:%s",
 		short_hash(prv.id),
 		short_hash(pub.id))
 

@@ -85,7 +85,7 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 	// unpack the outer packet
 	pkt, err = _pkt_unmarshal(buf, addr_t{addr: addr})
 	if err != nil {
-		c.log.Noticef("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
+		c.log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
 	}
 
@@ -103,7 +103,7 @@ func (c *net_controller) _rcv_pkt(pkt *pkt_t) error {
 	// pass through line handler
 	err = c.sw.peers.rcv_pkt(pkt)
 	if err != nil {
-		c.log.Noticef("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
+		c.log.Debugf("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
 		return err
 	}
 

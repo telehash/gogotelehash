@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-type private_line_half struct {
+type private_line_key struct {
 	id         string
 	rsa_pubkey *rsa.PublicKey   // the public RSA key of the remote switch
 	rsa_prvkey *rsa.PrivateKey  // the private RSA key of the local switch
@@ -21,10 +21,10 @@ type private_line_half struct {
 
 	enc_key_inner_pkt     []byte
 	enc_key_inner_pkt_sig []byte
-	public_line_half      public_line_half
+	public_line_key       public_line_key
 }
 
-type public_line_half struct {
+type public_line_key struct {
 	hashname       Hashname
 	id             string
 	rsa_pubkey     *rsa.PublicKey
@@ -36,14 +36,14 @@ type public_line_half struct {
 	at time.Time
 }
 
-type line_t struct {
-	prv_half *private_line_half
-	pub_half *public_line_half
+type shared_line_key struct {
+	prv_half *private_line_key // owned by the local
+	pub_half *public_line_key  // owned by the remote
 	enc_key  []byte
 	dec_key  []byte
 }
 
-func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line_half, error) {
+func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line_key, error) {
 
 	bin_line_id, err := make_rand(16)
 	if err != nil {
@@ -71,7 +71,7 @@ func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line
 		return nil, err
 	}
 
-	prv_half := &private_line_half{
+	prv_half := &private_line_key{
 		id:                    hex_line_id,
 		rsa_pubkey:            remote,
 		rsa_prvkey:            local,
@@ -79,7 +79,7 @@ func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line
 		enc_key_inner_pkt:     enc_key_inner_pkt,
 		enc_key_inner_pkt_sig: enc_key_inner_pkt_sig,
 
-		public_line_half: public_line_half{
+		public_line_key: public_line_key{
 			hashname:       hashname,
 			id:             hex_line_id,
 			rsa_pubkey:     &local.PublicKey,
@@ -91,20 +91,20 @@ func make_line_half(local *rsa.PrivateKey, remote *rsa.PublicKey) (*private_line
 	return prv_half, nil
 }
 
-func (p *private_line_half) compose_open_pkt() (*pkt_t, error) {
+func (p *private_line_key) compose_open_pkt() (*pkt_t, error) {
 	iv, err := make_rand(16)
 	if err != nil {
 		return nil, err
 	}
 
-	rsa_pubkey_der, err := enc_DER_RSA(p.public_line_half.rsa_pubkey)
+	rsa_pubkey_der, err := enc_DER_RSA(p.public_line_key.rsa_pubkey)
 	if err != nil {
 		return nil, err
 	}
 
 	ipkt := pkt_t{
 		hdr: pkt_hdr_t{
-			To:   p.public_line_half.hashname.String(),
+			To:   p.public_line_key.hashname.String(),
 			At:   time.Now().UnixNano() / 1000000,
 			Line: p.id,
 		},
@@ -134,7 +134,7 @@ func (p *private_line_half) compose_open_pkt() (*pkt_t, error) {
 	opkt := &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "open",
-			Open: base64.StdEncoding.EncodeToString(p.public_line_half.ecc_pubkey_enc),
+			Open: base64.StdEncoding.EncodeToString(p.public_line_key.ecc_pubkey_enc),
 			Sig:  base64.StdEncoding.EncodeToString(ipkt_data_sig_enc),
 			Iv:   hex.EncodeToString(iv),
 		},
@@ -144,7 +144,7 @@ func (p *private_line_half) compose_open_pkt() (*pkt_t, error) {
 	return opkt, nil
 }
 
-func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, error) {
+func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_key, error) {
 	if opkt.hdr.Type != "open" {
 		return nil, errInvalidPkt
 	}
@@ -232,7 +232,7 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, 
 		return nil, err
 	}
 
-	pub := &public_line_half{
+	pub := &public_line_key{
 		hashname:       hashname,
 		id:             hex_line_id,
 		rsa_pubkey:     rsa_pubkey,
@@ -245,7 +245,7 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_half, 
 	return pub, nil
 }
 
-func (pub *public_line_half) verify(other *public_line_half, self Hashname) error {
+func (pub *public_line_key) verify(other *public_line_key, self Hashname) error {
 	if self != pub.to {
 		return errors.New("hashname mismatch")
 	}
@@ -259,7 +259,7 @@ func (pub *public_line_half) verify(other *public_line_half, self Hashname) erro
 	return nil
 }
 
-func line_activate(prv *private_line_half, pub *public_line_half) (*line_t, error) {
+func line_activate(prv *private_line_key, pub *public_line_key) (*shared_line_key, error) {
 	shared_key, err := prv.ecc_prvkey.GenerateShared(pub.ecc_pubkey, ecdh.MaxSharedKeyLength(pub.ecc_pubkey))
 	if err != nil {
 		return nil, err
@@ -278,7 +278,7 @@ func line_activate(prv *private_line_half, pub *public_line_half) (*line_t, erro
 	enc_key := hash_SHA256(shared_key, rcv_id, snd_id)
 	dec_key := hash_SHA256(shared_key, snd_id, rcv_id)
 
-	return &line_t{
+	return &shared_line_key{
 		prv_half: prv,
 		pub_half: pub,
 		enc_key:  enc_key,
@@ -286,7 +286,7 @@ func line_activate(prv *private_line_half, pub *public_line_half) (*line_t, erro
 	}, nil
 }
 
-func (l *line_t) enc(i *pkt_t) (*pkt_t, error) {
+func (l *shared_line_key) enc(i *pkt_t) (*pkt_t, error) {
 	ipkt_data, err := i.format_pkt()
 	if err != nil {
 		return nil, err
@@ -315,7 +315,7 @@ func (l *line_t) enc(i *pkt_t) (*pkt_t, error) {
 	return o, nil
 }
 
-func (l *line_t) dec(i *pkt_t) (*pkt_t, error) {
+func (l *shared_line_key) dec(i *pkt_t) (*pkt_t, error) {
 	if i.hdr.Type != "line" {
 		return nil, errInvalidPkt
 	}
