@@ -9,6 +9,16 @@ type main_controller struct {
 	sw       *Switch
 	shutdown chan bool
 	wg       sync.WaitGroup
+
+	lines                map[string]*line_t
+	get_line_chan        chan cmd_line_get
+	register_line_chan   chan *line_t
+	unregister_line_chan chan *line_t
+}
+
+type cmd_line_get struct {
+	id    string
+	reply chan *line_t
 }
 
 func main_controller_open(sw *Switch) (*main_controller, error) {
@@ -16,6 +26,11 @@ func main_controller_open(sw *Switch) (*main_controller, error) {
 	h := &main_controller{
 		sw:       sw,
 		shutdown: make(chan bool, 1),
+
+		lines:                make(map[string]*line_t),
+		get_line_chan:        make(chan cmd_line_get),
+		register_line_chan:   make(chan *line_t),
+		unregister_line_chan: make(chan *line_t),
 	}
 
 	h.wg.Add(1)
@@ -40,6 +55,13 @@ func (c *main_controller) _loop() {
 
 		case <-c.shutdown:
 			return
+
+		case line := <-c.register_line_chan:
+			c.lines[line.prv_key.id] = line
+		case line := <-c.unregister_line_chan:
+			delete(c.lines, line.prv_key.id)
+		case cmd := <-c.get_line_chan:
+			cmd.reply <- c.lines[cmd.id]
 
 		case now := <-ticker.C:
 			c._tick(now)

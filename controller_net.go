@@ -52,11 +52,12 @@ func (c *net_controller) _reader_loop() {
 	defer c.wg.Done()
 
 	var (
-		buf = make([]byte, 16*1024)
+		buf   = make([]byte, 16*1024)
+		reply = make(chan *line_t)
 	)
 
 	for {
-		err := c._read_pkt(buf)
+		err := c._read_pkt(buf, reply)
 		if err == ErrUDPConnClosed {
 			break
 		}
@@ -66,7 +67,7 @@ func (c *net_controller) _reader_loop() {
 	}
 }
 
-func (c *net_controller) _read_pkt(buf []byte) error {
+func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	var (
 		addr *net.UDPAddr
 		pkt  *pkt_t
@@ -89,16 +90,26 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 		return err
 	}
 
-	return c._rcv_pkt(pkt)
+	return c._rcv_pkt(pkt, reply)
 }
 
-func (c *net_controller) _rcv_pkt(pkt *pkt_t) error {
+func (c *net_controller) _rcv_pkt(pkt *pkt_t, reply chan *line_t) error {
 	var (
 		err error
 	)
 
 	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
 		pkt.addr, pkt.hdr)
+
+	if pkt.hdr.Type == "line" {
+		c.sw.main.get_line_chan <- cmd_line_get{pkt.hdr.Line, reply}
+		if line := <-reply; line != nil {
+			line.RcvLine(pkt)
+			return nil
+		} else {
+			return errUnknownLine
+		}
+	}
 
 	// pass through line handler
 	err = c.sw.peers.rcv_pkt(pkt)

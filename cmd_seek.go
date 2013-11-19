@@ -145,7 +145,7 @@ func (h *peer_controller) serve_seek(channel *channel_t) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		if !peer.has_open_line() {
+		if !peer.IsGood() {
 			continue
 		}
 

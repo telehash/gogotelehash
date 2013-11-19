@@ -9,7 +9,6 @@ import (
 type peer_controller struct {
 	sw             *Switch
 	local_hashname Hashname
-	lines          map[string]*peer_t // rcv_id => *peer_t
 	buckets        [][]*peer_t
 	mtx            sync.RWMutex
 	log            log.Logger
@@ -24,7 +23,6 @@ func peer_controller_open(sw *Switch) (*peer_controller, error) {
 	c := &peer_controller{
 		sw:             sw,
 		local_hashname: hashname,
-		lines:          make(map[string]*peer_t, 100),
 		buckets:        make([][]*peer_t, 32*8),
 		log:            sw.log.Sub(log_level_for("PEERS", log.DEFAULT), "peers"),
 	}
@@ -199,31 +197,11 @@ func (c *peer_controller) rcv_pkt(outer_pkt *pkt_t) error {
 	case "open":
 		return c._rcv_open_pkt(outer_pkt)
 
-	case "line":
-		return c._rcv_line_pkt(outer_pkt)
-
 	default:
 		// c.log.Debugf("rcv pkt err=%s pkt=%#v", errInvalidPkt, outer_pkt)
 		return errInvalidPkt
 
 	}
-}
-
-func (c *peer_controller) _rcv_line_pkt(opkt *pkt_t) error {
-	c.mtx.RLock()
-	peer := c.lines[opkt.hdr.Line]
-	c.mtx.RUnlock()
-
-	if peer == nil {
-		return errUnknownLine
-	}
-
-	err := peer.rcv_line_pkt(opkt)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (c *peer_controller) _rcv_open_pkt(opkt *pkt_t) error {
@@ -232,21 +210,14 @@ func (c *peer_controller) _rcv_open_pkt(opkt *pkt_t) error {
 		return err
 	}
 
-	peer := c.sw.peers.get_peer(pub_line_half.hashname)
+	peer := c.get_peer(pub_line_half.hashname)
 	if peer == nil {
 		addr := addr_t{hashname: pub_line_half.hashname, pubkey: pub_line_half.rsa_pubkey}
 		addr.update(opkt.addr)
-		peer, _ = c.sw.peers.add_peer(addr)
+		peer, _ = c.add_peer(addr)
 	}
 
-	err = peer.rcv_open_pkt(pub_line_half)
-	if err != nil {
-		return err
-	}
-
-	c.mtx.Lock()
-	c.lines[peer.prv_line_half.id] = peer
-	c.mtx.Unlock()
+	peer.line.RcvOpen(pub_line_half)
 
 	return nil
 }

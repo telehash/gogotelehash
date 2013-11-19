@@ -92,10 +92,6 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	if !c.peer.has_open_line() {
-		go c.peer.open_line()
-	}
-
 	for {
 		blocked, err = c._snd_pkt_blocked()
 		if err != nil {
@@ -116,7 +112,7 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 
 	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 
-	err = c.peer.snd_pkt_blocking(pkt)
+	err = c.peer.line.Snd(pkt)
 	if err != nil {
 		return err
 	}
@@ -161,10 +157,6 @@ func (c *channel_t) _snd_pkt_blocked() (bool, error) {
 			// wait for first ack
 			return true, nil
 		}
-	}
-
-	if !c.peer.has_open_line() {
-		return true, nil
 	}
 
 	return false, nil
@@ -216,7 +208,7 @@ func (c *channel_t) snd_ack() error {
 
 	c.log.Debugf("snd ack: hdr=%+v", pkt.hdr)
 
-	err = c.peer.snd_pkt(pkt)
+	err = c.peer.line.Snd(pkt)
 	if err != nil {
 		return err
 	}
@@ -546,7 +538,7 @@ func (c *channel_t) send_missing_packets(now time.Time) {
 	for _, pkt := range buf {
 		pkt.hdr.Ack = read_last_seq
 		pkt.hdr.Miss = miss
-		c.peer.snd_pkt(pkt)
+		c.peer.line.Snd(pkt)
 	}
 }
 
