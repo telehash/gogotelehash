@@ -102,7 +102,7 @@ func (c *net_controller) _rcv_pkt(pkt *pkt_t, reply chan *line_t) error {
 		pkt.addr, pkt.hdr)
 
 	if pkt.hdr.Type == "line" {
-		c.sw.main.get_line_chan <- cmd_line_get{pkt.hdr.Line, reply}
+		c.sw.main.get_active_line_chan <- cmd_line_get_active{pkt.hdr.Line, reply}
 		if line := <-reply; line != nil {
 			line.RcvLine(pkt)
 			return nil

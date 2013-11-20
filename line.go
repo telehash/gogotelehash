@@ -145,6 +145,8 @@ func (l *line_t) run_main_loop() {
 func (l *line_t) setup() error {
 	l.peer.log.Debugf("started running line")
 
+	l.register()
+
 	if l.peer.addr.pubkey == nil && !l.peer.addr.via.IsZero() {
 		l.state.mod(line_opening|line_peering, 0)
 	} else {
@@ -200,19 +202,22 @@ func (l *line_t) run_open_loop() {
 
 func (l *line_t) run_line_loop() {
 	var (
+		local_hashname = l.sw.peers.local_hashname
 		broken_timeout = 60 * time.Second
 		broken_timer   = time.NewTimer(broken_timeout)
 		idle_timeout   = 30 * time.Second
 		idle_timer     = time.NewTimer(idle_timeout)
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
+		seek_ticker    = time.NewTicker(30 * time.Second)
 	)
 
 	defer broken_timer.Stop()
 	defer idle_timer.Stop()
 	defer ack_ticker.Stop()
+	defer seek_ticker.Stop()
 
-	l.register()
-	defer l.unregister()
+	l.activate()
+	defer l.deactivate()
 
 	for l.state.test(line_opened, 0) {
 		select {
@@ -227,18 +232,18 @@ func (l *line_t) run_line_loop() {
 			l.state.mod(line_idle, line_active)
 
 		case now := <-ack_ticker.C:
-			go func() {
-				for _, c := range l.peer.channels {
-					err := c.snd_ack()
-					if err != nil {
-						l.peer.log.Debugf("auto-ack: error=%s", err)
-					}
-
-					c.send_missing_packets(now)
-					c.detect_rcv_deadline(now)
-					c.detect_broken(now)
+			for _, c := range l.peer.channels {
+				ack, miss := c.tick(now)
+				if ack != nil {
+					l.snd_line_pkt(line_snd_cmd{ack, nil})
 				}
-			}()
+				for _, pkt := range miss {
+					l.snd_line_pkt(line_snd_cmd{pkt, nil})
+				}
+			}
+
+		case <-seek_ticker.C:
+			go l.peer.send_seek_cmd(local_hashname)
 
 		case cmd := <-l.snd_chan:
 			if l.handle_err(l.snd_line_pkt(cmd)) {
@@ -277,7 +282,9 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 func (l *line_t) snd_line_pkt(cmd line_snd_cmd) error {
 	pkt, err := l.shr_key.enc(cmd.pkt)
 	if err != nil {
-		cmd.reply <- err
+		if cmd.reply != nil {
+			cmd.reply <- err
+		}
 		return err
 	}
 
@@ -285,11 +292,15 @@ func (l *line_t) snd_line_pkt(cmd line_snd_cmd) error {
 
 	err = l.sw.net.snd_pkt(pkt)
 	if err != nil {
-		cmd.reply <- err
+		if cmd.reply != nil {
+			cmd.reply <- err
+		}
 		return err
 	}
 
-	cmd.reply <- nil
+	if cmd.reply != nil {
+		cmd.reply <- nil
+	}
 	return nil
 }
 
@@ -384,6 +395,8 @@ func (l *line_t) snd_open_pkt() error {
 }
 
 func (l *line_t) teardown() {
+	l.unregister()
+
 	l.state.mod(0, line_active)
 
 	l.break_channels()
@@ -422,17 +435,19 @@ func (l *line_t) break_channels() {
 }
 
 func (l *line_t) register() {
-	l.sw.peers.mtx.Lock()
-	defer l.sw.peers.mtx.Unlock()
-
 	l.sw.main.register_line_chan <- l
 }
 
 func (l *line_t) unregister() {
-	l.sw.peers.mtx.Lock()
-	defer l.sw.peers.mtx.Unlock()
-
 	l.sw.main.unregister_line_chan <- l
+}
+
+func (l *line_t) activate() {
+	l.sw.main.activate_line_chan <- l
+}
+
+func (l *line_t) deactivate() {
+	l.sw.main.deactivate_line_chan <- l
 }
 
 func (l *line_t) handle_err(err error) bool {

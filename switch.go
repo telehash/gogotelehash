@@ -26,11 +26,16 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 
 	mux.HandleFallback(handler)
 
+	hn, err := HashnameFromPublicKey(&key.PublicKey)
+	if err != nil {
+		return nil, err
+	}
+
 	s := &Switch{
 		addr: addr,
 		key:  key,
 		mux:  mux,
-		log:  Log.Sub(log.DEFAULT, "switch["+addr+"]"),
+		log:  Log.Sub(log.DEFAULT, "switch["+addr+":"+hn.Short()+"]"),
 	}
 
 	return s, nil

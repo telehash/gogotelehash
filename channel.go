@@ -90,11 +90,11 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 	)
 
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	for {
 		blocked, err = c._snd_pkt_blocked()
 		if err != nil {
+			c.mtx.Unlock()
 			return err
 		}
 		if !blocked {
@@ -112,10 +112,14 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 
 	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 
+	c.mtx.Unlock()
+
 	err = c.peer.line.Snd(pkt)
 	if err != nil {
 		return err
 	}
+
+	c.mtx.Lock()
 
 	now := time.Now()
 
@@ -137,6 +141,8 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 
 	// state changed
 	c.cnd.Broadcast()
+
+	c.mtx.Unlock()
 
 	return nil
 }
@@ -178,78 +184,6 @@ func (c *channel_t) _snd_pkt_err() error {
 	return nil
 }
 
-// snd_ack()
-func (c *channel_t) snd_ack() error {
-	var (
-		err error
-		now = time.Now()
-	)
-
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	if c.raw {
-		return nil
-	}
-
-	if !c._needs_auto_ack(now) {
-		return nil
-	}
-
-	err = c._snd_ack_err()
-	if err != nil {
-		return err
-	}
-
-	pkt := &pkt_t{}
-	pkt.hdr.C = c.channel_id
-	pkt.hdr.Ack = c.read_last_seq
-	pkt.hdr.Miss = c.miss
-
-	c.log.Debugf("snd ack: hdr=%+v", pkt.hdr)
-
-	err = c.peer.line.Snd(pkt)
-	if err != nil {
-		return err
-	}
-
-	if c.rcv_end {
-		c.snd_end_ack = true
-	}
-	c.rcv_unacked = 0
-	c.snd_last_ack_at = now
-	c.snd_last_ack = pkt.hdr.Ack
-
-	// state changed
-	c.cnd.Broadcast()
-
-	return nil
-}
-
-func (c *channel_t) _needs_auto_ack(now time.Time) bool {
-	if c.snd_last_ack_at.IsZero() {
-		if !c.initiator && c.read_last_seq.IsSet() {
-			return true
-		} else {
-			c.snd_last_ack_at = now
-		}
-	}
-
-	if c.rcv_end && !c.snd_end_ack {
-		return true
-	}
-
-	return c.rcv_unacked > 30 || c.snd_last_ack_at.Before(now.Add(-1*time.Second))
-}
-
-func (c *channel_t) _snd_ack_err() error {
-	if c.broken {
-		return ErrChannelBroken
-	}
-
-	return nil
-}
-
 // push_rcv_pkt()
 // called by the peer code
 func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
@@ -283,6 +217,12 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 		goto EXIT
 	}
 
+	if len(c.rcv_buf) >= 100 {
+		// drop packet when buffer is full
+		err = nil
+		goto EXIT
+	}
+
 	if c.rcv_end && pkt.hdr.Seq > c.rcv_last_seq {
 		// drop packet sent after `end`
 		err = nil
@@ -310,7 +250,6 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 	c.log.Debugf("rcv pkt: bufferd=%d hdr=%+v", len(c.rcv_buf), pkt.hdr)
 
 	c.rcv_last_pkt_at = time.Now()
-	c.rcv_unacked++
 
 	// add pkt to buffer
 	if buf_idx == -1 {
@@ -413,6 +352,7 @@ func (c *channel_t) pop_rcv_pkt() (*pkt_t, error) {
 	c.rcv_buf = c.rcv_buf[:len(c.rcv_buf)-1]
 
 	c.read_last_seq = pkt.hdr.Seq
+	c.rcv_unacked++
 
 	if pkt.hdr.End {
 		c.read_end = true
@@ -488,10 +428,88 @@ func (c *channel_t) set_rcv_deadline(deadline time.Time) {
 	c.rcv_deadline_reached = false
 }
 
-func (c *channel_t) detect_rcv_deadline(now time.Time) {
+func (c *channel_t) tick(now time.Time) (ack *pkt_t, miss []*pkt_t) {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
+	var (
+		err error
+	)
+
+	ack, err = c._get_auto_ack()
+	if err != nil {
+		c.log.Debugf("auto-ack: error=%s", err)
+	}
+
+	miss = c._get_missing_packets(now)
+
+	c._detect_rcv_deadline(now)
+	c._detect_broken(now)
+
+	c.cnd.Broadcast()
+
+	return ack, miss
+}
+
+func (c *channel_t) _get_auto_ack() (*pkt_t, error) {
+	var (
+		err error
+		now = time.Now()
+	)
+
+	if c.raw {
+		return nil, nil
+	}
+
+	if !c._needs_auto_ack(now) {
+		return nil, nil
+	}
+
+	err = c._snd_ack_err()
+	if err != nil {
+		return nil, err
+	}
+
+	pkt := &pkt_t{}
+	pkt.hdr.C = c.channel_id
+	pkt.hdr.Ack = c.read_last_seq
+	pkt.hdr.Miss = c.miss
+
+	if c.rcv_end {
+		c.snd_end_ack = true
+	}
+	c.rcv_unacked = 0
+	c.snd_last_ack_at = now
+	c.snd_last_ack = pkt.hdr.Ack
+
+	return pkt, nil
+}
+
+func (c *channel_t) _needs_auto_ack(now time.Time) bool {
+	if c.snd_last_ack_at.IsZero() {
+		if !c.initiator && c.read_last_seq.IsSet() {
+			return true
+		} else {
+			c.snd_last_ack_at = now
+		}
+	}
+
+	if c.rcv_end && !c.snd_end_ack {
+		return true
+	}
+
+	return c.rcv_unacked > 30 || c.snd_last_ack_at.Before(now.Add(-1*time.Second))
+}
+
+func (c *channel_t) _snd_ack_err() error {
+	if c.broken {
+		return ErrChannelBroken
+	}
+
+	return nil
+}
+
+func (c *channel_t) _detect_rcv_deadline(now time.Time) {
 	if c.rcv_deadline_reached {
 		return
 	}
@@ -502,28 +520,22 @@ func (c *channel_t) detect_rcv_deadline(now time.Time) {
 
 	if c.rcv_deadline.Before(now) {
 		c.rcv_deadline_reached = true
-		c.cnd.Broadcast()
 	}
 }
 
-func (c *channel_t) send_missing_packets(now time.Time) {
-	c.mtx.Lock()
-
+func (c *channel_t) _get_missing_packets(now time.Time) []*pkt_t {
 	if c.raw {
-		c.mtx.Unlock()
-		return
+		return nil
 	}
 
 	if c.snd_miss_at.After(now.Add(-1 * time.Second)) {
-		c.mtx.Unlock()
-		return
+		return nil
 	}
 
 	c.snd_miss_at = now
 
 	if len(c.snd_buf) == 0 {
-		c.mtx.Unlock()
-		return
+		return nil
 	}
 
 	var (
@@ -533,12 +545,37 @@ func (c *channel_t) send_missing_packets(now time.Time) {
 	)
 	copy(buf, c.snd_buf)
 	copy(miss, c.miss)
-	c.mtx.Unlock()
 
 	for _, pkt := range buf {
 		pkt.hdr.Ack = read_last_seq
 		pkt.hdr.Miss = miss
-		c.peer.line.Snd(pkt)
+	}
+
+	return buf
+}
+
+func (c *channel_t) _detect_broken(now time.Time) {
+	breaking_point := now.Add(-5 * time.Second)
+
+	if c.rcv_last_ack_at.IsZero() {
+		c.rcv_last_ack_at = now
+	}
+
+	if c.rcv_last_pkt_at.IsZero() {
+		c.rcv_last_pkt_at = now
+	}
+
+	if c.snd_last_ack_at.IsZero() {
+		c.snd_last_ack_at = now
+	}
+
+	if c.snd_last_pkt_at.IsZero() {
+		c.snd_last_pkt_at = now
+	}
+
+	if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
+		c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
+		c.broken = true
 	}
 }
 
@@ -570,35 +607,6 @@ func (c *channel_t) is_closed() bool {
 	}
 
 	return false
-}
-
-func (c *channel_t) detect_broken(now time.Time) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	breaking_point := now.Add(-5 * time.Second)
-
-	if c.rcv_last_ack_at.IsZero() {
-		c.rcv_last_ack_at = now
-	}
-
-	if c.rcv_last_pkt_at.IsZero() {
-		c.rcv_last_pkt_at = now
-	}
-
-	if c.snd_last_ack_at.IsZero() {
-		c.snd_last_ack_at = now
-	}
-
-	if c.snd_last_pkt_at.IsZero() {
-		c.snd_last_pkt_at = now
-	}
-
-	if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
-		c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
-		c.broken = true
-		c.cnd.Broadcast()
-	}
 }
 
 func (c *channel_t) mark_as_broken() {

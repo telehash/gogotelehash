@@ -88,7 +88,7 @@ func TestOpen(t *testing.T) {
 
 		defer channel.Close()
 
-		for i := 0; i < 10000; i++ {
+		for i := 0; i < 100000; i++ {
 			_, err := channel.Send(nil, []byte(fmt.Sprintf("hello world (%d)", i)))
 			if err != nil {
 				t.Fatal(err)
