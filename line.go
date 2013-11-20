@@ -27,8 +27,8 @@ type line_t struct {
 	log           log.Logger
 	shutdown      chan bool
 	snd_chan      chan cmd_line_snd
-	rcv_open_chan chan *public_line_key // buffered rcv channel
-	rcv_line_chan chan *pkt_t           // buffered rcv channel
+	rcv_open_chan chan cmd_open_rcv // buffered rcv channel
+	rcv_line_chan chan *pkt_t       // buffered rcv channel
 	prv_key       *private_line_key
 	pub_key       *public_line_key
 	shr_key       *shared_line_key
@@ -44,6 +44,11 @@ type (
 		pkt   *pkt_t
 		reply chan error
 	}
+
+	cmd_open_rcv struct {
+		pub  *public_line_key
+		addr addr_t
+	}
 )
 
 func (l *line_t) Init(sw *Switch, peer *peer_t) {
@@ -52,7 +57,7 @@ func (l *line_t) Init(sw *Switch, peer *peer_t) {
 	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.addr.hashname.Short()+"]")
 
 	l.snd_chan = make(chan cmd_line_snd, 10)
-	l.rcv_open_chan = make(chan *public_line_key, 10)
+	l.rcv_open_chan = make(chan cmd_open_rcv, 10)
 	l.rcv_line_chan = make(chan *pkt_t, 10)
 
 	l.channels = make(map[string]*channel_t, 10)
@@ -118,13 +123,13 @@ func (l *line_t) RcvLine(pkt *pkt_t) {
 	l.rcv_line_chan <- pkt
 }
 
-func (l *line_t) RcvOpen(pub *public_line_key) {
+func (l *line_t) RcvOpen(pub *public_line_key, addr addr_t) {
 	err := l.EnsureRunning()
 	if err != nil {
 		return // drop
 	}
 
-	l.rcv_open_chan <- pub
+	l.rcv_open_chan <- cmd_open_rcv{pub, addr}
 }
 
 func (l *line_t) OpenChannel(pkt *pkt_t, raw bool) (*channel_t, error) {
@@ -192,10 +197,23 @@ func (l *line_t) setup() error {
 }
 
 func (l *line_t) run_peer_loop() {
-	if l.handle_err(l.sw.peer_handler.SendPeer(l.peer)) {
-		l.state.mod(0, line_peering)
-	} else {
+	if !l.handle_err(l.sw.peer_handler.SendPeer(l.peer)) {
 		l.state.mod(0, line_active)
+		return
+	}
+
+	select {
+
+	case <-l.shutdown:
+		l.state.mod(0, line_active)
+
+	case <-time.After(10 * time.Second):
+		l.state.mod(line_broken, line_active)
+
+	case cmd := <-l.rcv_open_chan:
+		l.state.mod(0, line_peering)
+		l.rcv_open_chan <- cmd
+
 	}
 }
 
@@ -203,8 +221,9 @@ func (l *line_t) run_peer_loop() {
 func (l *line_t) run_open_loop() {
 	var (
 		timeout_d = 5 * time.Second
-		timeout   = time.NewTimer(0)
+		timeout   = time.NewTimer(1 * time.Millisecond)
 		deadline  = time.NewTimer(60 * time.Second)
+		send_open bool
 	)
 
 	defer timeout.Stop()
@@ -223,10 +242,13 @@ func (l *line_t) run_open_loop() {
 		case <-timeout.C:
 			l.handle_err(l.snd_open_pkt())
 			timeout.Reset(timeout_d)
+			send_open = true
 
-		case pkt := <-l.rcv_open_chan:
-			if l.handle_err(l.rcv_open_pkt(pkt)) {
-				l.state.mod(line_opened, line_active)
+		case cmd := <-l.rcv_open_chan:
+			if l.handle_err(l.rcv_open_pkt(cmd)) {
+				if send_open {
+					l.state.mod(line_opened, line_active)
+				}
 			} else {
 				l.state.mod(0, line_active)
 			}
@@ -254,6 +276,10 @@ func (l *line_t) run_line_loop() {
 	l.activate()
 	defer l.deactivate()
 
+	for _, c := range l.channels {
+		c.cnd.Broadcast()
+	}
+
 	for l.state.test(line_opened, 0) {
 		select {
 
@@ -274,6 +300,11 @@ func (l *line_t) run_line_loop() {
 				}
 				for _, pkt := range miss {
 					l.snd_line_pkt(cmd_line_snd{pkt, nil})
+				}
+			}
+			for _, c := range l.channels {
+				if c.is_closed() {
+					delete(l.channels, c.channel_id)
 				}
 			}
 
@@ -382,9 +413,11 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 	return nil
 }
 
-func (l *line_t) rcv_open_pkt(pub *public_line_key) error {
+func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	var (
 		err            error
+		pub            = cmd.pub
+		addr           = cmd.addr
 		local_rsa_key  = l.sw.key
 		local_hashname = l.sw.hashname
 	)
@@ -393,19 +426,25 @@ func (l *line_t) rcv_open_pkt(pub *public_line_key) error {
 	if prv == nil {
 		prv, err = make_line_half(local_rsa_key, pub.rsa_pubkey)
 		if err != nil {
+			l.log.Noticef("rcv open from=%s err=%s", addr, err)
 			return err
 		}
 	}
 
 	err = pub.verify(l.pub_key, local_hashname)
 	if err != nil {
+		l.log.Noticef("rcv open from=%s err=%s", addr, err)
 		return err
 	}
 
 	shr, err := line_activate(prv, pub)
 	if err != nil {
+		l.log.Noticef("rcv open from=%s err=%s", addr, err)
 		return err
 	}
+
+	l.peer.addr.update(addr)
+	l.log.Noticef("rcv open from=%s", l.peer.addr)
 
 	if l.prv_key == nil || l.pub_key != nil && l.pub_key.id != pub.id {
 		pkt, err := prv.compose_open_pkt()
@@ -427,10 +466,6 @@ func (l *line_t) rcv_open_pkt(pub *public_line_key) error {
 	l.log.Noticef("line opened: id=%s:%s",
 		short_hash(prv.id),
 		short_hash(pub.id))
-
-	for _, c := range l.channels {
-		c.cnd.Broadcast()
-	}
 
 	return nil
 }
@@ -464,6 +499,8 @@ func (l *line_t) snd_open_pkt() error {
 	pkt, err := l.prv_key.compose_open_pkt()
 	pkt.addr = l.peer.addr
 
+	l.log.Noticef("snd open to=%s", pkt.addr)
+
 	err = l.sw.net.snd_pkt(pkt)
 	if err != nil {
 		return err
@@ -482,7 +519,16 @@ func (l *line_t) teardown() {
 	l.flush() // empty the buffers
 
 	l.state.mod(0, line_running)
-	l.log.Debugf("stopped running line")
+
+	if l.state.test(line_broken, 0) {
+		l.log.Noticef("line closed: peer=%s (reason=%s)",
+			l.peer.String(),
+			"broken")
+	} else if l.state.test(line_idle, 0) {
+		l.log.Noticef("line closed: peer=%s (reason=%s)",
+			l.peer.String(),
+			"idle")
+	}
 }
 
 func (l *line_t) flush() {

@@ -43,6 +43,14 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 	return c, nil
 }
 
+func (c *net_controller) GetPort() int {
+	addr := c.conn.LocalAddr()
+	if addr == nil {
+		return -1
+	}
+	return addr.(*net.UDPAddr).Port
+}
+
 func (c *net_controller) close() {
 	c.conn.Close()
 	c.wg.Wait()
@@ -115,7 +123,7 @@ func (c *net_controller) _rcv_pkt(pkt *pkt_t, reply chan *line_t) error {
 
 		c.sw.main.get_line_chan <- cmd_line_get{pub.hashname, pkt.addr, pub, reply}
 		if line := <-reply; line != nil {
-			line.RcvOpen(pub)
+			line.RcvOpen(pub, pkt.addr)
 			return nil
 		} else {
 			return errUnknownLine

@@ -104,14 +104,25 @@ func pong(c *telehash.Channel) {
 	}
 }
 
+// const seed = `
+// [
+// {
+//     "ip": "208.68.164.253",
+//     "port": 42424,
+//     "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
+//     "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
+// }
+// ]
+// `
+
 const seed = `
 [
-{
-    "ip": "208.68.164.253",
-    "port": 42424,
-    "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
-    "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
-}
+  {
+    "IP": "87.236.178.46",
+    "Port": 45454,
+    "Hashname": "c32973bcdc0144040163b54aa3d1d5245bd302e400e10df0077c50104afaa274",
+    "Pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEAwKqaofyr3E4kw1MZXGhc\nVG4Pk6Qm9xLQ4MlRgcaccqU9mqQlEFwokqhuksUa2/Cq22kiZpbx6bIts9RVZHyb\nME8Q6g0Af/+vVgmiQuF7F6It3d1HI3tQriXQSFf7JzanYHE4vzq2G1mE0sxfJE7Y\nO/UFCUt8v/w9m6Bogb4K7LZmFk1BVfkqxM+G7rS5j667JfTptXeYJjbZVdyej4K5\npTiGvCfqU+OFLxwR6uVdcoHrkuxwO89NX+ha2jgorTwPOt/LTQDHpqRtbnP5UXRa\n38d8OTqAT86LVWHi84+wPdcpA+9ZVSCYCIX6ThQCVWU+ltnKlE2Dl7AqQFSTXsbn\nuwIBIw==\n-----END PUBLIC KEY-----\n"
+  }
 ]
 `
 

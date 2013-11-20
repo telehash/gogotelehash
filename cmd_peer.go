@@ -32,11 +32,22 @@ func (h *peer_handler) SendPeer(to *peer_t) error {
 		h.sw.net.send_nat_breaker(to.addr.addr)
 	}
 
+	var local *pkt_hdr_local_t
+	if ip, ok := get_lan_ip(); ok {
+		if port := h.sw.net.GetPort(); port > 0 {
+			local = &pkt_hdr_local_t{
+				IP:   ip.String(),
+				Port: port,
+			}
+		}
+	}
+
 	_, err := h.sw.main.OpenChannel(to.addr.via, &pkt_t{
 		hdr: pkt_hdr_t{
-			Type: "peer",
-			Peer: to.addr.hashname.String(),
-			End:  true,
+			Type:  "peer",
+			Peer:  to.addr.hashname.String(),
+			Local: local,
+			End:   true,
 		},
 	}, true)
 
@@ -73,6 +84,22 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
+	peer := h.sw.main.GetPeer(peer_hashname)
+	if peer == nil {
+		return
+	}
+
+	var (
+		ip   = sender_addr.addr.IP.String()
+		port = sender_addr.addr.Port
+	)
+
+	local := pkt.hdr.Local
+	if local != nil && peer.addr.addr.IP.String() == ip {
+		ip = local.IP
+		port = local.Port
+	}
+
 	pubkey, err := enc_DER_RSA(sender_addr.pubkey)
 	if err != nil {
 		h.log.Debugf("error: %s", err)
@@ -84,8 +111,8 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 	_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
 		hdr: pkt_hdr_t{
 			Type: "connect",
-			IP:   sender_addr.addr.IP.String(),
-			Port: sender_addr.addr.Port,
+			IP:   ip,
+			Port: port,
 			End:  true,
 		},
 		body: pubkey,
@@ -119,7 +146,13 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 		return
 	}
 
-	peer, _ := h.sw.main.AddPeer(addr)
+	peer, disc := h.sw.main.AddPeer(addr)
 	h.log.Noticef("received connect-cmd: peer=%s", addr)
-	h.sw.seek_handler.Seek(peer.addr.hashname, h.sw.hashname)
+
+	if !disc {
+		err = h.sw.seek_handler.Seek(peer.addr.hashname, h.sw.hashname)
+		if err != nil {
+			h.log.Noticef("error: %s", err)
+		}
+	}
 }

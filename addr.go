@@ -37,12 +37,18 @@ func make_addr(hashname, via Hashname, addr string, pubkey *rsa.PublicKey) (addr
 }
 
 func (p addr_t) String() string {
-	return fmt.Sprintf("<peer:%s addr=%s>", p.hashname.Short(), p.addr)
+	if p.via.IsZero() {
+		return fmt.Sprintf("<peer:%s addr=%s>", p.hashname.Short(), p.addr)
+	} else {
+		return fmt.Sprintf("<peer:%s addr=%s via=%s>", p.hashname.Short(), p.addr, p.via.Short())
+	}
 }
 
 func (a *addr_t) update(b addr_t) {
 	if b.addr != nil {
-		a.addr = b.addr
+		if a.addr == nil || !is_lan_ip(a.addr.IP) || is_lan_ip(b.addr.IP) {
+			a.addr = b.addr
+		}
 	}
 
 	if a.pubkey == nil && b.pubkey != nil {

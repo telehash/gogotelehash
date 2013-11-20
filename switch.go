@@ -26,7 +26,9 @@ type Channel struct {
 func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, error) {
 	mux := NewSwitchMux()
 
-	mux.HandleFallback(handler)
+	if handler != nil {
+		mux.HandleFallback(handler)
+	}
 
 	hn, err := HashnameFromPublicKey(&key.PublicKey)
 	if err != nil {

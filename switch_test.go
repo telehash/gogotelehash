@@ -11,10 +11,6 @@ import (
 	"time"
 )
 
-func init() {
-	// Log.SetLevel(log.DEBUG)
-}
-
 func TestOpen(t *testing.T) {
 	defer capture_runtime_state().validate(t)
 
@@ -49,8 +45,6 @@ func TestOpen(t *testing.T) {
 
 			// Log.Infof("msg=%q", buf)
 		}
-
-		time.Sleep(time.Second)
 	})
 
 	var (
@@ -193,8 +187,10 @@ func capture_runtime_state() runtime_state {
 }
 
 func (a runtime_state) validate(t *testing.T) {
+	time.Sleep(1 * time.Millisecond)
 	b := capture_runtime_state()
 	if a.NumGoroutine != b.NumGoroutine {
+		// panic(fmt.Sprintf("NumGoroutine: delta=%d", b.NumGoroutine-a.NumGoroutine))
 		t.Logf("NumGoroutine: delta=%d", b.NumGoroutine-a.NumGoroutine)
 	}
 }

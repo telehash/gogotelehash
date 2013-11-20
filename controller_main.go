@@ -128,13 +128,23 @@ func (c *main_controller) Close() {
 }
 
 func (c *main_controller) _loop() {
+	var (
+		terminating bool
+	)
+
 	defer c.wg.Done()
 
 	for {
 		select {
 
 		case <-c.shutdown:
-			return
+			terminating = true
+			for _, l := range c.lines {
+				l.Shutdown()
+			}
+			if len(c.lines) == 0 {
+				return
+			}
 
 		case line := <-c.activate_line_chan:
 			c.active_lines[line.prv_key.id] = line
@@ -147,6 +157,9 @@ func (c *main_controller) _loop() {
 			c.lines[line.peer.addr.hashname] = line
 		case line := <-c.unregister_line_chan:
 			delete(c.lines, line.peer.addr.hashname)
+			if terminating && len(c.lines) == 0 {
+				return
+			}
 		case cmd := <-c.get_line_chan:
 			c.get_line(cmd)
 
@@ -175,7 +188,7 @@ func (c *main_controller) add_peer(cmd cmd_peer_add) {
 func (c *main_controller) seek_discovered_peer(peer *peer_t) {
 	err := c.sw.seek_handler.Seek(peer.addr.hashname, c.sw.hashname)
 	if err != nil {
-		c.log.Debugf("failed to seek: %s err=%s", peer.addr.hashname.Short(), err)
+		c.log.Noticef("failed to seek: %s err=%s", peer.addr.hashname.Short(), err)
 	}
 }
 
