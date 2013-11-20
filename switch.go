@@ -8,13 +8,15 @@ import (
 )
 
 type Switch struct {
-	main  *main_controller
-	net   *net_controller
-	peers *peer_controller
-	addr  string
-	key   *rsa.PrivateKey
-	mux   *SwitchMux
-	log   log.Logger
+	main         *main_controller
+	net          *net_controller
+	peer_handler peer_handler
+	seek_handler seek_handler
+	addr         string
+	hashname     Hashname
+	key          *rsa.PrivateKey
+	mux          *SwitchMux
+	log          log.Logger
 }
 
 type Channel struct {
@@ -32,11 +34,15 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 	}
 
 	s := &Switch{
-		addr: addr,
-		key:  key,
-		mux:  mux,
-		log:  Log.Sub(log.DEFAULT, "switch["+addr+":"+hn.Short()+"]"),
+		addr:     addr,
+		key:      key,
+		hashname: hn,
+		mux:      mux,
+		log:      Log.Sub(log.DEFAULT, "switch["+addr+":"+hn.Short()+"]"),
 	}
+
+	s.peer_handler.init_peer_handler(s)
+	s.seek_handler.init_seek_handler(s)
 
 	return s, nil
 }
@@ -55,23 +61,17 @@ func (s *Switch) Start() error {
 	}
 	s.net = net
 
-	peers, err := peer_controller_open(s)
-	if err != nil {
-		return err
-	}
-	s.peers = peers
-
 	return nil
 }
 
 func (s *Switch) Stop() error {
 	s.net.close()
-	s.main.close()
+	s.main.Close()
 	return nil
 }
 
 func (s *Switch) LocalHashname() Hashname {
-	return s.peers.get_local_hashname()
+	return s.hashname
 }
 
 func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
@@ -80,17 +80,13 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		return ZeroHashname, err
 	}
 
-	peer, discovered := s.peers.add_peer(paddr)
-
-	if discovered {
-		peer.send_seek_cmd(s.LocalHashname())
-	}
+	peer, _ := s.main.AddPeer(paddr)
 
 	return peer.addr.hashname, nil
 }
 
 func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
-	peers := s.peers.seek(hashname, n)
+	peers := s.seek_handler.RecusiveSeek(hashname, n)
 	hashnames := make([]Hashname, len(peers))
 
 	for i, peer := range peers {
@@ -101,12 +97,7 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 }
 
 func (s *Switch) Open(hashname Hashname, typ string) (*Channel, error) {
-	peer := s.peers.get_peer(hashname)
-	if peer == nil {
-		return nil, ErrUnknownPeer
-	}
-
-	channel, err := peer.open_channel(&pkt_t{
+	channel, err := s.main.OpenChannel(hashname, &pkt_t{
 		hdr: pkt_hdr_t{Type: typ},
 	}, false)
 

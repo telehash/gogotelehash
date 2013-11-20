@@ -11,7 +11,7 @@ import (
 
 type channel_t struct {
 	sw                   *Switch
-	peer                 *peer_t
+	line                 *line_t
 	channel_id           string
 	channel_type         string
 	raw                  bool
@@ -45,10 +45,10 @@ type channel_t struct {
 	log log.Logger
 }
 
-func make_channel(sw *Switch, peer *peer_t, id, typ string, initiator bool, raw bool) (*channel_t, error) {
+func make_channel(sw *Switch, line *line_t, id, typ string, initiator bool, raw bool) (*channel_t, error) {
 	c := &channel_t{
 		sw:           sw,
-		peer:         peer,
+		line:         line,
 		channel_id:   id,
 		channel_type: typ,
 		raw:          raw,
@@ -65,7 +65,7 @@ func make_channel(sw *Switch, peer *peer_t, id, typ string, initiator bool, raw 
 		c.channel_id = hex.EncodeToString(bin_id)
 	}
 
-	c.log = peer.log.Sub(log_level_for("CHANNEL", log.DEFAULT), "channel["+c.channel_id[:8]+"]")
+	c.log = line.log.Sub(log_level_for("CHANNEL", log.DEFAULT), "channel["+c.channel_id[:8]+"]")
 	c.cnd.L = &c.mtx
 
 	return c, nil
@@ -114,7 +114,7 @@ func (c *channel_t) snd_pkt(pkt *pkt_t) error {
 
 	c.mtx.Unlock()
 
-	err = c.peer.line.Snd(pkt)
+	err = c.line.Snd(pkt)
 	if err != nil {
 		return err
 	}

@@ -10,7 +10,7 @@ var (
 	ErrTimeout                = errors.New("telehash: timeout")
 	ErrChannelBroken          = errors.New("telehash: broken channel")
 	ErrPeerBroken             = errors.New("telehash: broken peer")
-	ErrUnknownPeer            = errors.New("telehash: unknwon peer")
+	ErrUnknownPeer            = errors.New("telehash: unknown peer")
 	ErrSendOnClosedChannel    = errors.New("telehash: send on closed channel")
 	ErrReceiveOnClosedChannel = errors.New("telehash: receive on closed channel")
 

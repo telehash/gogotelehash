@@ -84,7 +84,7 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	// c.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
 
 	// unpack the outer packet
-	pkt, err = _pkt_unmarshal(buf, addr_t{addr: addr})
+	pkt, err = parse_pkt(buf, addr_t{addr: addr})
 	if err != nil {
 		c.log.Debugf("rcv pkt step=1 err=%s pkt=%#v", err, pkt)
 		return err
@@ -94,10 +94,6 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 }
 
 func (c *net_controller) _rcv_pkt(pkt *pkt_t, reply chan *line_t) error {
-	var (
-		err error
-	)
-
 	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
 		pkt.addr, pkt.hdr)
 
@@ -111,14 +107,22 @@ func (c *net_controller) _rcv_pkt(pkt *pkt_t, reply chan *line_t) error {
 		}
 	}
 
-	// pass through line handler
-	err = c.sw.peers.rcv_pkt(pkt)
-	if err != nil {
-		c.log.Debugf("rcv pkt step=2 addr=%s err=%s pkt=%#v", pkt.addr.addr.String(), err, pkt)
-		return err
+	if pkt.hdr.Type == "open" {
+		pub, err := decompose_open_pkt(c.sw.key, pkt)
+		if err != nil {
+			return err
+		}
+
+		c.sw.main.get_line_chan <- cmd_line_get{pub.hashname, pkt.addr, pub, reply}
+		if line := <-reply; line != nil {
+			line.RcvOpen(pub)
+			return nil
+		} else {
+			return errUnknownLine
+		}
 	}
 
-	return nil
+	return errInvalidPkt
 }
 
 func (c *net_controller) snd_pkt(pkt *pkt_t) error {
@@ -133,7 +137,7 @@ func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	// c.log.Debugf("tsh snd outer-pkt=%+v", pkt.hdr)
 
 	// marshal the packet
-	data, err = _pkt_marshal(pkt)
+	data, err = pkt.format_pkt()
 	if err != nil {
 		return err
 	}
@@ -151,14 +155,6 @@ func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 
 func (c *net_controller) send_nat_breaker(addr *net.UDPAddr) error {
 	return _net_conn_write(c.conn, addr, []byte("hello"))
-}
-
-func _pkt_unmarshal(data []byte, addr addr_t) (*pkt_t, error) {
-	return parse_pkt(data, addr)
-}
-
-func _pkt_marshal(pkt *pkt_t) ([]byte, error) {
-	return pkt.format_pkt()
 }
 
 func _net_conn_read(conn *net.UDPConn, bufptr *[]byte) (*net.UDPAddr, error) {

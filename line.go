@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"fmt"
+	"github.com/fd/go-util/log"
 	"sync/atomic"
 	"time"
 )
@@ -23,8 +24,9 @@ const (
 type line_t struct {
 	sw            *Switch
 	peer          *peer_t
+	log           log.Logger
 	shutdown      chan bool
-	snd_chan      chan line_snd_cmd
+	snd_chan      chan cmd_line_snd
 	rcv_open_chan chan *public_line_key // buffered rcv channel
 	rcv_line_chan chan *pkt_t           // buffered rcv channel
 	prv_key       *private_line_key
@@ -32,20 +34,29 @@ type line_t struct {
 	shr_key       *shared_line_key
 	state         line_state
 	err           error
+
+	channels         map[string]*channel_t
+	add_channel_chan chan *channel_t
 }
 
-type line_snd_cmd struct {
-	pkt   *pkt_t
-	reply chan error
-}
+type (
+	cmd_line_snd struct {
+		pkt   *pkt_t
+		reply chan error
+	}
+)
 
-func (l *line_t) Init(peer *peer_t) {
-	l.sw = peer.sw
+func (l *line_t) Init(sw *Switch, peer *peer_t) {
+	l.sw = sw
 	l.peer = peer
+	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.addr.hashname.Short()+"]")
 
-	l.snd_chan = make(chan line_snd_cmd, 10)
+	l.snd_chan = make(chan cmd_line_snd, 10)
 	l.rcv_open_chan = make(chan *public_line_key, 10)
 	l.rcv_line_chan = make(chan *pkt_t, 10)
+
+	l.channels = make(map[string]*channel_t, 10)
+	l.add_channel_chan = make(chan *channel_t, 1)
 }
 
 // atomically get the line state
@@ -95,7 +106,7 @@ func (l *line_t) Snd(pkt *pkt_t) error {
 	}
 
 	reply := make(chan error)
-	l.snd_chan <- line_snd_cmd{pkt, reply}
+	l.snd_chan <- cmd_line_snd{pkt, reply}
 	return <-reply
 }
 
@@ -114,6 +125,28 @@ func (l *line_t) RcvOpen(pub *public_line_key) {
 	}
 
 	l.rcv_open_chan <- pub
+}
+
+func (l *line_t) OpenChannel(pkt *pkt_t, raw bool) (*channel_t, error) {
+	channel, err := make_channel(l.sw, l, "", pkt.hdr.Type, true, raw)
+	if err != nil {
+		return nil, err
+	}
+
+	l.add_channel_chan <- channel
+
+	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.channel_id),
+		pkt.hdr.Type,
+		l.sw.hashname.Short(),
+		l.peer.addr.hashname.Short())
+
+	err = channel.snd_pkt(pkt)
+	if err != nil {
+		return nil, err
+	}
+
+	return channel, nil
 }
 
 func (l *line_t) run_main_loop() {
@@ -143,13 +176,15 @@ func (l *line_t) run_main_loop() {
 }
 
 func (l *line_t) setup() error {
-	l.peer.log.Debugf("started running line")
+	l.log.Debugf("started running line")
 
 	l.register()
 
-	if l.peer.addr.pubkey == nil && !l.peer.addr.via.IsZero() {
+	if !l.peer.addr.via.IsZero() {
+		l.log.Noticef("opening line to=%s via=%s", l.peer.addr.hashname.Short(), l.peer.addr.via.Short())
 		l.state.mod(line_opening|line_peering, 0)
 	} else {
+		l.log.Noticef("opening line to=%s", l.peer.addr.hashname.Short())
 		l.state.mod(line_opening, 0)
 	}
 
@@ -157,7 +192,7 @@ func (l *line_t) setup() error {
 }
 
 func (l *line_t) run_peer_loop() {
-	if l.handle_err(l.peer.send_peer_cmd()) {
+	if l.handle_err(l.sw.peer_handler.SendPeer(l.peer)) {
 		l.state.mod(0, line_peering)
 	} else {
 		l.state.mod(0, line_active)
@@ -202,7 +237,7 @@ func (l *line_t) run_open_loop() {
 
 func (l *line_t) run_line_loop() {
 	var (
-		local_hashname = l.sw.peers.local_hashname
+		local_hashname = l.sw.hashname
 		broken_timeout = 60 * time.Second
 		broken_timer   = time.NewTimer(broken_timeout)
 		idle_timeout   = 30 * time.Second
@@ -232,18 +267,18 @@ func (l *line_t) run_line_loop() {
 			l.state.mod(line_idle, line_active)
 
 		case now := <-ack_ticker.C:
-			for _, c := range l.peer.channels {
+			for _, c := range l.channels {
 				ack, miss := c.tick(now)
 				if ack != nil {
-					l.snd_line_pkt(line_snd_cmd{ack, nil})
+					l.snd_line_pkt(cmd_line_snd{ack, nil})
 				}
 				for _, pkt := range miss {
-					l.snd_line_pkt(line_snd_cmd{pkt, nil})
+					l.snd_line_pkt(cmd_line_snd{pkt, nil})
 				}
 			}
 
 		case <-seek_ticker.C:
-			go l.peer.send_seek_cmd(local_hashname)
+			go l.sw.seek_handler.Seek(l.peer.addr.hashname, local_hashname)
 
 		case cmd := <-l.snd_chan:
 			if l.handle_err(l.snd_line_pkt(cmd)) {
@@ -258,6 +293,9 @@ func (l *line_t) run_line_loop() {
 				broken_timer.Reset(broken_timeout)
 			}
 
+		case channel := <-l.add_channel_chan:
+			l.channels[channel.channel_id] = channel
+
 		case <-l.rcv_open_chan:
 			// ignore line reopens for now
 
@@ -271,15 +309,55 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		return err
 	}
 
-	err = l.peer.push_rcv_pkt(ipkt)
+	ipkt.addr = l.peer.addr
+
+	if ipkt.hdr.C == "" {
+		return errInvalidPkt
+	}
+
+	// send pkt to existing channel
+	if channel := l.channels[ipkt.hdr.C]; channel != nil {
+		l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
+		return channel.push_rcv_pkt(ipkt)
+	}
+
+	// open new channel
+	if ipkt.hdr.Type == "" {
+		return errInvalidPkt
+	}
+
+	raw := !ipkt.hdr.Seq.IsSet()
+
+	if !raw && ipkt.hdr.Seq.Get() != 0 {
+		return errInvalidPkt
+	}
+
+	channel, err := make_channel(l.sw, l, ipkt.hdr.C, ipkt.hdr.Type, false, raw)
 	if err != nil {
 		return err
 	}
 
+	l.channels[channel.channel_id] = channel
+
+	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
+
+	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.channel_id),
+		ipkt.hdr.Type,
+		l.sw.hashname.Short(),
+		l.peer.addr.hashname.Short())
+
+	err = channel.push_rcv_pkt(ipkt)
+	if err != nil {
+		return err
+	}
+
+	go channel.run_user_handler()
+
 	return nil
 }
 
-func (l *line_t) snd_line_pkt(cmd line_snd_cmd) error {
+func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 	pkt, err := l.shr_key.enc(cmd.pkt)
 	if err != nil {
 		if cmd.reply != nil {
@@ -308,7 +386,7 @@ func (l *line_t) rcv_open_pkt(pub *public_line_key) error {
 	var (
 		err            error
 		local_rsa_key  = l.sw.key
-		local_hashname = l.sw.peers.get_local_hashname()
+		local_hashname = l.sw.hashname
 	)
 
 	prv := l.prv_key
@@ -346,11 +424,11 @@ func (l *line_t) rcv_open_pkt(pub *public_line_key) error {
 	l.pub_key = pub
 	l.shr_key = shr
 
-	l.peer.log.Noticef("line opened: id=%s:%s",
+	l.log.Noticef("line opened: id=%s:%s",
 		short_hash(prv.id),
 		short_hash(pub.id))
 
-	for _, c := range l.peer.channels {
+	for _, c := range l.channels {
 		c.cnd.Broadcast()
 	}
 
@@ -404,7 +482,7 @@ func (l *line_t) teardown() {
 	l.flush() // empty the buffers
 
 	l.state.mod(0, line_running)
-	l.peer.log.Debugf("stopped running line")
+	l.log.Debugf("stopped running line")
 }
 
 func (l *line_t) flush() {
@@ -419,7 +497,7 @@ func (l *line_t) flush() {
 }
 
 func (l *line_t) break_channels() {
-	for _, c := range l.peer.channels {
+	for _, c := range l.channels {
 		c.mark_as_broken()
 	}
 
