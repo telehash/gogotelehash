@@ -198,22 +198,37 @@ func (l *line_t) setup() error {
 
 func (l *line_t) run_peer_loop() {
 	if !l.handle_err(l.sw.peer_handler.SendPeer(l.peer)) {
-		l.state.mod(0, line_active)
+		l.state.mod(line_broken, line_active)
 		return
 	}
 
-	select {
+	var (
+		timeout_d = 5 * time.Second
+		timeout   = time.NewTimer(1 * time.Millisecond)
+		deadline  = time.NewTimer(60 * time.Second)
+	)
 
-	case <-l.shutdown:
-		l.state.mod(0, line_active)
+	defer timeout.Stop()
+	defer deadline.Stop()
 
-	case <-time.After(10 * time.Second):
-		l.state.mod(line_broken, line_active)
+	for l.state.test(line_peering, 0) {
+		select {
 
-	case cmd := <-l.rcv_open_chan:
-		l.state.mod(0, line_peering)
-		l.rcv_open_chan <- cmd
+		case <-l.shutdown:
+			l.state.mod(line_broken, line_active)
 
+		case <-deadline.C:
+			l.state.mod(line_broken, line_active)
+
+		case <-timeout.C:
+			l.snd_open_pkt()
+			timeout.Reset(timeout_d)
+
+		case cmd := <-l.rcv_open_chan:
+			l.state.mod(0, line_peering)
+			l.rcv_open_chan <- cmd
+
+		}
 	}
 }
 
@@ -234,7 +249,7 @@ func (l *line_t) run_open_loop() {
 		select {
 
 		case <-l.shutdown:
-			l.state.mod(0, line_active)
+			l.state.mod(line_broken, line_active)
 
 		case <-deadline.C:
 			l.handle_err(fmt.Errorf("line opend failed: deadline reached"))
@@ -266,19 +281,24 @@ func (l *line_t) run_line_loop() {
 		local_hashname = l.sw.hashname
 		broken_timeout = 60 * time.Second
 		broken_timer   = time.NewTimer(broken_timeout)
-		idle_timeout   = 30 * time.Second
+		idle_timeout   = 55 * time.Second
 		idle_timer     = time.NewTimer(idle_timeout)
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
-		seek_ticker    = time.NewTicker(30 * time.Second)
+		seek_d         = 30 * time.Second
+		seek_timer     = time.NewTimer(1 * time.Millisecond)
 	)
 
 	defer broken_timer.Stop()
 	defer idle_timer.Stop()
 	defer ack_ticker.Stop()
-	defer seek_ticker.Stop()
+	defer seek_timer.Stop()
 
 	l.activate()
 	defer l.deactivate()
+
+	l.log.Noticef("line opened: id=%s:%s",
+		short_hash(l.prv_key.id),
+		short_hash(l.pub_key.id))
 
 	for _, c := range l.channels {
 		c.cnd.Broadcast()
@@ -288,7 +308,7 @@ func (l *line_t) run_line_loop() {
 		select {
 
 		case <-l.shutdown:
-			l.state.mod(0, line_active)
+			l.state.mod(line_broken, line_active)
 
 		case <-broken_timer.C:
 			l.state.mod(line_broken, line_active)
@@ -308,11 +328,17 @@ func (l *line_t) run_line_loop() {
 			}
 			for _, c := range l.channels {
 				if c.is_closed() {
+					c.log.Debugf("channel[%s:%s](%s -> %s): closed",
+						short_hash(c.channel_id),
+						c.channel_type,
+						l.sw.hashname.Short(),
+						l.peer.addr.hashname.Short())
 					delete(l.channels, c.channel_id)
 				}
 			}
 
-		case <-seek_ticker.C:
+		case <-seek_timer.C:
+			seek_timer.Reset(seek_d)
 			go l.sw.seek_handler.Seek(l.peer.addr.hashname, local_hashname)
 
 		case cmd := <-l.snd_chan:
@@ -330,9 +356,10 @@ func (l *line_t) run_line_loop() {
 
 		case channel := <-l.add_channel_chan:
 			l.channels[channel.channel_id] = channel
+			channel.cnd.Broadcast()
 
-		case <-l.rcv_open_chan:
-			// ignore line reopens for now
+		case cmd := <-l.rcv_open_chan:
+			l.rcv_open_pkt(cmd)
 
 		}
 	}
@@ -447,16 +474,13 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 		return err
 	}
 
+	addr.pubkey = pub.rsa_pubkey
 	l.peer.addr.update(addr)
-	l.log.Noticef("rcv open from=%s", l.peer.addr)
+	l.log.Debugf("rcv open from=%s", l.peer.addr)
 
 	l.prv_key = prv
 	l.pub_key = pub
 	l.shr_key = shr
-
-	l.log.Noticef("line opened: id=%s:%s",
-		short_hash(prv.id),
-		short_hash(pub.id))
 
 	return nil
 }
@@ -468,20 +492,24 @@ func (l *line_t) snd_open_pkt() error {
 	)
 
 	if l.peer.addr.hashname.IsZero() {
+		l.log.Noticef("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
 	if l.peer.addr.addr == nil {
+		l.log.Noticef("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
 	if l.peer.addr.pubkey == nil {
+		l.log.Noticef("snd open to=%s err=%s", l.peer, errMissingPublicKey)
 		return errMissingPublicKey
 	}
 
 	if l.prv_key == nil {
 		prv_key, err := make_line_half(local_rsa_key, l.peer.addr.pubkey)
 		if err != nil {
+			l.log.Noticef("snd open to=%s err=%s", l.peer, err)
 			return err
 		}
 		l.prv_key = prv_key
@@ -490,13 +518,13 @@ func (l *line_t) snd_open_pkt() error {
 	pkt, err := l.prv_key.compose_open_pkt()
 	pkt.addr = l.peer.addr
 
-	l.log.Noticef("snd open to=%s", pkt.addr)
-
 	err = l.sw.net.snd_pkt(pkt)
 	if err != nil {
+		l.log.Noticef("snd open to=%s err=%s", l.peer, err)
 		return err
 	}
 
+	l.log.Debugf("snd open to=%s", pkt.addr)
 	return nil
 }
 
@@ -536,6 +564,12 @@ func (l *line_t) flush() {
 func (l *line_t) break_channels() {
 	for _, c := range l.channels {
 		c.mark_as_broken()
+
+		c.log.Debugf("channel[%s:%s](%s -> %s): broken",
+			short_hash(c.channel_id),
+			c.channel_type,
+			l.sw.hashname.Short(),
+			l.peer.addr.hashname.Short())
 	}
 
 	// flush channel sends

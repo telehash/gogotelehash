@@ -139,6 +139,7 @@ func (c *main_controller) _loop() {
 
 		case <-c.shutdown:
 			terminating = true
+			c.log.Noticef("shutdown lines=%d", len(c.lines))
 			for _, l := range c.lines {
 				l.Shutdown()
 			}
@@ -157,6 +158,10 @@ func (c *main_controller) _loop() {
 			c.lines[line.peer.addr.hashname] = line
 		case line := <-c.unregister_line_chan:
 			delete(c.lines, line.peer.addr.hashname)
+			c.log.Noticef("removed line=%s lines=%d", line.peer, len(c.lines))
+			if terminating {
+				c.log.Noticef("shutdown lines=%d", len(c.lines))
+			}
 			if terminating && len(c.lines) == 0 {
 				return
 			}
@@ -178,8 +183,8 @@ func (c *main_controller) add_peer(cmd cmd_peer_add) {
 	peer, disc := c.peers.add_peer(cmd.addr)
 
 	if disc {
-		c.log.Noticef("discovered: %s", peer)
-		go c.seek_discovered_peer(peer)
+		c.log.Noticef("discovered: %s (add_peer)", peer)
+		c.get_line(cmd_line_get{hashname: peer.addr.hashname})
 	}
 
 	cmd.reply <- cmd_peer_add_res{peer, disc}
@@ -205,16 +210,19 @@ func (c *main_controller) get_line(cmd cmd_line_get) {
 		addr = peer.addr
 
 		if disc {
-			c.log.Noticef("discovered: %s", peer)
+			c.log.Noticef("discovered: %s (get_line)", peer)
 		}
 
 		if (addr.pubkey != nil || !addr.via.IsZero()) && addr.addr != nil {
 			line = &line_t{}
 			line.Init(c.sw, peer)
+			line.EnsureRunning()
 
 			c.lines[cmd.hashname] = line
 		}
 	}
 
-	cmd.reply <- line
+	if cmd.reply != nil {
+		cmd.reply <- line
+	}
 }
