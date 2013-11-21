@@ -220,10 +220,11 @@ func (l *line_t) run_peer_loop() {
 // open procedure
 func (l *line_t) run_open_loop() {
 	var (
-		timeout_d = 5 * time.Second
-		timeout   = time.NewTimer(1 * time.Millisecond)
-		deadline  = time.NewTimer(60 * time.Second)
-		send_open bool
+		timeout_d     = 5 * time.Second
+		timeout       = time.NewTimer(1 * time.Millisecond)
+		deadline      = time.NewTimer(60 * time.Second)
+		send_open     bool
+		received_open bool
 	)
 
 	defer timeout.Stop()
@@ -240,19 +241,22 @@ func (l *line_t) run_open_loop() {
 			l.state.mod(line_broken, line_active)
 
 		case <-timeout.C:
-			l.handle_err(l.snd_open_pkt())
+			if l.handle_err(l.snd_open_pkt()) {
+				send_open = true
+			}
 			timeout.Reset(timeout_d)
-			send_open = true
 
 		case cmd := <-l.rcv_open_chan:
 			if l.handle_err(l.rcv_open_pkt(cmd)) {
-				if send_open {
-					l.state.mod(line_opened, line_active)
-				}
+				received_open = true
 			} else {
 				l.state.mod(0, line_active)
 			}
 
+		}
+
+		if send_open && received_open {
+			l.state.mod(line_opened, line_active)
 		}
 	}
 }
@@ -445,19 +449,6 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 
 	l.peer.addr.update(addr)
 	l.log.Noticef("rcv open from=%s", l.peer.addr)
-
-	if l.prv_key == nil || l.pub_key != nil && l.pub_key.id != pub.id {
-		pkt, err := prv.compose_open_pkt()
-		if err != nil {
-			return err
-		}
-		pkt.addr = l.peer.addr
-
-		err = l.sw.net.snd_pkt(pkt)
-		if err != nil {
-			return err
-		}
-	}
 
 	l.prv_key = prv
 	l.pub_key = pub
