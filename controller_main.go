@@ -245,16 +245,9 @@ func (c *main_controller) teardown() {
 }
 
 func (c *main_controller) unregister_line(line *line_t) {
-	if line.did_activate {
-		line.peer.line_open_retries = 0
-	} else {
-		line.peer.line_open_retries++
-		if line.peer.line_open_retries >= 3 {
-			c.peers.remove_peer(line.peer)
-			c.log.Noticef("failed to open line to %s (removed peer)", line.peer)
-		} else {
-			c.log.Noticef("failed to open line to %s (reries-left=%d)", line.peer, 3-line.peer.line_open_retries)
-		}
+	if line.State().test(line_peer_down, 0) {
+		line.peer.is_down = true
+		c.log.Noticef("failed to open line to %s (removed peer)", line.peer)
 	}
 
 	delete(c.lines, line.peer.addr.hashname)
@@ -291,6 +284,11 @@ func (c *main_controller) get_line(cmd cmd_line_get) {
 		peer, disc := c.peers.add_peer(addr)
 		addr = peer.addr
 
+		if peer.is_down {
+			line = nil
+			goto EXIT
+		}
+
 		if disc {
 			c.log.Noticef("discovered: %s (get_line)", peer)
 		}
@@ -304,6 +302,7 @@ func (c *main_controller) get_line(cmd cmd_line_get) {
 		}
 	}
 
+EXIT:
 	if cmd.reply != nil {
 		cmd.reply <- line
 	}

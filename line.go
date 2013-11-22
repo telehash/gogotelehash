@@ -20,7 +20,7 @@ type line_t struct {
 	shr_key       *shared_line_key
 	state         line_state
 	err           error
-	did_activate  bool
+	open_retries  int
 
 	channels         map[string]*channel_t
 	add_channel_chan chan *channel_t
@@ -42,6 +42,7 @@ func (l *line_t) Init(sw *Switch, peer *peer_t) {
 	l.sw = sw
 	l.peer = peer
 	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.addr.hashname.Short()+"]")
+	l.open_retries = 3
 
 	l.snd_chan = make(chan cmd_line_snd, 10)
 	l.rcv_open_chan = make(chan cmd_open_rcv, 10)
@@ -155,7 +156,13 @@ func (l *line_t) run_main_loop() {
 			l.run_line_loop()
 
 		case l.state.test(0, line_active):
-			return
+			if l.open_retries > 0 {
+				l.state = line_running
+				l.start_opening()
+			} else {
+				l.state.mod(line_peer_down, 0)
+				return
+			}
 
 		case l.state.test(line_peering, 0):
 			l.run_peer_loop()
@@ -172,6 +179,14 @@ func (l *line_t) setup() error {
 
 	l.register()
 
+	l.start_opening()
+
+	return nil
+}
+
+func (l *line_t) start_opening() {
+	l.open_retries--
+
 	if !l.peer.addr.via.IsZero() {
 		l.log.Noticef("opening line to=%s via=%s", l.peer.addr.hashname.Short(), l.peer.addr.via.Short())
 		l.state.mod(line_opening|line_peering, 0)
@@ -179,8 +194,6 @@ func (l *line_t) setup() error {
 		l.log.Noticef("opening line to=%s", l.peer.addr.hashname.Short())
 		l.state.mod(line_opening, 0)
 	}
-
-	return nil
 }
 
 func (l *line_t) run_peer_loop() {
@@ -283,7 +296,7 @@ func (l *line_t) run_line_loop() {
 	defer seek_timer.Stop()
 	defer ping_ticker.Stop()
 
-	l.did_activate = true
+	l.open_retries = 3
 
 	l.activate()
 	defer l.deactivate()
@@ -517,24 +530,24 @@ func (l *line_t) snd_open_pkt() error {
 	)
 
 	if l.peer.addr.hashname.IsZero() {
-		l.log.Noticef("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
+		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
 	if l.peer.addr.addr == nil {
-		l.log.Noticef("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
+		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
 	if l.peer.addr.pubkey == nil {
-		l.log.Noticef("snd open to=%s err=%s", l.peer, errMissingPublicKey)
+		l.log.Debugf("snd open to=%s err=%s", l.peer, errMissingPublicKey)
 		return errMissingPublicKey
 	}
 
 	if l.prv_key == nil {
 		prv_key, err := make_line_half(local_rsa_key, l.peer.addr.pubkey)
 		if err != nil {
-			l.log.Noticef("snd open to=%s err=%s", l.peer, err)
+			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 			return err
 		}
 		l.prv_key = prv_key
@@ -545,7 +558,7 @@ func (l *line_t) snd_open_pkt() error {
 
 	err = l.sw.net.snd_pkt(pkt)
 	if err != nil {
-		l.log.Noticef("snd open to=%s err=%s", l.peer, err)
+		l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 		return err
 	}
 

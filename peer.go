@@ -1,8 +1,8 @@
 package telehash
 
 type peer_t struct {
-	addr              addr_t
-	line_open_retries int
+	addr    addr_t
+	is_down bool
 }
 
 func make_peer(hashname Hashname) *peer_t {

@@ -26,7 +26,7 @@ func (h *ping_handler) Ping(to Hashname) bool {
 
 	channel, err := h.sw.main.OpenChannel(to, pkt, true)
 	if err != nil {
-		h.log.Noticef("failed open: to=%s err=%s", to.Short(), err)
+		h.log.Debugf("failed open: to=%s err=%s", to.Short(), err)
 		return false
 	}
 
@@ -34,18 +34,18 @@ func (h *ping_handler) Ping(to Hashname) bool {
 
 	_, err = channel.pop_rcv_pkt()
 	if err != nil {
-		h.log.Noticef("failed rcv: peer=%s err=%s", channel.line.peer, err)
+		h.log.Debugf("failed rcv: peer=%s err=%s", channel.line.peer, err)
 		return false
 	}
 
-	h.log.Noticef("ping: peer=%s", channel.line.peer)
+	h.log.Debugf("ping: peer=%s", channel.line.peer)
 	return true
 }
 
 func (h *ping_handler) serve_ping(channel *channel_t) {
 	_, err := channel.pop_rcv_pkt()
 	if err != nil {
-		h.log.Noticef("failed snd: peer=%s err=%s", channel.line.peer, err)
+		h.log.Debugf("failed snd: peer=%s err=%s", channel.line.peer, err)
 	}
 
 	err = channel.snd_pkt(&pkt_t{
@@ -54,8 +54,8 @@ func (h *ping_handler) serve_ping(channel *channel_t) {
 		},
 	})
 	if err != nil {
-		h.log.Noticef("failed snd: peer=%s err=%s", channel.line.peer, err)
+		h.log.Debugf("failed snd: peer=%s err=%s", channel.line.peer, err)
 	}
 
-	h.log.Noticef("pong: peer=%s", channel.line.peer)
+	h.log.Debugf("pong: peer=%s", channel.line.peer)
 }

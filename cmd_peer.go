@@ -147,7 +147,7 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 	}
 
 	peer, disc := h.sw.main.AddPeer(addr)
-	h.log.Noticef("received connect-cmd: peer=%s", addr)
+	h.log.Noticef("received connect-cmd: peer=%s local=%+v", addr, pkt.hdr.Local)
 
 	if !disc {
 		err = h.sw.seek_handler.Seek(peer.addr.hashname, h.sw.hashname)
