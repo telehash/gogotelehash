@@ -7,20 +7,6 @@ import (
 	"time"
 )
 
-type line_state uint32
-
-const (
-	line_opened line_state = 1 << iota
-	line_peering
-	line_opening
-	line_idle
-	line_error
-	line_broken
-	line_running // is the goroutine running?
-
-	line_active = line_opened | line_opening | line_peering
-)
-
 type line_t struct {
 	sw            *Switch
 	peer          *peer_t
@@ -34,6 +20,7 @@ type line_t struct {
 	shr_key       *shared_line_key
 	state         line_state
 	err           error
+	did_activate  bool
 
 	channels         map[string]*channel_t
 	add_channel_chan chan *channel_t
@@ -281,17 +268,22 @@ func (l *line_t) run_line_loop() {
 		local_hashname = l.sw.hashname
 		broken_timeout = 60 * time.Second
 		broken_timer   = time.NewTimer(broken_timeout)
+		broken_chan    = make(chan time.Time)
 		idle_timeout   = 55 * time.Second
 		idle_timer     = time.NewTimer(idle_timeout)
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
 		seek_d         = 30 * time.Second
 		seek_timer     = time.NewTimer(1 * time.Millisecond)
+		ping_ticker    = time.NewTicker(1 * time.Second)
 	)
 
 	defer broken_timer.Stop()
 	defer idle_timer.Stop()
 	defer ack_ticker.Stop()
 	defer seek_timer.Stop()
+	defer ping_ticker.Stop()
+
+	l.did_activate = true
 
 	l.activate()
 	defer l.deactivate()
@@ -299,6 +291,8 @@ func (l *line_t) run_line_loop() {
 	l.log.Noticef("line opened: id=%s:%s",
 		short_hash(l.prv_key.id),
 		short_hash(l.pub_key.id))
+
+	time.Sleep(100 * time.Millisecond)
 
 	for _, c := range l.channels {
 		c.cnd.Broadcast()
@@ -311,6 +305,9 @@ func (l *line_t) run_line_loop() {
 			l.state.mod(line_broken, line_active)
 
 		case <-broken_timer.C:
+			l.state.mod(line_broken, line_active)
+
+		case <-broken_chan:
 			l.state.mod(line_broken, line_active)
 
 		case <-idle_timer.C:
@@ -339,7 +336,10 @@ func (l *line_t) run_line_loop() {
 
 		case <-seek_timer.C:
 			seek_timer.Reset(seek_d)
-			go l.sw.seek_handler.Seek(l.peer.addr.hashname, local_hashname)
+			go l.snd_seek(broken_chan, local_hashname)
+
+		case <-ping_ticker.C:
+			go l.snd_ping(broken_chan)
 
 		case cmd := <-l.snd_chan:
 			if l.handle_err(l.snd_line_pkt(cmd)) {
@@ -363,6 +363,31 @@ func (l *line_t) run_line_loop() {
 
 		}
 	}
+}
+
+func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname) {
+	for i := 0; i < 3; i++ {
+		err := l.sw.seek_handler.Seek(l.peer.addr.hashname, local_hashname)
+		if err == nil {
+			return
+		}
+		l.log.Noticef("seeking failed: err=%s", err)
+		time.Sleep(1 * time.Second)
+	}
+
+	l.log.Noticef("seeking failed (breaking the line)")
+	broken_chan <- time.Now()
+}
+
+func (l *line_t) snd_ping(broken_chan chan<- time.Time) {
+	for i := 0; i < 3; i++ {
+		if l.sw.ping_handler.Ping(l.peer.addr.hashname) {
+			return
+		}
+	}
+
+	l.log.Noticef("ping failed (breaking the line)")
+	broken_chan <- time.Now()
 }
 
 func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
@@ -606,21 +631,4 @@ func (l *line_t) handle_err(err error) bool {
 		return false
 	}
 	return true
-}
-
-func (l line_state) test(is line_state, is_not line_state) bool {
-	if is != 0 && l&is == 0 {
-		return false
-	}
-	if is_not != 0 && l&is_not > 0 {
-		return false
-	}
-	return true
-}
-
-func (lptr *line_state) mod(add, rem line_state) {
-	l := *lptr
-	l &^= rem
-	l |= add
-	*lptr = l
 }

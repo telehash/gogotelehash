@@ -11,6 +11,7 @@ type addr_t struct {
 	via      Hashname
 	pubkey   *rsa.PublicKey
 	addr     *net.UDPAddr
+	lan_addr *net.UDPAddr
 }
 
 func make_addr(hashname, via Hashname, addr string, pubkey *rsa.PublicKey) (addr_t, error) {
@@ -45,8 +46,14 @@ func (p addr_t) String() string {
 }
 
 func (a *addr_t) update(b addr_t) {
+	if b.lan_addr != nil {
+		a.lan_addr = b.lan_addr
+	}
+
 	if b.addr != nil {
-		if a.addr == nil || !is_lan_ip(a.addr.IP) || is_lan_ip(b.addr.IP) {
+		if is_lan_ip(b.addr.IP) {
+			a.lan_addr = b.addr
+		} else {
 			a.addr = b.addr
 		}
 	}
@@ -58,4 +65,11 @@ func (a *addr_t) update(b addr_t) {
 	if !b.via.IsZero() {
 		a.via = b.via
 	}
+}
+
+func (a *addr_t) closest_addr() *net.UDPAddr {
+	if a.lan_addr != nil {
+		return a.lan_addr
+	}
+	return a.addr
 }

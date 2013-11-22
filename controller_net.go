@@ -151,7 +151,7 @@ func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	}
 
 	// send the packet
-	err = _net_conn_write(c.conn, pkt.addr.addr, data)
+	err = _net_conn_write(c.conn, pkt.addr.closest_addr(), data)
 	if err != nil {
 		return err
 	}

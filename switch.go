@@ -12,6 +12,7 @@ type Switch struct {
 	net          *net_controller
 	peer_handler peer_handler
 	seek_handler seek_handler
+	ping_handler ping_handler
 	addr         string
 	hashname     Hashname
 	key          *rsa.PrivateKey
@@ -45,6 +46,7 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 
 	s.peer_handler.init_peer_handler(s)
 	s.seek_handler.init_seek_handler(s)
+	s.ping_handler.init_ping_handler(s)
 
 	return s, nil
 }

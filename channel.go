@@ -153,6 +153,14 @@ func (c *channel_t) _snd_pkt_blocked() (bool, error) {
 		return false, c._snd_pkt_err()
 	}
 
+	if c.line.State().test(line_broken, 0) {
+		return false, ErrPeerBroken
+	}
+
+	if c.line.State().test(0, line_opened) {
+		return true, nil
+	}
+
 	if !c.raw {
 		if c.snd_inflight >= 100 {
 			// wait for progress

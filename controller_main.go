@@ -3,6 +3,7 @@ package telehash
 import (
 	"github.com/fd/go-util/log"
 	"sync"
+	"sync/atomic"
 )
 
 type main_controller struct {
@@ -10,6 +11,7 @@ type main_controller struct {
 	log      log.Logger
 	shutdown chan bool
 	wg       sync.WaitGroup
+	state    main_state
 
 	lines                map[Hashname]*line_t
 	get_line_chan        chan cmd_line_get
@@ -86,9 +88,15 @@ func main_controller_open(sw *Switch) (*main_controller, error) {
 	c.peers.Init(sw.hashname)
 
 	c.wg.Add(1)
-	go c._loop()
+	c.state.mod(main_running, 0)
+	go c.run_main_loop()
 
 	return c, nil
+}
+
+// atomically get the main state
+func (c *main_controller) State() main_state {
+	return main_state(atomic.LoadUint32((*uint32)(&c.state)))
 }
 
 func (c *main_controller) GetPeer(hashname Hashname) *peer_t {
@@ -123,29 +131,39 @@ func (c *main_controller) OpenChannel(to Hashname, pkt *pkt_t, raw bool) (*chann
 }
 
 func (c *main_controller) Close() {
-	c.shutdown <- true
+	if c.State().test(main_running, main_terminating) {
+		c.shutdown <- true
+	}
 	c.wg.Wait()
 }
 
-func (c *main_controller) _loop() {
-	var (
-		terminating bool
-	)
+func (c *main_controller) run_main_loop() {
+	defer c.teardown()
 
-	defer c.wg.Done()
+	c.setup()
 
 	for {
+		switch {
+
+		case c.state.test(main_terminating, 0):
+			c.run_terminating_loop()
+
+		case c.state.test(main_running, 0):
+			c.run_active_loop()
+
+		default:
+			return
+
+		}
+	}
+}
+
+func (c *main_controller) run_active_loop() {
+	for c.state.test(main_running, 0) {
 		select {
 
 		case <-c.shutdown:
-			terminating = true
-			c.log.Noticef("shutdown lines=%d", len(c.lines))
-			for _, l := range c.lines {
-				l.Shutdown()
-			}
-			if len(c.lines) == 0 {
-				return
-			}
+			c.state.mod(main_terminating, main_running)
 
 		case line := <-c.activate_line_chan:
 			c.active_lines[line.prv_key.id] = line
@@ -157,14 +175,7 @@ func (c *main_controller) _loop() {
 		case line := <-c.register_line_chan:
 			c.lines[line.peer.addr.hashname] = line
 		case line := <-c.unregister_line_chan:
-			delete(c.lines, line.peer.addr.hashname)
-			c.log.Noticef("removed line=%s lines=%d", line.peer, len(c.lines))
-			if terminating {
-				c.log.Noticef("shutdown lines=%d", len(c.lines))
-			}
-			if terminating && len(c.lines) == 0 {
-				return
-			}
+			c.unregister_line(line)
 		case cmd := <-c.get_line_chan:
 			c.get_line(cmd)
 
@@ -177,6 +188,77 @@ func (c *main_controller) _loop() {
 
 		}
 	}
+}
+
+func (c *main_controller) run_terminating_loop() {
+	defer c.state.mod(0, main_terminating)
+
+	c.log.Noticef("shutdown lines=%d", len(c.lines))
+
+	for _, l := range c.lines {
+		l.Shutdown()
+	}
+
+	if len(c.lines) == 0 {
+		return
+	}
+
+	for len(c.lines) > 0 {
+		select {
+
+		case <-c.shutdown:
+			// ignore
+
+		case line := <-c.activate_line_chan:
+			// ignore
+			line.Shutdown()
+		case line := <-c.deactivate_line_chan:
+			delete(c.active_lines, line.prv_key.id)
+		case cmd := <-c.get_active_line_chan:
+			cmd.reply <- nil
+
+		case line := <-c.register_line_chan:
+			// ignore
+			line.Shutdown()
+		case line := <-c.unregister_line_chan:
+			c.unregister_line(line)
+		case cmd := <-c.get_line_chan:
+			cmd.reply <- nil
+
+		case cmd := <-c.get_peer_chan:
+			cmd.reply <- nil
+		case <-c.add_peer_chan:
+			// ignore
+		case cmd := <-c.get_closest_peers_chan:
+			cmd.reply <- nil
+
+		}
+	}
+}
+
+func (c *main_controller) setup() {
+	c.state.mod(main_running, 0)
+}
+
+func (c *main_controller) teardown() {
+	c.wg.Done()
+}
+
+func (c *main_controller) unregister_line(line *line_t) {
+	if line.did_activate {
+		line.peer.line_open_retries = 0
+	} else {
+		line.peer.line_open_retries++
+		if line.peer.line_open_retries >= 3 {
+			c.peers.remove_peer(line.peer)
+			c.log.Noticef("failed to open line to %s (removed peer)", line.peer)
+		} else {
+			c.log.Noticef("failed to open line to %s (reries-left=%d)", line.peer, 3-line.peer.line_open_retries)
+		}
+	}
+
+	delete(c.lines, line.peer.addr.hashname)
+	c.log.Noticef("removed line=%s lines=%d", line.peer, len(c.lines))
 }
 
 func (c *main_controller) add_peer(cmd cmd_peer_add) {
