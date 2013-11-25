@@ -4,6 +4,7 @@ import (
 	"github.com/fd/go-util/log"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type main_controller struct {
@@ -27,6 +28,9 @@ type main_controller struct {
 	get_peer_chan          chan cmd_peer_get
 	add_peer_chan          chan cmd_peer_add
 	get_closest_peers_chan chan cmd_peer_get_closest
+
+	num_open_lines    int32
+	num_running_lines int32
 }
 
 type (
@@ -130,6 +134,12 @@ func (c *main_controller) OpenChannel(to Hashname, pkt *pkt_t, raw bool) (*chann
 	return line.OpenChannel(pkt, raw)
 }
 
+func (c *main_controller) PopulateStats(s *SwitchStats) {
+	s.NumOpenLines += int(atomic.LoadInt32(&c.num_open_lines))
+	s.NumRunningLines += int(atomic.LoadInt32(&c.num_running_lines))
+	s.KnownPeers = int(atomic.LoadUint32(&c.peers.num_peers))
+}
+
 func (c *main_controller) Close() {
 	if c.State().test(main_running, main_terminating) {
 		c.shutdown <- true
@@ -159,21 +169,33 @@ func (c *main_controller) run_main_loop() {
 }
 
 func (c *main_controller) run_active_loop() {
+	var (
+		stats = time.NewTicker(5 * time.Second)
+	)
+
+	defer stats.Stop()
+
 	for c.state.test(main_running, 0) {
 		select {
+
+		case <-stats.C:
+			c.sw.log.Noticef("stats: %s", c.sw.Stats())
 
 		case <-c.shutdown:
 			c.state.mod(main_terminating, main_running)
 
 		case line := <-c.activate_line_chan:
 			c.active_lines[line.prv_key.id] = line
+			c.num_open_lines += 1
 		case line := <-c.deactivate_line_chan:
 			delete(c.active_lines, line.prv_key.id)
+			c.num_open_lines += -1
 		case cmd := <-c.get_active_line_chan:
 			cmd.reply <- c.active_lines[cmd.id]
 
 		case line := <-c.register_line_chan:
 			c.lines[line.peer.addr.hashname] = line
+			c.num_running_lines += 1
 		case line := <-c.unregister_line_chan:
 			c.unregister_line(line)
 		case cmd := <-c.get_line_chan:
@@ -203,8 +225,17 @@ func (c *main_controller) run_terminating_loop() {
 		return
 	}
 
+	var (
+		stats = time.NewTicker(5 * time.Second)
+	)
+
+	defer stats.Stop()
+
 	for len(c.lines) > 0 {
 		select {
+
+		case <-stats.C:
+			c.sw.log.Noticef("stats: %s", c.sw.Stats())
 
 		case <-c.shutdown:
 			// ignore
@@ -214,6 +245,7 @@ func (c *main_controller) run_terminating_loop() {
 			line.Shutdown()
 		case line := <-c.deactivate_line_chan:
 			delete(c.active_lines, line.prv_key.id)
+			c.num_open_lines += -1
 		case cmd := <-c.get_active_line_chan:
 			cmd.reply <- nil
 
@@ -241,6 +273,7 @@ func (c *main_controller) setup() {
 }
 
 func (c *main_controller) teardown() {
+	c.sw.log.Noticef("stats: %s", c.sw.Stats())
 	c.wg.Done()
 }
 
@@ -251,7 +284,7 @@ func (c *main_controller) unregister_line(line *line_t) {
 	}
 
 	delete(c.lines, line.peer.addr.hashname)
-	c.log.Noticef("removed line=%s lines=%d", line.peer, len(c.lines))
+	c.num_running_lines += -1
 }
 
 func (c *main_controller) add_peer(cmd cmd_peer_add) {

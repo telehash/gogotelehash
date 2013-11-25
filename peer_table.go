@@ -2,6 +2,7 @@ package telehash
 
 type peer_table struct {
 	local_hashname Hashname
+	num_peers      uint32
 	buckets        [][]*peer_t
 }
 
@@ -14,6 +15,8 @@ func (c *peer_table) add_peer(addr addr_t) (peer *peer_t, discovered bool) {
 	peer = c.get_peer(addr.hashname)
 
 	if peer == nil {
+		c.num_peers++
+
 		// make new peer
 		peer = make_peer(addr.hashname)
 		peer.addr = addr
@@ -57,6 +60,7 @@ func (c *peer_table) remove_peer(peer *peer_t) {
 	bucket = bucket[:len(bucket)-1]
 
 	c.buckets[bucket_idx] = bucket
+	c.num_peers--
 }
 
 func (c *peer_table) get_peer(hashname Hashname) *peer_t {

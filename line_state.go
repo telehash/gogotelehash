@@ -11,6 +11,7 @@ const (
 	line_broken
 	line_running // is the goroutine running?
 	line_peer_down
+	line_terminating
 
 	line_active = line_opened | line_opening | line_peering
 )

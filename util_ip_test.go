@@ -8,7 +8,7 @@ import (
 func TestUtilLanIPs(t *testing.T) {
 	var ips = []string{
 		"192.168.0.177",
-		"fe80::ee35:86ff:fe3d:6598",
+		// "fe80::ee35:86ff:fe3d:6598",
 	}
 
 	for _, ipstr := range ips {

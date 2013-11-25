@@ -152,6 +152,9 @@ func (l *line_t) run_main_loop() {
 	for {
 		switch {
 
+		case l.state.test(line_terminating, 0):
+			return
+
 		case l.state.test(line_opened, 0):
 			l.run_line_loop()
 
@@ -215,7 +218,7 @@ func (l *line_t) run_peer_loop() {
 		select {
 
 		case <-l.shutdown:
-			l.state.mod(line_broken, line_active)
+			l.state.mod(line_terminating, line_active)
 
 		case <-deadline.C:
 			l.state.mod(line_broken, line_active)
@@ -249,7 +252,7 @@ func (l *line_t) run_open_loop() {
 		select {
 
 		case <-l.shutdown:
-			l.state.mod(line_broken, line_active)
+			l.state.mod(line_terminating, line_active)
 
 		case <-deadline.C:
 			l.handle_err(fmt.Errorf("line opend failed: deadline reached"))
@@ -315,7 +318,7 @@ func (l *line_t) run_line_loop() {
 		select {
 
 		case <-l.shutdown:
-			l.state.mod(line_broken, line_active)
+			l.state.mod(line_terminating, line_active)
 
 		case <-broken_timer.C:
 			l.state.mod(line_broken, line_active)
@@ -575,7 +578,7 @@ func (l *line_t) teardown() {
 
 	l.flush() // empty the buffers
 
-	l.state.mod(0, line_running)
+	l.state.mod(0, line_running|line_terminating)
 
 	if l.state.test(line_broken, 0) {
 		l.log.Noticef("line closed: peer=%s (reason=%s)",
