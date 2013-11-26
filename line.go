@@ -596,6 +596,8 @@ func (l *line_t) flush() {
 		select {
 		case <-l.rcv_open_chan:
 		case <-l.rcv_line_chan:
+		case <-l.shutdown:
+		case <-l.add_channel_chan:
 		default:
 			return
 		}
