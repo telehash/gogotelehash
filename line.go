@@ -206,7 +206,7 @@ func (l *line_t) run_peer_loop() {
 	}
 
 	var (
-		timeout_d = 5 * time.Second
+		timeout_d = 1 * time.Second
 		timeout   = time.NewTimer(1 * time.Millisecond)
 		deadline  = time.NewTimer(60 * time.Second)
 	)
@@ -224,7 +224,9 @@ func (l *line_t) run_peer_loop() {
 			l.state.mod(line_broken, line_active)
 
 		case <-timeout.C:
-			l.snd_open_pkt()
+			if l.snd_open_pkt() != nil {
+				l.sw.net.send_nat_breaker(l.peer.addr.addr)
+			}
 			timeout.Reset(timeout_d)
 
 		case cmd := <-l.rcv_open_chan:
@@ -238,7 +240,7 @@ func (l *line_t) run_peer_loop() {
 // open procedure
 func (l *line_t) run_open_loop() {
 	var (
-		timeout_d     = 5 * time.Second
+		timeout_d     = 1 * time.Second
 		timeout       = time.NewTimer(1 * time.Millisecond)
 		deadline      = time.NewTimer(60 * time.Second)
 		send_open     bool
@@ -284,7 +286,7 @@ func (l *line_t) run_line_loop() {
 		local_hashname = l.sw.hashname
 		broken_timeout = 60 * time.Second
 		broken_timer   = time.NewTimer(broken_timeout)
-		broken_chan    = make(chan time.Time)
+		broken_chan    = make(chan time.Time, 1)
 		idle_timeout   = 55 * time.Second
 		idle_timer     = time.NewTimer(idle_timeout)
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
@@ -298,6 +300,7 @@ func (l *line_t) run_line_loop() {
 	defer ack_ticker.Stop()
 	defer seek_timer.Stop()
 	defer ping_ticker.Stop()
+	defer close(broken_chan)
 
 	l.open_retries = 3
 
@@ -313,6 +316,12 @@ func (l *line_t) run_line_loop() {
 	for _, c := range l.channels {
 		c.cnd.Broadcast()
 	}
+
+	defer func() {
+		for _, c := range l.channels {
+			c.cnd.Broadcast()
+		}
+	}()
 
 	for l.state.test(line_opened, 0) {
 		select {
@@ -391,8 +400,11 @@ func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname)
 		time.Sleep(1 * time.Second)
 	}
 
-	l.log.Noticef("seeking failed (breaking the line)")
-	broken_chan <- time.Now()
+	func() {
+		defer func() { recover() }()
+		broken_chan <- time.Now()
+		l.log.Noticef("seeking failed (breaking the line)")
+	}()
 }
 
 func (l *line_t) snd_ping(broken_chan chan<- time.Time) {
@@ -402,8 +414,11 @@ func (l *line_t) snd_ping(broken_chan chan<- time.Time) {
 		}
 	}
 
-	l.log.Noticef("ping failed (breaking the line)")
-	broken_chan <- time.Now()
+	func() {
+		defer func() { recover() }()
+		broken_chan <- time.Now()
+		l.log.Noticef("ping failed (breaking the line)")
+	}()
 }
 
 func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
