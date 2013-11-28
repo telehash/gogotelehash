@@ -105,14 +105,19 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	// c.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
 
 	// unpack the outer packet
-	pkt, err = parse_pkt(buf, addr_t{addr: addr})
+	netpath := NetPath{
+		Flags: net.FlagMulticast | net.FlagBroadcast,
+		IP:    addr.IP,
+		Port:  addr.Port,
+	}
+	pkt, err = parse_pkt(buf, nil, netpath)
 	if err != nil {
 		atomic.AddUint64(&c.num_err_pkt_rcv, 1)
 		return err
 	}
 
 	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
-		pkt.addr, pkt.hdr)
+		pkt.netpath, pkt.hdr)
 
 	if pkt.hdr.Type == "line" {
 		c.sw.main.get_active_line_chan <- cmd_line_get_active{pkt.hdr.Line, reply}
@@ -133,10 +138,14 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 			return err
 		}
 
-		c.sw.main.get_line_chan <- cmd_line_get{pub.hashname, pkt.addr, pub, reply}
+		peer, _ := c.sw.main.AddPeer(pub.hashname)
+		peer.AddNetPath(pkt.netpath)
+		peer.SetPublicKey(pub.rsa_pubkey)
+
+		c.sw.main.get_line_chan <- cmd_line_get{peer.Hashname(), reply}
 		if line := <-reply; line != nil {
 			atomic.AddUint64(&c.num_pkt_rcv, 1)
-			line.RcvOpen(pub, pkt.addr)
+			line.RcvOpen(pub, pkt.netpath)
 			return nil
 		} else {
 			atomic.AddUint64(&c.num_err_pkt_rcv, 1)
@@ -150,12 +159,21 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 
 func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	var (
-		data []byte
-		err  error
+		data     []byte
+		err      error
+		udp_addr net.UDPAddr
 	)
 
+	if EqualNetPaths(pkt.netpath, NetPath{}) {
+		if paths := pkt.peer.NetPaths(); len(paths) > 0 {
+			pkt.netpath = paths[0]
+		}
+	}
+
+	pkt.netpath.ToUDPAddr(&udp_addr)
+
 	c.log.Debugf("snd pkt: addr=%s hdr=%+v",
-		pkt.addr, pkt.hdr)
+		udp_addr, pkt.hdr)
 
 	// marshal the packet
 	data, err = pkt.format_pkt()
@@ -165,7 +183,7 @@ func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	}
 
 	// send the packet
-	err = _net_conn_write(c.conn, pkt.addr.closest_addr(), data)
+	err = _net_conn_write(c.conn, &udp_addr, data)
 	if err != nil {
 		atomic.AddUint64(&c.num_err_pkt_snd, 1)
 		return err
@@ -176,14 +194,21 @@ func (c *net_controller) snd_pkt(pkt *pkt_t) error {
 	return nil
 }
 
-func (c *net_controller) send_nat_breaker(addr *net.UDPAddr) error {
-	err := _net_conn_write(c.conn, addr, []byte("hello"))
-	if err != nil {
-		atomic.AddUint64(&c.num_err_pkt_snd, 1)
-	} else {
-		atomic.AddUint64(&c.num_pkt_snd, 1)
+func (c *net_controller) send_nat_breaker(peer *Peer) {
+	var (
+		udp net.UDPAddr
+	)
+
+	for _, np := range peer.NetPaths() {
+		np.ToUDPAddr(&udp)
+
+		err := _net_conn_write(c.conn, &udp, []byte("hello"))
+		if err != nil {
+			atomic.AddUint64(&c.num_err_pkt_snd, 1)
+		} else {
+			atomic.AddUint64(&c.num_pkt_snd, 1)
+		}
 	}
-	return err
 }
 
 func _net_conn_read(conn *net.UDPConn, bufptr *[]byte) (*net.UDPAddr, error) {

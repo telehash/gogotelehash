@@ -21,10 +21,10 @@ func (h *peer_handler) init_peer_handler(sw *Switch) {
 func (h *peer_handler) SendPeer(to *Peer) {
 	to_hn := to.Hashname()
 
-	for via, addr := range to.ViaTable() {
-		h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
+	h.sw.net.send_nat_breaker(to)
 
-		h.sw.net.send_nat_breaker(addr)
+	for _, via := range to.ViaTable() {
+		h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
 
 		h.sw.main.OpenChannel(via, &pkt_t{
 			hdr: pkt_hdr_t{
@@ -76,17 +76,19 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 
 	h.log.Noticef("received peer-cmd: from=%s to=%s", from_peer.Hashname().Short(), peer_hashname.Short())
 
-	_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
-		hdr: pkt_hdr_t{
-			Type: "connect",
-			IP:   ip,
-			Port: port,
-			End:  true,
-		},
-		body: pubkey,
-	}, true)
-	if err != nil {
-		h.log.Debugf("peer:connect err=%s", err)
+	for _, np := range from_peer.NetPaths() {
+		_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
+			hdr: pkt_hdr_t{
+				Type: "connect",
+				IP:   np.IP.String(),
+				Port: np.Port,
+				End:  true,
+			},
+			body: pubkey,
+		}, true)
+		if err != nil {
+			h.log.Debugf("peer:connect err=%s", err)
+		}
 	}
 }
 
@@ -115,18 +117,18 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 		return
 	}
 
-	peer, disc := h.sw.main.AddPeer(hashname)
+	peer, _ := h.sw.main.AddPeer(hashname)
+
+	peer.SetPublicKey(pubkey)
 
 	peer.AddNetPath(NetPath{
-		Flags:   net.FlagMulticast | net.FlagBroadcast,
-		Address: &net.IPAddr{IP: ip},
-		Port:    pkt.hdr.Port,
-		MTU:     1500,
+		Flags: net.FlagMulticast | net.FlagBroadcast,
+		IP:    ip,
+		Port:  pkt.hdr.Port,
 	})
 
-	h.log.Noticef("received connect-cmd: peer=%s local=%+v", addr, pkt.hdr.Local)
+	h.log.Noticef("received connect-cmd: peer=%s", peer)
 
-	reply := make(chan *line_t)
-	h.sw.main.get_line_chan <- cmd_line_get{peer.Hashname(), NetPath{}, nil, reply}
-	line := <-reply
+	line := h.sw.main.GetLine(peer.Hashname())
+	line.EnsureRunning()
 }

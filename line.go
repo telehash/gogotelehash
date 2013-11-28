@@ -41,7 +41,7 @@ type (
 func (l *line_t) Init(sw *Switch, peer *Peer) {
 	l.sw = sw
 	l.peer = peer
-	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.addr.hashname.Short()+"]")
+	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.Hashname().Short()+"]")
 	l.open_retries = 3
 
 	l.snd_chan = make(chan cmd_line_snd, 10)
@@ -132,7 +132,7 @@ func (l *line_t) OpenChannel(pkt *pkt_t, raw bool) (*channel_t, error) {
 		short_hash(channel.channel_id),
 		pkt.hdr.Type,
 		l.sw.hashname.Short(),
-		l.peer.addr.hashname.Short())
+		l.peer.Hashname().Short())
 
 	err = channel.snd_pkt(pkt)
 	if err != nil {
@@ -190,20 +190,17 @@ func (l *line_t) setup() error {
 func (l *line_t) start_opening() {
 	l.open_retries--
 
-	if !l.peer.addr.via.IsZero() {
-		l.log.Noticef("opening line to=%s via=%s", l.peer.addr.hashname.Short(), l.peer.addr.via.Short())
+	if l.peer.HasVia() {
+		l.log.Noticef("opening line to=%s (via)", l.peer.Hashname().Short())
 		l.state.mod(line_opening|line_peering, 0)
 	} else {
-		l.log.Noticef("opening line to=%s", l.peer.addr.hashname.Short())
+		l.log.Noticef("opening line to=%s", l.peer.Hashname().Short())
 		l.state.mod(line_opening, 0)
 	}
 }
 
 func (l *line_t) run_peer_loop() {
-	if !l.handle_err(l.sw.peer_handler.SendPeer(l.peer)) {
-		l.state.mod(line_broken, line_active)
-		return
-	}
+	l.sw.peer_handler.SendPeer(l.peer)
 
 	var (
 		timeout_d = 1 * time.Second
@@ -225,7 +222,7 @@ func (l *line_t) run_peer_loop() {
 
 		case <-timeout.C:
 			if l.snd_open_pkt() != nil {
-				l.sw.net.send_nat_breaker(l.peer.addr.addr)
+				l.sw.net.send_nat_breaker(l.peer)
 			}
 			timeout.Reset(timeout_d)
 
@@ -354,7 +351,7 @@ func (l *line_t) run_line_loop() {
 						short_hash(c.channel_id),
 						c.channel_type,
 						l.sw.hashname.Short(),
-						l.peer.addr.hashname.Short())
+						l.peer.Hashname().Short())
 					delete(l.channels, c.channel_id)
 				}
 			}
@@ -392,7 +389,7 @@ func (l *line_t) run_line_loop() {
 
 func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname) {
 	for i := 0; i < 3; i++ {
-		err := l.sw.seek_handler.Seek(l.peer.addr.hashname, local_hashname)
+		err := l.sw.seek_handler.Seek(l.peer.Hashname(), local_hashname)
 		if err == nil {
 			return
 		}
@@ -409,7 +406,7 @@ func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname)
 
 func (l *line_t) snd_ping(broken_chan chan<- time.Time) {
 	for i := 0; i < 3; i++ {
-		if l.sw.ping_handler.Ping(l.peer.addr.hashname) {
+		if l.sw.ping_handler.Ping(l.peer.Hashname()) {
 			return
 		}
 	}
@@ -427,7 +424,8 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		return err
 	}
 
-	ipkt.addr = l.peer.addr
+	ipkt.peer = l.peer
+	ipkt.netpath = opkt.netpath
 
 	if ipkt.hdr.C == "" {
 		return errInvalidPkt
@@ -463,7 +461,7 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		short_hash(channel.channel_id),
 		ipkt.hdr.Type,
 		l.sw.hashname.Short(),
-		l.peer.addr.hashname.Short())
+		l.peer.Hashname().Short())
 
 	err = channel.push_rcv_pkt(ipkt)
 	if err != nil {
@@ -484,7 +482,8 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 		return err
 	}
 
-	pkt.addr = l.peer.addr
+	pkt.peer = l.peer
+	pkt.netpath = cmd.pkt.netpath
 
 	err = l.sw.net.snd_pkt(pkt)
 	if err != nil {
@@ -504,7 +503,7 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	var (
 		err            error
 		pub            = cmd.pub
-		addr           = cmd.addr
+		netpath        = cmd.netpath
 		local_rsa_key  = l.sw.key
 		local_hashname = l.sw.hashname
 	)
@@ -513,26 +512,27 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	if prv == nil {
 		prv, err = make_line_half(local_rsa_key, pub.rsa_pubkey)
 		if err != nil {
-			l.log.Noticef("rcv open from=%s err=%s", addr, err)
+			l.log.Noticef("rcv open from=%s err=%s", netpath, err)
 			return err
 		}
 	}
 
 	err = pub.verify(l.pub_key, local_hashname)
 	if err != nil {
-		l.log.Noticef("rcv open from=%s err=%s", addr, err)
+		l.log.Noticef("rcv open from=%s err=%s", netpath, err)
 		return err
 	}
 
 	shr, err := line_activate(prv, pub)
 	if err != nil {
-		l.log.Noticef("rcv open from=%s err=%s", addr, err)
+		l.log.Noticef("rcv open from=%s err=%s", netpath, err)
 		return err
 	}
 
-	addr.pubkey = pub.rsa_pubkey
-	l.peer.addr.update(addr)
-	l.log.Debugf("rcv open from=%s", l.peer.addr)
+	l.peer.SetPublicKey(pub.rsa_pubkey)
+	l.peer.AddNetPath(netpath)
+
+	l.log.Debugf("rcv open from=%s", l.peer)
 
 	l.prv_key = prv
 	l.pub_key = pub
@@ -543,27 +543,27 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 
 func (l *line_t) snd_open_pkt() error {
 	var (
-		err           error
 		local_rsa_key = l.sw.key
+		netpaths      = l.peer.NetPaths()
 	)
 
-	if l.peer.addr.hashname.IsZero() {
+	if l.peer.Hashname().IsZero() {
 		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
-	if l.peer.addr.addr == nil {
+	if len(netpaths) == 0 {
 		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
 		return errInvalidOpenReq
 	}
 
-	if l.peer.addr.pubkey == nil {
+	if l.peer.PublicKey() == nil {
 		l.log.Debugf("snd open to=%s err=%s", l.peer, errMissingPublicKey)
 		return errMissingPublicKey
 	}
 
 	if l.prv_key == nil {
-		prv_key, err := make_line_half(local_rsa_key, l.peer.addr.pubkey)
+		prv_key, err := make_line_half(local_rsa_key, l.peer.PublicKey())
 		if err != nil {
 			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 			return err
@@ -571,16 +571,19 @@ func (l *line_t) snd_open_pkt() error {
 		l.prv_key = prv_key
 	}
 
-	pkt, err := l.prv_key.compose_open_pkt()
-	pkt.addr = l.peer.addr
+	for _, np := range netpaths {
+		pkt, err := l.prv_key.compose_open_pkt()
+		pkt.netpath = np
+		pkt.peer = l.peer
 
-	err = l.sw.net.snd_pkt(pkt)
-	if err != nil {
-		l.log.Debugf("snd open to=%s err=%s", l.peer, err)
-		return err
+		err = l.sw.net.snd_pkt(pkt)
+		if err != nil {
+			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
+		} else {
+			l.log.Debugf("snd open to=%s", l.peer)
+		}
 	}
 
-	l.log.Debugf("snd open to=%s", pkt.addr)
 	return nil
 }
 
@@ -627,7 +630,7 @@ func (l *line_t) break_channels() {
 			short_hash(c.channel_id),
 			c.channel_type,
 			l.sw.hashname.Short(),
-			l.peer.addr.hashname.Short())
+			l.peer.Hashname().Short())
 	}
 
 	// flush channel sends

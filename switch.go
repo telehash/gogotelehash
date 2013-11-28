@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/fd/go-util/log"
 	"io"
+	"net"
 )
 
 type Switch struct {
@@ -79,14 +80,27 @@ func (s *Switch) LocalHashname() Hashname {
 }
 
 func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
-	paddr, err := make_addr(ZeroHashname, ZeroHashname, addr, key)
+	hashname, err := HashnameFromPublicKey(key)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
-	peer, _ := s.main.AddPeer(paddr)
+	udp, err := net.ResolveUDPAddr("udp", addr)
+	if err != nil {
+		return ZeroHashname, err
+	}
 
-	return peer.addr.hashname, nil
+	peer, _ := s.main.AddPeer(hashname)
+	peer.SetPublicKey(key)
+	peer.AddNetPath(NetPath{
+		Flags: net.FlagMulticast | net.FlagBroadcast,
+		IP:    udp.IP,
+		Port:  udp.Port,
+	})
+
+	s.seek_handler.RecusiveSeek(s.hashname, 10)
+
+	return hashname, nil
 }
 
 func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
@@ -94,7 +108,7 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 	hashnames := make([]Hashname, len(peers))
 
 	for i, peer := range peers {
-		hashnames[i] = peer.addr.hashname
+		hashnames[i] = peer.Hashname()
 	}
 
 	return hashnames

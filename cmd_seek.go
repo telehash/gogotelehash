@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/fd/go-util/log"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,9 +58,8 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 		var (
 			hashname_str = fields[0]
-			ip           = fields[1]
-			port         = fields[2]
-			addr_str     = net.JoinHostPort(ip, port)
+			ip_str       = fields[1]
+			port_str     = fields[2]
 		)
 
 		hashname, err := HashnameFromString(hashname_str)
@@ -68,23 +68,37 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		if hashname == h.sw.hashname {
+		ip := net.ParseIP(ip_str)
+		if ip == nil {
 			continue
+		}
+
+		port, err := strconv.Atoi(port_str)
+		if err != nil {
+			continue
+		}
+
+		if hashname == h.sw.hashname {
+			// add address to main
+			// detect nat
+			continue // is self
 		}
 
 		if hashname == via {
 			continue
 		}
 
-		addr, err := make_addr(hashname, addr_str, nil)
-		if err != nil {
-			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
-		}
+		peer, _ := h.sw.main.AddPeer(hashname)
 
-		_, discovered := h.sw.main.AddPeer(addr)
-		if discovered {
-			h.log.Infof("seek: discoverd peer addr=%s", addr)
-		}
+		peer.AddVia(via)
+
+		peer.AddNetPath(NetPath{
+			Flags: net.FlagMulticast | net.FlagBroadcast,
+			IP:    ip,
+			Port:  port,
+		})
+
+		h.sw.main.GetLine(peer.Hashname())
 	}
 
 	return nil
@@ -106,18 +120,18 @@ RECURSOR:
 
 		h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last)
 		for _, via := range last {
-			if cache[via.addr.hashname] {
+			if cache[via.Hashname()] {
 				continue
 			}
 
-			cache[via.addr.hashname] = true
+			cache[via.Hashname()] = true
 
-			if via.addr.hashname == hashname {
+			if via.Hashname() == hashname {
 				continue
 			}
 
 			wg.Add(1)
-			go h.send_seek_cmd(via.addr.hashname, hashname, &wg)
+			go h.send_seek_cmd(via.Hashname(), hashname, &wg)
 		}
 
 		wg.Wait()
@@ -161,15 +175,13 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 
 	closest := h.sw.main.GetClosestPeers(seek, 25)
 	see := make([]string, 0, len(closest))
-	reply := make(chan *line_t)
 
 	for _, peer := range closest {
-		if peer.addr.pubkey == nil {
+		if peer.PublicKey() == nil {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		h.sw.main.get_line_chan <- cmd_line_get{peer.addr.hashname, addr_t{}, nil, reply}
-		line := <-reply
+		line := h.sw.main.GetLine(peer.Hashname())
 		if line == nil {
 			continue
 		}
@@ -178,11 +190,13 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 			continue
 		}
 
-		see = append(see, fmt.Sprintf("%s,%s,%d",
-			peer.addr.hashname,
-			peer.addr.addr.IP,
-			peer.addr.addr.Port,
-		))
+		for _, np := range peer.NetPaths() {
+			see = append(see, fmt.Sprintf("%s,%s,%d",
+				peer.Hashname(),
+				np.IP,
+				np.Port,
+			))
+		}
 	}
 
 	h.log.Infof("rcv seek: see=%+v closest=%+v", see, closest)

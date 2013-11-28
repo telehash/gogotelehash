@@ -48,7 +48,7 @@ func kad_sort_peers(target Hashname, list []*Peer) {
 	}
 
 	for i, peer := range list {
-		s.dist[i] = kad_distance_between(target, peer.addr.hashname)
+		s.dist[i] = kad_distance_between(target, peer.Hashname())
 	}
 
 	sort.Sort(&s)

@@ -36,7 +36,7 @@ func (c *peer_table) add_peer(hashname Hashname) (peer *Peer, discovered bool) {
 
 func (c *peer_table) remove_peer(peer *Peer) {
 	var (
-		bucket_idx = kad_bucket_for(c.local_hashname, peer.addr.hashname)
+		bucket_idx = kad_bucket_for(c.local_hashname, peer.Hashname())
 		bucket     = c.buckets[bucket_idx]
 		idx        = -1
 	)
@@ -71,7 +71,7 @@ func (c *peer_table) get_peer(hashname Hashname) *Peer {
 	bucket := c.buckets[bucket_index]
 
 	for _, peer := range bucket {
-		if peer.addr.hashname == hashname {
+		if peer.Hashname() == hashname {
 			return peer
 		}
 	}

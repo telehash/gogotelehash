@@ -63,7 +63,7 @@ type (
 	cmd_line_get struct {
 		hashname Hashname
 		// addr     addr_t
-		pub   *public_line_key
+		// pub   *public_line_key
 		reply chan *line_t
 	}
 )
@@ -140,7 +140,7 @@ func (c *main_controller) PopulateStats(s *SwitchStats) {
 
 func (c *main_controller) GetLine(to Hashname) *line_t {
 	reply := make(chan *line_t)
-	c.get_line_chan <- cmd_line_get{to, addr_t{}, nil, reply}
+	c.get_line_chan <- cmd_line_get{to, reply}
 	return <-reply
 }
 
@@ -198,7 +198,7 @@ func (c *main_controller) run_active_loop() {
 			cmd.reply <- c.active_lines[cmd.id]
 
 		case line := <-c.register_line_chan:
-			c.lines[line.peer.addr.hashname] = line
+			c.lines[line.peer.Hashname()] = line
 			c.num_running_lines += 1
 		case line := <-c.unregister_line_chan:
 			c.unregister_line(line)
@@ -287,12 +287,12 @@ func (c *main_controller) unregister_line(line *line_t) {
 		c.log.Noticef("failed to open line to %s (removed peer)", line.peer)
 	}
 
-	delete(c.lines, line.peer.addr.hashname)
+	delete(c.lines, line.peer.Hashname())
 	c.num_running_lines -= 1
 }
 
 func (c *main_controller) add_peer(cmd cmd_peer_add) {
-	peer, disc := c.peers.add_peer(cmd.addr)
+	peer, disc := c.peers.add_peer(cmd.hashname)
 
 	if disc {
 		c.log.Noticef("discovered: %s (add_peer)", peer)
@@ -301,35 +301,22 @@ func (c *main_controller) add_peer(cmd cmd_peer_add) {
 	cmd.reply <- cmd_peer_add_res{peer, disc}
 }
 
-func (c *main_controller) seek_discovered_peer(peer *Peer) {
-	err := c.sw.seek_handler.Seek(peer.addr.hashname, c.sw.hashname)
-	if err != nil {
-		c.log.Noticef("failed to seek: %s err=%s", peer.addr.hashname.Short(), err)
-	}
-}
-
 func (c *main_controller) get_line(cmd cmd_line_get) {
 	line := c.lines[cmd.hashname]
 
 	if line == nil {
-		addr := addr_t{hashname: cmd.hashname}
-		if cmd.pub != nil {
-			addr.pubkey = cmd.pub.rsa_pubkey
+		peer := c.peers.get_peer(cmd.hashname)
+		if peer == nil {
+			line = nil
+			goto EXIT
 		}
-		addr.update(cmd.addr)
-		peer, disc := c.peers.add_peer(addr)
-		addr = peer.addr
 
 		if peer.is_down {
 			line = nil
 			goto EXIT
 		}
 
-		if disc {
-			c.log.Noticef("discovered: %s (get_line)", peer)
-		}
-
-		if (addr.pubkey != nil || !addr.via.IsZero()) && addr.addr != nil {
+		if peer.CanOpen() {
 			line = &line_t{}
 			line.Init(c.sw, peer)
 			line.EnsureRunning()

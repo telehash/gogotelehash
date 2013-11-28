@@ -2,7 +2,7 @@ package telehash
 
 import (
 	"crypto/rsa"
-	"net"
+	"fmt"
 	"sync"
 )
 
@@ -17,15 +17,15 @@ type Peer struct {
 
 func make_peer(hashname Hashname) *Peer {
 	peer := &Peer{
-		addr: addr_t{hashname: hashname},
-		via:  make(map[Hashname]bool),
+		hashname: hashname,
+		via:      make(map[Hashname]bool),
 	}
 
 	return peer
 }
 
 func (p *Peer) String() string {
-	return p.addr.String()
+	return fmt.Sprintf("<peer:%s>", p.hashname.Short())
 }
 
 func (p *Peer) Hashname() Hashname {
@@ -51,28 +51,62 @@ func (p *Peer) SetPublicKey(key *rsa.PublicKey) {
 }
 
 // add a peer known to be connected to this peer
-func (p *Peer) AddVia(hashname Hashname, addr string) error {
-	udp, err := net.ResolveUDPAddr("udp", addr)
-	if err != nil {
-		return err
-	}
-
+func (p *Peer) AddVia(hashname Hashname) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
-	p.via[Hashname] = udp
-	return nil
+	p.via[hashname] = true
 }
 
 // Get the table of known via peers
-func (p *Peer) ViaTable() map[Hashname]*net.UDPAddr {
+func (p *Peer) ViaTable() []Hashname {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
-	m := make(map[Hashname]*net.UDPAddr, len(p.addr))
-	for h, a := range p.via {
-		m[h] = v
+	m := make([]Hashname, len(p.via))
+	i := 0
+	for h := range p.via {
+		m[i] = h
+		i++
 	}
 
 	return m
+}
+
+func (p *Peer) NetPaths() []NetPath {
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	paths := make([]NetPath, len(p.paths))
+	copy(paths, p.paths)
+	return paths
+}
+
+func (p *Peer) AddNetPath(netpath NetPath) {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	for i, np := range p.paths {
+		if EqualNetPaths(np, netpath) {
+			np = np.update(netpath)
+			p.paths[i] = np
+			return
+		}
+	}
+
+	p.paths = append(p.paths, netpath)
+}
+
+func (p *Peer) CanOpen() bool {
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	return (p.pubkey != nil || len(p.via) > 0) && len(p.paths) > 0
+}
+
+func (p *Peer) HasVia() bool {
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	return len(p.via) > 0
 }

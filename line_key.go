@@ -187,7 +187,7 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_key, e
 		return nil, err
 	}
 
-	ipkt, err := parse_pkt(ipkt_data, opkt.addr)
+	ipkt, err := parse_pkt(ipkt_data, opkt.peer, opkt.netpath)
 	if err != nil {
 		return nil, err
 	}
@@ -308,8 +308,9 @@ func (l *shared_line_key) enc(i *pkt_t) (*pkt_t, error) {
 			Line: l.pub_half.id,
 			Iv:   hex.EncodeToString(iv),
 		},
-		body: ipkt_data_enc,
-		addr: i.addr,
+		body:    ipkt_data_enc,
+		peer:    i.peer,
+		netpath: i.netpath,
 	}
 
 	return o, nil
@@ -333,7 +334,7 @@ func (l *shared_line_key) dec(i *pkt_t) (*pkt_t, error) {
 		return nil, errInvalidPkt
 	}
 
-	ipkt, err := parse_pkt(ipkt_data, i.addr)
+	ipkt, err := parse_pkt(ipkt_data, i.peer, i.netpath)
 	if err != nil {
 		return nil, errInvalidPkt
 	}

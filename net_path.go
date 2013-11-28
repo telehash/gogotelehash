@@ -8,11 +8,11 @@ import (
 )
 
 type NetPath struct {
-	Name    string
-	Flags   net.Flags
-	Address net.Addr
-	Port    int
-	MTU     int
+	Name  string
+	Flags net.Flags
+	IP    net.IP
+	Port  int
+	MTU   int
 }
 
 func (n NetPath) IsMulticast() bool {
@@ -32,57 +32,23 @@ func (n NetPath) IsPointToPoint() bool {
 }
 
 func (n NetPath) IsIPv4() bool {
-	switch addr := n.Address.(type) {
-
-	case *net.IPNet:
-		if len(addr.IP) == net.IPv4len {
-			return true
-		}
-		if len(addr.IP) == net.IPv6len && bytes.Equal(ipv6_mapped_ipv4_address_prefix, addr.IP[:12]) {
-			return true
-		}
-		return false
-
-	case *net.IPAddr:
-		if len(addr.IP) == net.IPv4len {
-			return true
-		}
-		if len(addr.IP) == net.IPv6len && bytes.Equal(ipv6_mapped_ipv4_address_prefix, addr.IP[:12]) {
-			return true
-		}
-		return false
-
-	default:
-		panic("unsupported")
-
+	if len(n.IP) == net.IPv4len {
+		return true
 	}
+	if len(n.IP) == net.IPv6len && bytes.Equal(ipv6_mapped_ipv4_address_prefix, n.IP[:12]) {
+		return true
+	}
+	return false
 }
 
 func (n NetPath) IsIPv6() bool {
-	switch addr := n.Address.(type) {
-
-	case *net.IPNet:
-		if len(addr.IP) == net.IPv4len {
-			return true
-		}
-		if len(addr.IP) == net.IPv6len && !bytes.Equal(ipv6_mapped_ipv4_address_prefix, addr.IP[:12]) {
-			return true
-		}
-		return false
-
-	case *net.IPAddr:
-		if len(addr.IP) == net.IPv4len {
-			return true
-		}
-		if len(addr.IP) == net.IPv6len && !bytes.Equal(ipv6_mapped_ipv4_address_prefix, addr.IP[:12]) {
-			return true
-		}
-		return false
-
-	default:
-		panic("unsupported")
-
+	if len(n.IP) == net.IPv4len {
+		return true
 	}
+	if len(n.IP) == net.IPv6len && !bytes.Equal(ipv6_mapped_ipv4_address_prefix, n.IP[:12]) {
+		return true
+	}
+	return false
 }
 
 func (n NetPath) String() string {
@@ -111,7 +77,16 @@ func (n NetPath) String() string {
 		net = "ipv6"
 	}
 
-	return fmt.Sprintf("<net %s %s=%s port=%d mtu=%d flags=%s>", n.Name, net, n.Address, n.Port, n.MTU, strings.Join(flags, "|"))
+	return fmt.Sprintf("<net %s %s=%s port=%d mtu=%d flags=%s>", n.Name, net, n.IP, n.Port, n.MTU, strings.Join(flags, "|"))
+}
+
+func (n *NetPath) ToUDPAddr(addr *net.UDPAddr) {
+	addr.IP = n.IP
+	addr.Port = n.Port
+}
+
+func EqualNetPaths(a, b NetPath) bool {
+	return a.Port == b.Port && bytes.Equal(a.IP, b.IP)
 }
 
 var ipv6_mapped_ipv4_address_prefix = []byte{0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xff, 0xff}
@@ -135,10 +110,28 @@ func get_network_paths() ([]NetPath, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, addr := range addrs {
-			nets = append(nets, NetPath{iface.Name, iface.Flags &^ net.FlagUp, addr, iface.MTU})
+		for _, addri := range addrs {
+			switch addr := addri.(type) {
+			case *net.IPNet:
+				nets = append(nets, NetPath{iface.Name, iface.Flags &^ net.FlagUp, addr.IP, 0, iface.MTU})
+			case *net.IPAddr:
+				nets = append(nets, NetPath{iface.Name, iface.Flags &^ net.FlagUp, addr.IP, 0, iface.MTU})
+			}
 		}
 	}
 
 	return nets, nil
+}
+
+func (a NetPath) update(b NetPath) NetPath {
+	if a.Name == "" {
+		a.Name = b.Name
+	}
+
+	a.Flags = b.Flags
+	if a.MTU > b.MTU && b.MTU > 0 {
+		a.MTU = b.MTU
+	}
+
+	return a
 }
