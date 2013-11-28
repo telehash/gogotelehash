@@ -76,7 +76,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		addr, err := make_addr(hashname, via, addr_str, nil)
+		addr, err := make_addr(hashname, addr_str, nil)
 		if err != nil {
 			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
 		}
@@ -90,7 +90,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	return nil
 }
 
-func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*peer_t {
+func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
 	var (
 		wg    sync.WaitGroup
 		last  = h.sw.main.GetClosestPeers(hashname, n)

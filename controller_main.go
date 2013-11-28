@@ -36,23 +36,23 @@ type main_controller struct {
 type (
 	cmd_peer_get struct {
 		hashname Hashname
-		reply    chan *peer_t
+		reply    chan *Peer
 	}
 
 	cmd_peer_add struct {
-		addr  addr_t
-		reply chan cmd_peer_add_res
+		hashname Hashname
+		reply    chan cmd_peer_add_res
 	}
 
 	cmd_peer_add_res struct {
-		peer       *peer_t
+		peer       *Peer
 		discovered bool
 	}
 
 	cmd_peer_get_closest struct {
 		hashname Hashname
 		n        int
-		reply    chan []*peer_t
+		reply    chan []*Peer
 	}
 
 	cmd_line_get_active struct {
@@ -62,9 +62,9 @@ type (
 
 	cmd_line_get struct {
 		hashname Hashname
-		addr     addr_t
-		pub      *public_line_key
-		reply    chan *line_t
+		// addr     addr_t
+		pub   *public_line_key
+		reply chan *line_t
 	}
 )
 
@@ -103,21 +103,21 @@ func (c *main_controller) State() main_state {
 	return main_state(atomic.LoadUint32((*uint32)(&c.state)))
 }
 
-func (c *main_controller) GetPeer(hashname Hashname) *peer_t {
-	reply := make(chan *peer_t)
+func (c *main_controller) GetPeer(hashname Hashname) *Peer {
+	reply := make(chan *Peer)
 	c.get_peer_chan <- cmd_peer_get{hashname, reply}
 	return <-reply
 }
 
-func (c *main_controller) GetClosestPeers(hashname Hashname, n int) []*peer_t {
-	reply := make(chan []*peer_t)
+func (c *main_controller) GetClosestPeers(hashname Hashname, n int) []*Peer {
+	reply := make(chan []*Peer)
 	c.get_closest_peers_chan <- cmd_peer_get_closest{hashname, n, reply}
 	return <-reply
 }
 
-func (c *main_controller) AddPeer(addr addr_t) (*peer_t, bool) {
+func (c *main_controller) AddPeer(hashname Hashname) (*Peer, bool) {
 	reply := make(chan cmd_peer_add_res)
-	c.add_peer_chan <- cmd_peer_add{addr, reply}
+	c.add_peer_chan <- cmd_peer_add{hashname, reply}
 	res := <-reply
 	return res.peer, res.discovered
 }
@@ -292,13 +292,12 @@ func (c *main_controller) add_peer(cmd cmd_peer_add) {
 
 	if disc {
 		c.log.Noticef("discovered: %s (add_peer)", peer)
-		c.get_line(cmd_line_get{hashname: peer.addr.hashname})
 	}
 
 	cmd.reply <- cmd_peer_add_res{peer, disc}
 }
 
-func (c *main_controller) seek_discovered_peer(peer *peer_t) {
+func (c *main_controller) seek_discovered_peer(peer *Peer) {
 	err := c.sw.seek_handler.Seek(peer.addr.hashname, c.sw.hashname)
 	if err != nil {
 		c.log.Noticef("failed to seek: %s err=%s", peer.addr.hashname.Short(), err)

@@ -9,7 +9,7 @@ import (
 
 type line_t struct {
 	sw            *Switch
-	peer          *peer_t
+	peer          *Peer
 	log           log.Logger
 	shutdown      chan bool
 	snd_chan      chan cmd_line_snd
@@ -33,12 +33,12 @@ type (
 	}
 
 	cmd_open_rcv struct {
-		pub  *public_line_key
-		addr addr_t
+		pub     *public_line_key
+		netpath NetPath
 	}
 )
 
-func (l *line_t) Init(sw *Switch, peer *peer_t) {
+func (l *line_t) Init(sw *Switch, peer *Peer) {
 	l.sw = sw
 	l.peer = peer
 	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.addr.hashname.Short()+"]")
@@ -111,13 +111,13 @@ func (l *line_t) RcvLine(pkt *pkt_t) {
 	l.rcv_line_chan <- pkt
 }
 
-func (l *line_t) RcvOpen(pub *public_line_key, addr addr_t) {
+func (l *line_t) RcvOpen(pub *public_line_key, netpath NetPath) {
 	err := l.EnsureRunning()
 	if err != nil {
 		return // drop
 	}
 
-	l.rcv_open_chan <- cmd_open_rcv{pub, addr}
+	l.rcv_open_chan <- cmd_open_rcv{pub, netpath}
 }
 
 func (l *line_t) OpenChannel(pkt *pkt_t, raw bool) (*channel_t, error) {

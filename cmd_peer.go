@@ -1,10 +1,8 @@
 package telehash
 
 import (
-	"fmt"
 	"github.com/fd/go-util/log"
 	"net"
-	"strconv"
 )
 
 type peer_handler struct {
@@ -20,42 +18,22 @@ func (h *peer_handler) init_peer_handler(sw *Switch) {
 	sw.mux.handle_func("connect", h.serve_connect)
 }
 
-func (h *peer_handler) SendPeer(to *peer_t) error {
-	h.log.Noticef("peering=%s via=%s", to.addr.hashname.Short(), to.addr.via.Short())
+func (h *peer_handler) SendPeer(to *Peer) {
+	to_hn := to.Hashname()
 
-	if to.addr.via.IsZero() {
-		return fmt.Errorf("peer has unknown via: %s", to)
+	for via, addr := range to.ViaTable() {
+		h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
+
+		h.sw.net.send_nat_breaker(addr)
+
+		h.sw.main.OpenChannel(via, &pkt_t{
+			hdr: pkt_hdr_t{
+				Type: "peer",
+				Peer: to_hn.String(),
+				End:  true,
+			},
+		}, true)
 	}
-
-	if to.addr.addr != nil {
-		// Deploy the nat breaker
-		h.sw.net.send_nat_breaker(to.addr.addr)
-	}
-
-	var local *pkt_hdr_local_t
-	if ip, ok := get_lan_ip(); ok {
-		if port := h.sw.net.GetPort(); port > 0 {
-			local = &pkt_hdr_local_t{
-				IP:   ip.String(),
-				Port: port,
-			}
-		}
-	}
-
-	_, err := h.sw.main.OpenChannel(to.addr.via, &pkt_t{
-		hdr: pkt_hdr_t{
-			Type:  "peer",
-			Peer:  to.addr.hashname.String(),
-			Local: local,
-			End:   true,
-		},
-	}, true)
-
-	if err != nil {
-		h.log.Debugf("peer cmd err=%s", err)
-	}
-
-	return err
 }
 
 func (h *peer_handler) serve_peer(channel *channel_t) {
@@ -65,7 +43,8 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
-	sender_addr := pkt.addr
+	from_peer := channel.line.peer
+
 	peer_hashname, err := HashnameFromString(pkt.hdr.Peer)
 	if err != nil {
 		h.log.Debug(err)
@@ -76,37 +55,26 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 		return
 	}
 
-	if peer_hashname == sender_addr.hashname {
+	if peer_hashname == from_peer.Hashname() {
 		return
 	}
 
-	if sender_addr.pubkey == nil {
+	if from_peer.PublicKey() == nil {
 		return
 	}
 
-	peer := h.sw.main.GetPeer(peer_hashname)
-	if peer == nil {
+	to_peer := h.sw.main.GetPeer(peer_hashname)
+	if to_peer == nil {
 		return
 	}
 
-	var (
-		ip   = sender_addr.addr.IP.String()
-		port = sender_addr.addr.Port
-	)
-
-	local := pkt.hdr.Local
-	if local != nil && peer.addr.addr.IP.String() == ip {
-		ip = local.IP
-		port = local.Port
-	}
-
-	pubkey, err := enc_DER_RSA(sender_addr.pubkey)
+	pubkey, err := enc_DER_RSA(from_peer.PublicKey())
 	if err != nil {
 		h.log.Debugf("error: %s", err)
 		return
 	}
 
-	h.log.Noticef("received peer-cmd: from=%s to=%s", sender_addr.hashname.Short(), peer_hashname.Short())
+	h.log.Noticef("received peer-cmd: from=%s to=%s", from_peer.Hashname().Short(), peer_hashname.Short())
 
 	_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
 		hdr: pkt_hdr_t{
@@ -135,24 +103,30 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 		return
 	}
 
-	addr, err := make_addr(
-		ZeroHashname,
-		ZeroHashname,
-		net.JoinHostPort(pkt.hdr.IP, strconv.Itoa(pkt.hdr.Port)),
-		pubkey,
-	)
+	hashname, err := HashnameFromPublicKey(pubkey)
 	if err != nil {
 		h.log.Debugf("error: %s", err)
 		return
 	}
 
-	peer, disc := h.sw.main.AddPeer(addr)
+	ip := net.ParseIP(pkt.hdr.IP)
+	if err != nil {
+		h.log.Debugf("error: %s", "invalid IP address")
+		return
+	}
+
+	peer, disc := h.sw.main.AddPeer(hashname)
+
+	peer.AddNetPath(NetPath{
+		Flags:   net.FlagMulticast | net.FlagBroadcast,
+		Address: &net.IPAddr{IP: ip},
+		Port:    pkt.hdr.Port,
+		MTU:     1500,
+	})
+
 	h.log.Noticef("received connect-cmd: peer=%s local=%+v", addr, pkt.hdr.Local)
 
-	if !disc {
-		err = h.sw.seek_handler.Seek(peer.addr.hashname, h.sw.hashname)
-		if err != nil {
-			h.log.Noticef("error: %s", err)
-		}
-	}
+	reply := make(chan *line_t)
+	h.sw.main.get_line_chan <- cmd_line_get{peer.Hashname(), NetPath{}, nil, reply}
+	line := <-reply
 }

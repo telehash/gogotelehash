@@ -40,7 +40,7 @@ func (l *hashname_sorter) Swap(i, j int) {
 	l.dist[i], l.dist[j] = l.dist[j], l.dist[i]
 }
 
-func kad_sort_peers(target Hashname, list []*peer_t) {
+func kad_sort_peers(target Hashname, list []*Peer) {
 	s := peer_sorter{
 		target: target,
 		list:   list,
@@ -56,7 +56,7 @@ func kad_sort_peers(target Hashname, list []*peer_t) {
 
 type peer_sorter struct {
 	target Hashname
-	list   []*peer_t
+	list   []*Peer
 	dist   []kad_distance
 }
 

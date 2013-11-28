@@ -3,25 +3,25 @@ package telehash
 type peer_table struct {
 	local_hashname Hashname
 	num_peers      uint32
-	buckets        [][]*peer_t
+	buckets        [][]*Peer
 }
 
 func (c *peer_table) Init(local_hashname Hashname) {
 	c.local_hashname = local_hashname
-	c.buckets = make([][]*peer_t, 32*8)
+	c.buckets = make([][]*Peer, 32*8)
 }
 
-func (c *peer_table) add_peer(addr addr_t) (peer *peer_t, discovered bool) {
-	peer = c.get_peer(addr.hashname)
+func (c *peer_table) add_peer(hashname Hashname) (peer *Peer, discovered bool) {
+	peer = c.get_peer(hashname)
 
 	if peer == nil {
 		c.num_peers++
 
 		// make new peer
-		peer = make_peer(addr.hashname)
-		peer.addr = addr
+		peer = make_peer(hashname)
 
-		bucket := kad_bucket_for(c.local_hashname, addr.hashname)
+		// determine bucket for HN
+		bucket := kad_bucket_for(c.local_hashname, peer.Hashname())
 
 		// add the peer
 		l := c.buckets[bucket]
@@ -31,12 +31,10 @@ func (c *peer_table) add_peer(addr addr_t) (peer *peer_t, discovered bool) {
 		discovered = true
 	}
 
-	peer.addr.update(addr)
-
 	return peer, discovered
 }
 
-func (c *peer_table) remove_peer(peer *peer_t) {
+func (c *peer_table) remove_peer(peer *Peer) {
 	var (
 		bucket_idx = kad_bucket_for(c.local_hashname, peer.addr.hashname)
 		bucket     = c.buckets[bucket_idx]
@@ -63,7 +61,7 @@ func (c *peer_table) remove_peer(peer *peer_t) {
 	c.num_peers--
 }
 
-func (c *peer_table) get_peer(hashname Hashname) *peer_t {
+func (c *peer_table) get_peer(hashname Hashname) *Peer {
 	bucket_index := kad_bucket_for(c.local_hashname, hashname)
 
 	if bucket_index < 0 {
@@ -81,7 +79,7 @@ func (c *peer_table) get_peer(hashname Hashname) *peer_t {
 	return nil
 }
 
-func (c *peer_table) find_closest_peers(t Hashname, n int) []*peer_t {
+func (c *peer_table) find_closest_peers(t Hashname, n int) []*Peer {
 	bucket_index := kad_bucket_for(c.local_hashname, t)
 	delta := 0
 
@@ -90,7 +88,7 @@ func (c *peer_table) find_closest_peers(t Hashname, n int) []*peer_t {
 	}
 
 	var (
-		peers = make([]*peer_t, 0, 10)
+		peers = make([]*Peer, 0, 10)
 	)
 
 	for len(peers) < n {

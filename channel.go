@@ -39,6 +39,7 @@ type channel_t struct {
 	snd_last_pkt_at      time.Time // the last time any packet was send
 	snd_last_seq         seq_t     // the seq of the last send packet (-1 when no pkts have been send)
 	snd_miss_at          time.Time // the last time the missing packets were sent
+	state                channel_state
 
 	mtx sync.RWMutex
 	cnd sync.Cond

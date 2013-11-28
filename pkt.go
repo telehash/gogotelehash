@@ -8,9 +8,10 @@ import (
 )
 
 type pkt_t struct {
-	hdr  pkt_hdr_t
-	body []byte
-	addr addr_t
+	hdr     pkt_hdr_t
+	body    []byte
+	peer    *Peer
+	netpath NetPath
 }
 
 type pkt_hdr_t struct {
@@ -81,13 +82,13 @@ func (p *pkt_t) format_pkt() ([]byte, error) {
 	return data, nil
 }
 
-func parse_pkt(in []byte, addr addr_t) (*pkt_t, error) {
+func parse_pkt(in []byte, peer *Peer, netpath NetPath) (*pkt_t, error) {
 	var (
 		hdr_len  int
 		body_len int
 		err      error
 		body     []byte
-		pkt      = &pkt_t{addr: addr}
+		pkt      = &pkt_t{peer: peer, netpath: netpath}
 	)
 
 	if len(in) < 4 {
