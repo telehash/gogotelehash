@@ -26,15 +26,15 @@ func (h *ping_handler) Ping(to Hashname) bool {
 
 	channel, err := h.sw.main.OpenChannel(to, pkt, true)
 	if err != nil {
-		h.log.Debugf("failed open: to=%s err=%s", to.Short(), err)
+		h.log.Noticef("failed open: to=%s err=%s", to.Short(), err)
 		return false
 	}
 
-	channel.set_rcv_deadline(time.Now().Add(5 * time.Second))
+	channel.set_rcv_deadline(time.Now().Add(10 * time.Second))
 
 	_, err = channel.pop_rcv_pkt()
 	if err != nil {
-		h.log.Debugf("failed rcv: peer=%s err=%s", channel.line.peer, err)
+		h.log.Noticef("failed rcv: peer=%s err=%s", channel.line.peer, err)
 		return false
 	}
 

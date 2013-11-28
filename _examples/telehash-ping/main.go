@@ -121,16 +121,16 @@ func pong(c *telehash.Channel) {
 // ]
 // `
 
-const seed = `
-[
-{
-    "ip": "208.68.164.253",
-    "port": 42424,
-    "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
-    "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
-}
-]
-`
+// const seed = `
+// [
+// {
+//     "ip": "208.68.164.253",
+//     "port": 42424,
+//     "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
+//     "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
+// }
+// ]
+// `
 
 // const seed = `
 // [
@@ -142,6 +142,17 @@ const seed = `
 //   }
 // ]
 // `
+
+const seed = `
+[
+  {
+    "IP": "192.241.248.65",
+    "Port": 45454,
+    "Hashname": "2e60d14b8025478bdb7bd8fbfd9c8a053e5dade6929eafe99593fe280ecac9e7",
+    "Pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEAzCrcNEqPC6g7b08o7TiH\ncC1SksBnqBqiM1/Yz6vP4s11RYmS122iHWDrE1a2QBMNi2q93HyD2ElWO0d1m+yY\nBTUeg886J2VuNrKu8bI078uozV1+fkS8wv3u/vlxik4MPf3TY+nrkNtlC1tfnnKJ\nEY7kC0lLjK9B78WCpal08VMUR7mwmTik801Un4M2aQ9wBIPww11RB3BxF5hQv5NU\nqltHyA3hQ5DEPWIsHtVK7yXXNDkgr03xzVWn5GhcndwYyaueQ7B9X/Pct2j0BDeW\nhcXj8YGXhQxZ9QDSgfiLUu5MQ1PfbGKdoMUZzRKaGGhAP5OXPQeK7jg2+YVD34qL\n9QIBIw==\n-----END PUBLIC KEY-----\n"
+  }
+]
+`
 
 func parse_main_seed(s *telehash.Switch) {
 	var (
