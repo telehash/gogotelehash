@@ -86,15 +86,27 @@ func (p *Peer) AddNetPath(netpath NetPath) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
+	found := false
+	y := 0
+
 	for i, np := range p.paths {
 		if EqualNetPaths(np, netpath) {
 			np = np.update(netpath)
 			p.paths[i] = np
-			return
+			found = true
+			y = i
+			break
 		}
 	}
 
-	p.paths = append(p.paths, netpath)
+	if !found {
+		y = len(p.paths)
+		p.paths = append(p.paths, netpath)
+	}
+
+	if y != 0 {
+		p.paths[0], p.paths[y] = p.paths[y], p.paths[0]
+	}
 }
 
 func (p *Peer) CanOpen() bool {

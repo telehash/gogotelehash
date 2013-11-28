@@ -98,6 +98,8 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		Port:  udp.Port,
 	})
 
+	s.main.GetLine(peer.Hashname())
+
 	s.seek_handler.RecusiveSeek(s.hashname, 10)
 
 	return hashname, nil

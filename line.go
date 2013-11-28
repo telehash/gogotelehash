@@ -13,6 +13,7 @@ type line_t struct {
 	log           log.Logger
 	shutdown      chan bool
 	snd_chan      chan cmd_line_snd
+	snd_open_chan chan cmd_open_snd
 	rcv_open_chan chan cmd_open_rcv // buffered rcv channel
 	rcv_line_chan chan *pkt_t       // buffered rcv channel
 	prv_key       *private_line_key
@@ -36,6 +37,10 @@ type (
 		pub     *public_line_key
 		netpath NetPath
 	}
+
+	cmd_open_snd struct {
+		netpath NetPath
+	}
 )
 
 func (l *line_t) Init(sw *Switch, peer *Peer) {
@@ -45,6 +50,7 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 	l.open_retries = 3
 
 	l.snd_chan = make(chan cmd_line_snd, 10)
+	l.snd_open_chan = make(chan cmd_open_snd, 10)
 	l.rcv_open_chan = make(chan cmd_open_rcv, 10)
 	l.rcv_line_chan = make(chan *pkt_t, 10)
 
@@ -101,6 +107,14 @@ func (l *line_t) Snd(pkt *pkt_t) error {
 	reply := make(chan error)
 	l.snd_chan <- cmd_line_snd{pkt, reply}
 	return <-reply
+}
+
+func (l *line_t) SndOpen(p NetPath) {
+	if l.State().test(0, line_running) {
+		return // drop
+	}
+
+	l.snd_open_chan <- cmd_open_snd{p}
 }
 
 func (l *line_t) RcvLine(pkt *pkt_t) {
@@ -220,8 +234,11 @@ func (l *line_t) run_peer_loop() {
 		case <-deadline.C:
 			l.state.mod(line_broken, line_active)
 
+		case cmd := <-l.snd_open_chan:
+			l.snd_open_pkt(cmd.netpath)
+
 		case <-timeout.C:
-			if l.snd_open_pkt() != nil {
+			if l.snd_open_pkt(NetPath{}) != nil {
 				l.sw.net.send_nat_breaker(l.peer)
 			}
 			timeout.Reset(timeout_d)
@@ -257,8 +274,11 @@ func (l *line_t) run_open_loop() {
 			l.handle_err(fmt.Errorf("line opend failed: deadline reached"))
 			l.state.mod(line_broken, line_active)
 
+		case cmd := <-l.snd_open_chan:
+			l.snd_open_pkt(cmd.netpath)
+
 		case <-timeout.C:
-			if l.handle_err(l.snd_open_pkt()) {
+			if l.handle_err(l.snd_open_pkt(NetPath{})) {
 				send_open = true
 			}
 			timeout.Reset(timeout_d)
@@ -380,6 +400,9 @@ func (l *line_t) run_line_loop() {
 			l.channels[channel.channel_id] = channel
 			channel.cnd.Broadcast()
 
+		case cmd := <-l.snd_open_chan:
+			l.snd_open_pkt(cmd.netpath)
+
 		case cmd := <-l.rcv_open_chan:
 			l.rcv_open_pkt(cmd)
 
@@ -433,6 +456,7 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 
 	// send pkt to existing channel
 	if channel := l.channels[ipkt.hdr.C]; channel != nil {
+		l.peer.AddNetPath(ipkt.netpath)
 		l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 		return channel.push_rcv_pkt(ipkt)
 	}
@@ -468,6 +492,7 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		return err
 	}
 
+	l.peer.AddNetPath(ipkt.netpath)
 	go channel.run_user_handler()
 
 	return nil
@@ -541,11 +566,15 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	return nil
 }
 
-func (l *line_t) snd_open_pkt() error {
+func (l *line_t) snd_open_pkt(np NetPath) error {
 	var (
 		local_rsa_key = l.sw.key
 		netpaths      = l.peer.NetPaths()
 	)
+
+	if np.IP != nil {
+		netpaths = []NetPath{np}
+	}
 
 	if l.peer.Hashname().IsZero() {
 		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
@@ -612,6 +641,7 @@ func (l *line_t) teardown() {
 func (l *line_t) flush() {
 	for {
 		select {
+		case <-l.snd_open_chan:
 		case <-l.rcv_open_chan:
 		case <-l.rcv_line_chan:
 		case <-l.shutdown:

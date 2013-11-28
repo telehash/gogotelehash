@@ -316,6 +316,7 @@ func (c *main_controller) get_line(cmd cmd_line_get) {
 			goto EXIT
 		}
 
+		c.log.Noticef("can open line to %s %v %#v", peer, peer.CanOpen(), peer)
 		if peer.CanOpen() {
 			line = &line_t{}
 			line.Init(c.sw, peer)

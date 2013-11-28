@@ -121,14 +121,17 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 
 	peer.SetPublicKey(pubkey)
 
-	peer.AddNetPath(NetPath{
+	netpath := NetPath{
 		Flags: net.FlagMulticast | net.FlagBroadcast,
 		IP:    ip,
 		Port:  pkt.hdr.Port,
-	})
+	}
+
+	peer.AddNetPath(netpath)
 
 	h.log.Noticef("received connect-cmd: peer=%s", peer)
 
 	line := h.sw.main.GetLine(peer.Hashname())
 	line.EnsureRunning()
+	line.SndOpen(netpath)
 }
