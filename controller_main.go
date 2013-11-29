@@ -292,7 +292,7 @@ func (c *main_controller) unregister_line(line *line_t) {
 }
 
 func (c *main_controller) add_peer(cmd cmd_peer_add) {
-	peer, disc := c.peers.add_peer(cmd.hashname)
+	peer, disc := c.peers.add_peer(c.sw, cmd.hashname)
 
 	if disc {
 		c.log.Noticef("discovered: %s (add_peer)", peer)

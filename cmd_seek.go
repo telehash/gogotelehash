@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/fd/go-util/log"
 	"net"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -68,13 +67,9 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		ip := net.ParseIP(ip_str)
-		if ip == nil {
-			continue
-		}
-
-		port, err := strconv.Atoi(port_str)
+		netpath, err := ParseIPNetPath(net.JoinHostPort(ip_str, port_str))
 		if err != nil {
+			h.log.Debugf("error: %s", "invalid address")
 			continue
 		}
 
@@ -92,11 +87,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 		peer.AddVia(via)
 
-		peer.AddNetPath(NetPath{
-			Flags: net.FlagMulticast | net.FlagBroadcast,
-			IP:    ip,
-			Port:  port,
-		})
+		peer.AddNetPath(netpath)
 
 		h.sw.main.GetLine(peer.Hashname())
 	}

@@ -197,8 +197,10 @@ func (c *channel_t) _snd_pkt_err() error {
 // called by the peer code
 func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 	var (
-		buf_idx int = -1
-		err     error
+		buf_idx      int = -1
+		err          error
+		new_readable bool
+		unlock_send  bool
 	)
 
 	c.mtx.Lock()
@@ -206,7 +208,7 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 
 	if pkt.hdr.Ack.IsSet() {
 		// handle ack
-		c._rcv_ack(pkt)
+		unlock_send = c._rcv_ack(pkt)
 	}
 
 	if !pkt.hdr.Seq.IsSet() {
@@ -286,15 +288,19 @@ func (c *channel_t) push_rcv_pkt(pkt *pkt_t) error {
 
 	c._update_miss_list()
 
+	new_readable = c.read_last_seq.Incr() == pkt.hdr.Seq
+
 EXIT:
 
 	// state changed
-	c.cnd.Broadcast()
+	if new_readable || unlock_send {
+		c.cnd.Broadcast()
+	}
 
 	return err
 }
 
-func (c *channel_t) _rcv_ack(pkt *pkt_t) {
+func (c *channel_t) _rcv_ack(pkt *pkt_t) (unlock bool) {
 	if pkt.hdr.Ack > c.rcv_last_ack {
 		c.rcv_last_ack = pkt.hdr.Ack
 	}
@@ -319,10 +325,15 @@ func (c *channel_t) _rcv_ack(pkt *pkt_t) {
 		// other wise drop
 	}
 
+	if c.snd_inflight == 100 && len(snd_buf) < 100 {
+		unlock = true
+	}
+
 	c.rcv_last_ack_at = time.Now()
 	c.snd_inflight = len(snd_buf)
 
 	c.snd_buf = snd_buf
+	return unlock
 }
 
 func (c *channel_t) _update_miss_list() {

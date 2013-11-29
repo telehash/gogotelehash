@@ -34,6 +34,7 @@ type pkt_hdr_t struct {
 	Peer   string          `json:"peer,omitempty"`
 	IP     string          `json:"ip,omitempty"`
 	Port   int             `json:"port,omitempty"`
+	Relay  bool            `json:"relay,omitempty"`
 	Custom json.RawMessage `json:"_,omitempty"`
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"github.com/fd/go-util/log"
 	"io"
-	"net"
 )
 
 type Switch struct {
@@ -85,18 +84,14 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		return ZeroHashname, err
 	}
 
-	udp, err := net.ResolveUDPAddr("udp", addr)
+	netpath, err := ParseIPNetPath(addr)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
 	peer, _ := s.main.AddPeer(hashname)
 	peer.SetPublicKey(key)
-	peer.AddNetPath(NetPath{
-		Flags: net.FlagMulticast | net.FlagBroadcast,
-		IP:    udp.IP,
-		Port:  udp.Port,
-	})
+	peer.AddNetPath(netpath)
 
 	s.main.GetLine(peer.Hashname())
 

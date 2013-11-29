@@ -238,7 +238,7 @@ func (l *line_t) run_peer_loop() {
 			l.snd_open_pkt(cmd.netpath)
 
 		case <-timeout.C:
-			if l.snd_open_pkt(NetPath{}) != nil {
+			if l.snd_open_pkt(nil) != nil {
 				l.sw.net.send_nat_breaker(l.peer)
 			}
 			timeout.Reset(timeout_d)
@@ -278,7 +278,7 @@ func (l *line_t) run_open_loop() {
 			l.snd_open_pkt(cmd.netpath)
 
 		case <-timeout.C:
-			if l.handle_err(l.snd_open_pkt(NetPath{})) {
+			if l.handle_err(l.snd_open_pkt(nil)) {
 				send_open = true
 			}
 			timeout.Reset(timeout_d)
@@ -507,10 +507,7 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 		return err
 	}
 
-	pkt.peer = l.peer
-	pkt.netpath = cmd.pkt.netpath
-
-	err = l.sw.net.snd_pkt(pkt)
+	err = l.peer.packet_sender().Send(l.sw, pkt)
 	if err != nil {
 		if cmd.reply != nil {
 			cmd.reply <- err
@@ -572,7 +569,7 @@ func (l *line_t) snd_open_pkt(np NetPath) error {
 		netpaths      = l.peer.NetPaths()
 	)
 
-	if np.IP != nil {
+	if np != nil {
 		netpaths = []NetPath{np}
 	}
 
@@ -605,7 +602,7 @@ func (l *line_t) snd_open_pkt(np NetPath) error {
 		pkt.netpath = np
 		pkt.peer = l.peer
 
-		err = l.sw.net.snd_pkt(pkt)
+		err = np.packet_sender().Send(l.sw, pkt)
 		if err != nil {
 			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 		} else {

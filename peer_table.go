@@ -11,14 +11,14 @@ func (c *peer_table) Init(local_hashname Hashname) {
 	c.buckets = make([][]*Peer, 32*8)
 }
 
-func (c *peer_table) add_peer(hashname Hashname) (peer *Peer, discovered bool) {
+func (c *peer_table) add_peer(sw *Switch, hashname Hashname) (peer *Peer, discovered bool) {
 	peer = c.get_peer(hashname)
 
 	if peer == nil {
 		c.num_peers++
 
 		// make new peer
-		peer = make_peer(hashname)
+		peer = make_peer(sw, hashname)
 
 		// determine bucket for HN
 		bucket := kad_bucket_for(c.local_hashname, peer.Hashname())

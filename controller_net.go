@@ -105,11 +105,7 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	// c.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
 
 	// unpack the outer packet
-	netpath := NetPath{
-		Flags: net.FlagMulticast | net.FlagBroadcast,
-		IP:    addr.IP,
-		Port:  addr.Port,
-	}
+	netpath := NetPathFromAddr(addr)
 	pkt, err = parse_pkt(buf, nil, netpath)
 	if err != nil {
 		atomic.AddUint64(&c.num_err_pkt_rcv, 1)
@@ -157,57 +153,9 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	return errInvalidPkt
 }
 
-func (c *net_controller) snd_pkt(pkt *pkt_t) error {
-	var (
-		data     []byte
-		err      error
-		udp_addr net.UDPAddr
-	)
-
-	if EqualNetPaths(pkt.netpath, NetPath{}) {
-		if paths := pkt.peer.NetPaths(); len(paths) > 0 {
-			pkt.netpath = paths[0]
-		}
-	}
-
-	pkt.netpath.ToUDPAddr(&udp_addr)
-
-	c.log.Debugf("snd pkt: addr=%s hdr=%+v",
-		udp_addr, pkt.hdr)
-
-	// marshal the packet
-	data, err = pkt.format_pkt()
-	if err != nil {
-		atomic.AddUint64(&c.num_err_pkt_snd, 1)
-		return err
-	}
-
-	// send the packet
-	err = _net_conn_write(c.conn, &udp_addr, data)
-	if err != nil {
-		atomic.AddUint64(&c.num_err_pkt_snd, 1)
-		return err
-	} else {
-		atomic.AddUint64(&c.num_pkt_snd, 1)
-	}
-
-	return nil
-}
-
 func (c *net_controller) send_nat_breaker(peer *Peer) {
-	var (
-		udp net.UDPAddr
-	)
-
 	for _, np := range peer.NetPaths() {
-		np.ToUDPAddr(&udp)
-
-		err := _net_conn_write(c.conn, &udp, []byte("hello"))
-		if err != nil {
-			atomic.AddUint64(&c.num_err_pkt_snd, 1)
-		} else {
-			atomic.AddUint64(&c.num_pkt_snd, 1)
-		}
+		np.packet_sender().Send(c.sw, nat_breaker_pkt)
 	}
 }
 

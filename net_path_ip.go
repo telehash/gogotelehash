@@ -1,7 +1,9 @@
 package telehash
 
 import (
+	"bytes"
 	"net"
+	"sync/atomic"
 )
 
 func ParseIPNetPath(str string) (NetPath, error) {
@@ -28,7 +30,6 @@ func NetPathFromAddr(addri net.Addr) NetPath {
 	switch addr := addri.(type) {
 	case *net.IPNet:
 		ip = addr.IP
-		zone = addr.Zone
 	case *net.IPAddr:
 		ip = addr.IP
 		zone = addr.Zone
@@ -51,9 +52,9 @@ func NetPathFromAddr(addri net.Addr) NetPath {
 	}
 
 	if is_ipv4(ip) {
-		return &IPv4NetPath{cat, ip, port}
+		return &IPv4NetPath{cat, ip, port, 0}
 	} else {
-		return &IPv6NetPath{cat, ip, zone, port}
+		return &IPv6NetPath{cat, ip, zone, port, 0}
 	}
 }
 
@@ -77,9 +78,9 @@ func (c ip_addr_category) String() string {
 	return ip_addr_category_strings[c]
 }
 
-func get_network_paths() ([]IPv4NetPath, error) {
+func get_network_paths() ([]NetPath, error) {
 	var (
-		nets []IPv4NetPath
+		nets []NetPath
 	)
 
 	ifaces, err := net.Interfaces()
@@ -97,36 +98,8 @@ func get_network_paths() ([]IPv4NetPath, error) {
 			return nil, err
 		}
 
-		for _, addri := range addrs {
-			var (
-				ip   net.IP
-				zone string
-				cat  ip_addr_category
-			)
-
-			switch addr := addri.(type) {
-			case *net.IPNet:
-				ip = addr.IP
-				zone = addr.Zone
-			case *net.IPAddr:
-				ip = addr.IP
-				zone = addr.Zone
-			}
-
-			if iface.Flags & net.FlagLoopback {
-				cat = ip_localhost
-			} else if is_lan_ip(ip) {
-				cat = ip_lan
-			} else {
-				cat = ip_wan
-			}
-
-			if is_ipv4(ip) {
-				nets = append(nets, &IPv4NetPath{cat, ip, 0})
-			} else {
-				nets = append(nets, &IPv6NetPath{cat, ip, zone, 0})
-			}
-
+		for _, addr := range addrs {
+			nets = append(nets, NetPathFromAddr(addr))
 		}
 	}
 
@@ -150,7 +123,6 @@ var lan_ranges = []net.IPNet{
 	{net.IPv4(172, 16, 0, 0), net.CIDRMask(12, 32)},
 	{net.IPv4(192, 168, 0, 0), net.CIDRMask(16, 32)},
 	{net.IP{0xfc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, net.CIDRMask(7, 128)},
-	{net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, net.CIDRMask(10, 128)},
 }
 
 func is_lan_ip(ip net.IP) bool {
@@ -166,7 +138,6 @@ func is_lan_ip(ip net.IP) bool {
 var local_ranges = []net.IPNet{
 	{net.IPv4(127, 0, 0, 0), net.CIDRMask(8, 32)},
 	{net.IP{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01}, net.CIDRMask(128, 128)},
-	{net.IP{0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, net.CIDRMask(64, 128)},
 }
 
 func is_local_ip(ip net.IP) bool {
@@ -177,4 +148,50 @@ func is_local_ip(ip net.IP) bool {
 	}
 
 	return false
+}
+
+var nat_breaker_pkt = &pkt_t{}
+
+type ip_packet_sender struct {
+	addr *net.UDPAddr
+}
+
+func (ps *ip_packet_sender) Send(sw *Switch, pkt *pkt_t) error {
+	var (
+		c    = sw.net
+		data []byte
+		err  error
+	)
+
+	if pkt == nat_breaker_pkt {
+		err = _net_conn_write(c.conn, ps.addr, []byte("hello"))
+		if err != nil {
+			atomic.AddUint64(&c.num_err_pkt_snd, 1)
+		} else {
+			atomic.AddUint64(&c.num_pkt_snd, 1)
+		}
+
+	} else {
+		c.log.Debugf("snd pkt: addr=%s hdr=%+v",
+			ps.addr, pkt.hdr)
+
+		// marshal the packet
+		data, err = pkt.format_pkt()
+		if err != nil {
+			atomic.AddUint64(&c.num_err_pkt_snd, 1)
+			return err
+		}
+
+		// send the packet
+		err = _net_conn_write(c.conn, ps.addr, data)
+		if err != nil {
+			atomic.AddUint64(&c.num_err_pkt_snd, 1)
+			return err
+		} else {
+			atomic.AddUint64(&c.num_pkt_snd, 1)
+		}
+
+	}
+
+	return nil
 }

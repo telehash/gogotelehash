@@ -7,15 +7,17 @@ import (
 )
 
 type Peer struct {
-	hashname Hashname
-	paths    []NetPath
-	pubkey   *rsa.PublicKey
-	is_down  bool
-	via      map[Hashname]bool
-	mtx      sync.RWMutex
+	sw         *Switch
+	hashname   Hashname
+	paths      []NetPath
+	pubkey     *rsa.PublicKey
+	is_down    bool
+	via        map[Hashname]bool
+	pkt_sender packet_sender
+	mtx        sync.RWMutex
 }
 
-func make_peer(hashname Hashname) *Peer {
+func make_peer(sw *Switch, hashname Hashname) *Peer {
 	peer := &Peer{
 		hashname: hashname,
 		via:      make(map[Hashname]bool),
@@ -86,13 +88,13 @@ func (p *Peer) AddNetPath(netpath NetPath) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
-	found := false
-	y := 0
+	var (
+		found = false
+		y     = 0
+	)
 
 	for i, np := range p.paths {
 		if EqualNetPaths(np, netpath) {
-			np = np.update(netpath)
-			p.paths[i] = np
 			found = true
 			y = i
 			break
@@ -102,11 +104,22 @@ func (p *Peer) AddNetPath(netpath NetPath) {
 	if !found {
 		y = len(p.paths)
 		p.paths = append(p.paths, netpath)
+		if y == 0 {
+			p.pkt_sender = p.paths[0].packet_sender()
+		}
 	}
 
 	if y != 0 {
 		p.paths[0], p.paths[y] = p.paths[y], p.paths[0]
+		p.pkt_sender = p.paths[0].packet_sender()
 	}
+}
+
+func (p *Peer) packet_sender() packet_sender {
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	return p.pkt_sender
 }
 
 func (p *Peer) CanOpen() bool {

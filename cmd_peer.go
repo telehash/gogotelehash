@@ -3,6 +3,7 @@ package telehash
 import (
 	"github.com/fd/go-util/log"
 	"net"
+	"strconv"
 )
 
 type peer_handler struct {
@@ -77,17 +78,20 @@ func (h *peer_handler) serve_peer(channel *channel_t) {
 	h.log.Noticef("received peer-cmd: from=%s to=%s", from_peer.Hashname().Short(), peer_hashname.Short())
 
 	for _, np := range from_peer.NetPaths() {
-		_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
-			hdr: pkt_hdr_t{
-				Type: "connect",
-				IP:   np.IP.String(),
-				Port: np.Port,
-				End:  true,
-			},
-			body: pubkey,
-		}, true)
-		if err != nil {
-			h.log.Debugf("peer:connect err=%s", err)
+		if ip, port, ok := np.AddressForPeer(); ok {
+			_, err = h.sw.main.OpenChannel(peer_hashname, &pkt_t{
+				hdr: pkt_hdr_t{
+					Type:  "connect",
+					IP:    ip,
+					Port:  port,
+					Relay: pkt.hdr.Relay,
+					End:   true,
+				},
+				body: pubkey,
+			}, true)
+			if err != nil {
+				h.log.Debugf("peer:connect err=%s", err)
+			}
 		}
 	}
 }
@@ -111,22 +115,15 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 		return
 	}
 
-	ip := net.ParseIP(pkt.hdr.IP)
+	netpath, err := ParseIPNetPath(net.JoinHostPort(pkt.hdr.IP, strconv.Itoa(pkt.hdr.Port)))
 	if err != nil {
-		h.log.Debugf("error: %s", "invalid IP address")
+		h.log.Debugf("error: %s", "invalid address")
 		return
 	}
 
 	peer, _ := h.sw.main.AddPeer(hashname)
 
 	peer.SetPublicKey(pubkey)
-
-	netpath := NetPath{
-		Flags: net.FlagMulticast | net.FlagBroadcast,
-		IP:    ip,
-		Port:  pkt.hdr.Port,
-	}
-
 	peer.AddNetPath(netpath)
 
 	h.log.Noticef("received connect-cmd: peer=%s", peer)
