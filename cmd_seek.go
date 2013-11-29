@@ -191,11 +191,9 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 		}
 
 		for _, np := range peer.NetPaths() {
-			see = append(see, fmt.Sprintf("%s,%s,%d",
-				peer.Hashname(),
-				np.IP,
-				np.Port,
-			))
+			if ip, port, ok := np.AddressForSeek(); ok {
+				see = append(see, fmt.Sprintf("%s,%s,%d", peer.Hashname(), ip, port))
+			}
 		}
 	}
 
