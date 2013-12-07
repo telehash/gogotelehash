@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/telehash/gogotelehash"
+	"io/ioutil"
 	"os"
 	"os/signal"
 	"runtime"
@@ -23,6 +24,7 @@ func main() {
 	app.Flags = []cli.Flag{
 		cli.IntFlag{"port, p", 0, "The port to bind to."},
 		cli.StringFlag{"seed, s", "", "The Seed file."},
+		cli.StringFlag{"rsa-key", "", "The RSA private key."},
 	}
 	app.Commands = []cli.Command{
 		{
@@ -39,6 +41,7 @@ func run(c *cli.Context) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
+		key_file  = c.GlobalString("rsa-key")
 		seed_file = c.GlobalString("seed")
 		port      = c.GlobalInt("port")
 		key       *rsa.PrivateKey
@@ -50,14 +53,20 @@ func run(c *cli.Context) {
 		port = 45454
 	}
 
-	key, err = rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		fmt.Printf("error: failed to generate a random key\n  %s\n", err)
+	if key_file == "" {
+		key, err = rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			fmt.Printf("error: failed to generate a random key\n  %s\n", err)
+			os.Exit(2)
+		}
+	} else {
+		key = read_private_key(key_file)
 	}
 
 	sw, err = telehash.NewSwitch(fmt.Sprintf("0.0.0.0:%d", port), key, nil)
 	if err != nil {
 		fmt.Printf("error: failed start switch\n  %s\n", err)
+		os.Exit(2)
 	}
 
 	sw.AllowRelay = false
@@ -65,9 +74,11 @@ func run(c *cli.Context) {
 	err = sw.Start()
 	if err != nil {
 		fmt.Printf("error: failed start switch\n  %s\n", err)
+		os.Exit(2)
 	}
 
-	fmt.Printf("⚡ Staring switch on 0.0.0.0:%d\n", port)
+	fmt.Printf("\x1B[33m⚡ Starting switch on 0.0.0.0:%d\x1B[0m\n", port)
+	fmt.Printf("\x1B[33m⚡ Seed with:\x1B[0m\n%s\n", make_seed_list("0.0.0.0", port, &key.PublicKey))
 
 	go func() {
 		if seed_file != "" {
@@ -77,7 +88,7 @@ func run(c *cli.Context) {
 					fmt.Printf("error: failed to seed switch with %s\n  %s\n", hn.Short(), err)
 					continue
 				}
-				fmt.Printf("⚡ Seeded switch with %s\n", hn.Short())
+				fmt.Printf("\x1B[33m⚡ Seeded switch with %s\x1B[0m\n", hn.Short())
 			}
 		}
 	}()
@@ -87,7 +98,10 @@ func run(c *cli.Context) {
 	err = sw.Stop()
 	if err != nil {
 		fmt.Printf("error: while terminating\n  %s\n", err)
+		os.Exit(2)
 	}
+
+	fmt.Println("\r\x1B[2K\x1B[33m⚡ Goodbye\x1B[0m")
 }
 
 func wait_for_signal() {
@@ -95,10 +109,10 @@ func wait_for_signal() {
 	signal.Notify(c, syscall.SIGTERM, syscall.SIGINT)
 	<-c
 
-	fmt.Println("\nreceined shutdown signal")
+	fmt.Println("\r\x1B[2K\x1B[33m⚡ Received shutdown signal\x1B[0m")
 
 	time.AfterFunc(5*time.Second, func() {
-		fmt.Println("unable to shutdown garcefully")
+		fmt.Println("\r\x1B[2K\x1B[31m⚡ Unable to shutdown garcefully\x1B[0m")
 		os.Exit(3)
 	})
 }
@@ -134,7 +148,7 @@ func read_seed_file(fn string) []*SeedEntry {
 		pem_block, _ := pem.Decode([]byte(e.Pubkey))
 
 		if pem_block.Type != "PUBLIC KEY" {
-			fmt.Printf("error: failed to parse public key\n  %s\n", err)
+			fmt.Printf("error: failed to parse public key\n  no public key found\n")
 			os.Exit(4)
 		}
 
@@ -154,4 +168,52 @@ func read_seed_file(fn string) []*SeedEntry {
 	}
 
 	return list
+}
+
+func read_private_key(fn string) *rsa.PrivateKey {
+	data, err := ioutil.ReadFile(fn)
+	if err != nil {
+		fmt.Printf("error: failed to read key file\n  %s\n", err)
+		os.Exit(4)
+	}
+
+	block, _ := pem.Decode(data)
+	if block.Type != "RSA PRIVATE KEY" {
+		fmt.Printf("error: failed to parse key file\n  no private key found\n")
+		os.Exit(4)
+	}
+	if x509.IsEncryptedPEMBlock(block) {
+		fmt.Printf("error: failed to parse key file\n  encrypte PEM blocks are not supported\n")
+		os.Exit(4)
+	}
+
+	key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		fmt.Printf("error: failed to parse key file\n  %s\n", err)
+		os.Exit(4)
+	}
+
+	return key
+}
+
+func make_seed_list(ip string, port int, key *rsa.PublicKey) []byte {
+	var (
+		seeds [1]SeedEntry
+	)
+
+	der, err := x509.MarshalPKIXPublicKey(key)
+	if err != nil {
+		panic(err)
+	}
+
+	seeds[0].IP = ip
+	seeds[0].Port = port
+	seeds[0].Pubkey = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+
+	data, err := json.MarshalIndent(seeds, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+
+	return data
 }
