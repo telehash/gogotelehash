@@ -429,18 +429,18 @@ func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname)
 }
 
 func (l *line_t) snd_ping(broken_chan chan<- time.Time, ping_timer *time.Timer) {
-	for i := 0; i < 3; i++ {
-		if l.sw.ping_handler.Ping(l.peer.Hashname()) {
-			ping_timer.Reset(1 * time.Second)
-			return
-		}
-	}
+	// for i := 0; i < 3; i++ {
+	//   if l.sw.ping_handler.Ping(l.peer.Hashname()) {
+	//     ping_timer.Reset(1 * time.Second)
+	//     return
+	//   }
+	// }
 
-	func() {
-		defer func() { recover() }()
-		broken_chan <- time.Now()
-		l.log.Noticef("ping failed (breaking the line)")
-	}()
+	// func() {
+	//   defer func() { recover() }()
+	//   broken_chan <- time.Now()
+	//   l.log.Noticef("ping failed (breaking the line)")
+	// }()
 }
 
 func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
