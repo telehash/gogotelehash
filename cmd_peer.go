@@ -11,7 +11,7 @@ type peer_handler struct {
 	log log.Logger
 }
 
-func (h *peer_handler) init_peer_handler(sw *Switch) {
+func (h *peer_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "peer-handler")
 

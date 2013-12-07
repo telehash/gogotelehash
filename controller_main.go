@@ -151,6 +151,47 @@ func (c *main_controller) Close() {
 	c.wg.Wait()
 }
 
+func (c *main_controller) RcvPkt(pkt *pkt_t) error {
+	var (
+		reply = make(chan *line_t)
+	)
+
+	if pkt.hdr.Type == "line" {
+		c.get_active_line_chan <- cmd_line_get_active{pkt.hdr.Line, reply}
+		line := <-reply
+
+		if line == nil {
+			return errUnknownLine
+		}
+
+		line.RcvLine(pkt)
+		return nil
+	}
+
+	if pkt.hdr.Type == "open" {
+		pub, err := decompose_open_pkt(c.sw.key, pkt)
+		if err != nil {
+			return err
+		}
+
+		peer, _ := c.AddPeer(pub.hashname)
+		peer.AddNetPath(pkt.netpath)
+		peer.SetPublicKey(pub.rsa_pubkey)
+
+		c.get_line_chan <- cmd_line_get{peer.Hashname(), reply}
+		line := <-reply
+
+		if line == nil {
+			return errUnknownLine
+		}
+
+		line.RcvOpen(pub, pkt.netpath)
+		return nil
+	}
+
+	return errInvalidPkt
+}
+
 func (c *main_controller) run_main_loop() {
 	defer c.teardown()
 
@@ -316,7 +357,7 @@ func (c *main_controller) get_line(cmd cmd_line_get) {
 			goto EXIT
 		}
 
-		c.log.Noticef("can open line to %s %v %#v", peer, peer.CanOpen(), peer)
+		// c.log.Noticef("can open line to %s %v %#v", peer, peer.CanOpen(), peer)
 		if peer.CanOpen() {
 			line = &line_t{}
 			line.Init(c.sw, peer)

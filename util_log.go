@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var Log = log.Sub(log_level_for("ALL", log.FATAL), "telehash")
+var Log = log.Sub(log_level_for("ALL", log.FATAL), "⚡")
 
 func log_level_for(section string, def log.Level) log.Level {
 	switch os.Getenv("TH_LOG_" + section) {

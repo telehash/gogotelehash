@@ -10,7 +10,7 @@ type ping_handler struct {
 	log log.Logger
 }
 
-func (h *ping_handler) init_ping_handler(sw *Switch) {
+func (h *ping_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "ping-handler")
 

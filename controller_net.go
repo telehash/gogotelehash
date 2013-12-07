@@ -73,12 +73,11 @@ func (c *net_controller) _reader_loop() {
 	defer c.wg.Done()
 
 	var (
-		buf   = make([]byte, 16*1024)
-		reply = make(chan *line_t)
+		buf = make([]byte, 16*1024)
 	)
 
 	for {
-		err := c._read_pkt(buf, reply)
+		err := c._read_pkt(buf)
 		if err == ErrUDPConnClosed {
 			break
 		}
@@ -88,7 +87,7 @@ func (c *net_controller) _reader_loop() {
 	}
 }
 
-func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
+func (c *net_controller) _read_pkt(buf []byte) error {
 	var (
 		addr *net.UDPAddr
 		pkt  *pkt_t
@@ -102,8 +101,6 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 		return err
 	}
 
-	// c.log.Debugf("udp rcv pkt=(%d bytes)", len(buf))
-
 	// unpack the outer packet
 	netpath := NetPathFromAddr(addr)
 	pkt, err = parse_pkt(buf, nil, netpath)
@@ -115,47 +112,19 @@ func (c *net_controller) _read_pkt(buf []byte, reply chan *line_t) error {
 	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
 		pkt.netpath, pkt.hdr)
 
-	if pkt.hdr.Type == "line" {
-		c.sw.main.get_active_line_chan <- cmd_line_get_active{pkt.hdr.Line, reply}
-		if line := <-reply; line != nil {
-			atomic.AddUint64(&c.num_pkt_rcv, 1)
-			line.RcvLine(pkt)
-			return nil
-		} else {
-			atomic.AddUint64(&c.num_err_pkt_rcv, 1)
-			return errUnknownLine
-		}
+	err = c.sw.main.RcvPkt(pkt)
+	if err != nil {
+		atomic.AddUint64(&c.num_err_pkt_rcv, 1)
+		return err
 	}
 
-	if pkt.hdr.Type == "open" {
-		pub, err := decompose_open_pkt(c.sw.key, pkt)
-		if err != nil {
-			atomic.AddUint64(&c.num_err_pkt_rcv, 1)
-			return err
-		}
-
-		peer, _ := c.sw.main.AddPeer(pub.hashname)
-		peer.AddNetPath(pkt.netpath)
-		peer.SetPublicKey(pub.rsa_pubkey)
-
-		c.sw.main.get_line_chan <- cmd_line_get{peer.Hashname(), reply}
-		if line := <-reply; line != nil {
-			atomic.AddUint64(&c.num_pkt_rcv, 1)
-			line.RcvOpen(pub, pkt.netpath)
-			return nil
-		} else {
-			atomic.AddUint64(&c.num_err_pkt_rcv, 1)
-			return errUnknownLine
-		}
-	}
-
-	atomic.AddUint64(&c.num_err_pkt_rcv, 1)
-	return errInvalidPkt
+	atomic.AddUint64(&c.num_pkt_rcv, 1)
+	return nil
 }
 
 func (c *net_controller) send_nat_breaker(peer *Peer) {
 	for _, np := range peer.NetPaths() {
-		np.packet_sender().Send(c.sw, nat_breaker_pkt)
+		np.Send(c.sw, nat_breaker_pkt)
 	}
 }
 

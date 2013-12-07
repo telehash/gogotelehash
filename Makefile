@@ -5,6 +5,7 @@ build:
 examples:
 	go get -v './_examples/telehash-ping'
 	go get -v './_examples/telehash-seed'
+	go get -v './_examples/go-interop-test'
 
 test: build
 	go test -v '.'

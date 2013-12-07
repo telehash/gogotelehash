@@ -309,14 +309,15 @@ func (l *line_t) run_line_loop() {
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
 		seek_d         = 30 * time.Second
 		seek_timer     = time.NewTimer(1 * time.Millisecond)
-		ping_ticker    = time.NewTicker(1 * time.Second)
+		ping_d         = 1 * time.Second
+		ping_timer     = time.NewTimer(ping_d)
 	)
 
 	defer broken_timer.Stop()
 	defer idle_timer.Stop()
 	defer ack_ticker.Stop()
 	defer seek_timer.Stop()
-	defer ping_ticker.Stop()
+	defer ping_timer.Stop()
 	defer close(broken_chan)
 
 	l.open_retries = 3
@@ -380,8 +381,8 @@ func (l *line_t) run_line_loop() {
 			seek_timer.Reset(seek_d)
 			go l.snd_seek(broken_chan, local_hashname)
 
-		case <-ping_ticker.C:
-			go l.snd_ping(broken_chan)
+		case <-ping_timer.C:
+			go l.snd_ping(broken_chan, ping_timer)
 
 		case cmd := <-l.snd_chan:
 			if l.handle_err(l.snd_line_pkt(cmd)) {
@@ -427,9 +428,10 @@ func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname)
 	}()
 }
 
-func (l *line_t) snd_ping(broken_chan chan<- time.Time) {
+func (l *line_t) snd_ping(broken_chan chan<- time.Time, ping_timer *time.Timer) {
 	for i := 0; i < 3; i++ {
 		if l.sw.ping_handler.Ping(l.peer.Hashname()) {
+			ping_timer.Reset(1 * time.Second)
 			return
 		}
 	}
@@ -507,7 +509,7 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 		return err
 	}
 
-	err = l.peer.packet_sender().Send(l.sw, pkt)
+	err = l.peer.ActivePath().Send(l.sw, pkt)
 	if err != nil {
 		if cmd.reply != nil {
 			cmd.reply <- err
@@ -602,7 +604,7 @@ func (l *line_t) snd_open_pkt(np NetPath) error {
 		pkt.netpath = np
 		pkt.peer = l.peer
 
-		err = np.packet_sender().Send(l.sw, pkt)
+		err = np.Send(l.sw, pkt)
 		if err != nil {
 			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 		} else {

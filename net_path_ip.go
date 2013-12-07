@@ -152,11 +152,7 @@ func is_local_ip(ip net.IP) bool {
 
 var nat_breaker_pkt = &pkt_t{}
 
-type ip_packet_sender struct {
-	addr *net.UDPAddr
-}
-
-func (ps *ip_packet_sender) Send(sw *Switch, pkt *pkt_t) error {
+func ip_snd_pkt(sw *Switch, addr *net.UDPAddr, pkt *pkt_t) error {
 	var (
 		c    = sw.net
 		data []byte
@@ -164,7 +160,7 @@ func (ps *ip_packet_sender) Send(sw *Switch, pkt *pkt_t) error {
 	)
 
 	if pkt == nat_breaker_pkt {
-		err = _net_conn_write(c.conn, ps.addr, []byte("hello"))
+		err = _net_conn_write(c.conn, addr, []byte("hello"))
 		if err != nil {
 			atomic.AddUint64(&c.num_err_pkt_snd, 1)
 		} else {
@@ -173,7 +169,7 @@ func (ps *ip_packet_sender) Send(sw *Switch, pkt *pkt_t) error {
 
 	} else {
 		c.log.Debugf("snd pkt: addr=%s hdr=%+v",
-			ps.addr, pkt.hdr)
+			addr, pkt.hdr)
 
 		// marshal the packet
 		data, err = pkt.format_pkt()
@@ -183,7 +179,7 @@ func (ps *ip_packet_sender) Send(sw *Switch, pkt *pkt_t) error {
 		}
 
 		// send the packet
-		err = _net_conn_write(c.conn, ps.addr, data)
+		err = _net_conn_write(c.conn, addr, data)
 		if err != nil {
 			atomic.AddUint64(&c.num_err_pkt_snd, 1)
 			return err

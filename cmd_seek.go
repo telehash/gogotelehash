@@ -14,7 +14,7 @@ type seek_handler struct {
 	log log.Logger
 }
 
-func (h *seek_handler) init_seek_handler(sw *Switch) {
+func (h *seek_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "seek-handler")
 
@@ -88,6 +88,13 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		peer.AddVia(via)
 
 		peer.AddNetPath(netpath)
+
+		if h.sw.AllowRelay {
+			peer.AddNetPath(&relay_net_path{
+				to:  hashname,
+				via: via,
+			})
+		}
 
 		h.sw.main.GetLine(peer.Hashname())
 	}

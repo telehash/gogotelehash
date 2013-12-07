@@ -8,16 +8,18 @@ import (
 )
 
 type Switch struct {
-	main         *main_controller
-	net          *net_controller
-	peer_handler peer_handler
-	seek_handler seek_handler
-	ping_handler ping_handler
-	addr         string
-	hashname     Hashname
-	key          *rsa.PrivateKey
-	mux          *SwitchMux
-	log          log.Logger
+	AllowRelay    bool
+	main          *main_controller
+	net           *net_controller
+	peer_handler  peer_handler
+	seek_handler  seek_handler
+	ping_handler  ping_handler
+	relay_handler relay_handler
+	addr          string
+	hashname      Hashname
+	key           *rsa.PrivateKey
+	mux           *SwitchMux
+	log           log.Logger
 }
 
 type Channel struct {
@@ -42,11 +44,14 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 		hashname: hn,
 		mux:      mux,
 		log:      Log.Sub(log.DEFAULT, "switch["+addr+":"+hn.Short()+"]"),
+
+		AllowRelay: true,
 	}
 
-	s.peer_handler.init_peer_handler(s)
-	s.seek_handler.init_seek_handler(s)
-	s.ping_handler.init_ping_handler(s)
+	s.peer_handler.init(s)
+	s.seek_handler.init(s)
+	s.ping_handler.init(s)
+	s.relay_handler.init(s)
 
 	return s, nil
 }

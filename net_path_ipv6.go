@@ -51,6 +51,6 @@ func (n *IPv6NetPath) String() string {
 	return fmt.Sprintf("<net-ipv6 %s%%%s %s port=%d mtu=%d>", n.IP, n.Zone, n.cat, n.Port)
 }
 
-func (n *IPv6NetPath) packet_sender() packet_sender {
-	return &ip_packet_sender{&net.UDPAddr{IP: n.IP, Port: n.Port, Zone: n.Zone}}
+func (n *IPv6NetPath) Send(sw *Switch, pkt *pkt_t) error {
+	return ip_snd_pkt(sw, &net.UDPAddr{IP: n.IP, Port: n.Port}, pkt)
 }

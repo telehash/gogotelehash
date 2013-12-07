@@ -7,14 +7,13 @@ import (
 )
 
 type Peer struct {
-	sw         *Switch
-	hashname   Hashname
-	paths      []NetPath
-	pubkey     *rsa.PublicKey
-	is_down    bool
-	via        map[Hashname]bool
-	pkt_sender packet_sender
-	mtx        sync.RWMutex
+	sw       *Switch
+	hashname Hashname
+	paths    []NetPath
+	pubkey   *rsa.PublicKey
+	is_down  bool
+	via      map[Hashname]bool
+	mtx      sync.RWMutex
 }
 
 func make_peer(sw *Switch, hashname Hashname) *Peer {
@@ -104,22 +103,18 @@ func (p *Peer) AddNetPath(netpath NetPath) {
 	if !found {
 		y = len(p.paths)
 		p.paths = append(p.paths, netpath)
-		if y == 0 {
-			p.pkt_sender = p.paths[0].packet_sender()
-		}
 	}
 
 	if y != 0 {
 		p.paths[0], p.paths[y] = p.paths[y], p.paths[0]
-		p.pkt_sender = p.paths[0].packet_sender()
 	}
 }
 
-func (p *Peer) packet_sender() packet_sender {
+func (p *Peer) ActivePath() NetPath {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
-	return p.pkt_sender
+	return p.paths[0]
 }
 
 func (p *Peer) CanOpen() bool {
