@@ -83,7 +83,7 @@ func (p *Peer) NetPaths() []NetPath {
 	return paths
 }
 
-func (p *Peer) AddNetPath(netpath NetPath) {
+func (p *Peer) AddNetPath(netpath NetPath, activate bool) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
@@ -105,7 +105,7 @@ func (p *Peer) AddNetPath(netpath NetPath) {
 		p.paths = append(p.paths, netpath)
 	}
 
-	if y != 0 {
+	if y != 0 && activate {
 		p.paths[0], p.paths[y] = p.paths[y], p.paths[0]
 	}
 }

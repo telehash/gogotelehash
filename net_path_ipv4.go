@@ -39,17 +39,18 @@ func (n *IPv4NetPath) Hash() uint32 {
 }
 
 func (n *IPv4NetPath) AddressForSeek() (string, int, bool) {
-	if n.cat != ip_wan {
-		return "", 0, false
+	if n.cat == ip_wan {
+		return n.IP.String(), n.Port, true
 	}
-	return n.IP.String(), n.Port, true
+	return "", 0, false
 }
 
 func (n *IPv4NetPath) AddressForPeer() (string, int, bool) {
-	if n.cat != ip_wan {
-		return "", 0, false
-	}
 	return n.IP.String(), n.Port, true
+}
+
+func (n *IPv4NetPath) SendNatBreaker() bool {
+	return n.cat == ip_wan
 }
 
 func (n *IPv4NetPath) String() string {

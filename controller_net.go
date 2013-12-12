@@ -17,6 +17,7 @@ type net_controller struct {
 	conn *net.UDPConn
 	wg   sync.WaitGroup
 	log  log.Logger
+	deny map[string]bool
 
 	num_pkt_snd     uint64
 	num_pkt_rcv     uint64
@@ -39,6 +40,7 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 		sw:   sw,
 		conn: upd_conn,
 		log:  sw.log.Sub(log_level_for("NET", log.DEFAULT), "net"),
+		deny: make(map[string]bool),
 	}
 
 	for i := 0; i < runtime.NumCPU(); i++ {
@@ -67,6 +69,10 @@ func (c *net_controller) PopulateStats(s *SwitchStats) {
 func (c *net_controller) close() {
 	c.conn.Close()
 	c.wg.Wait()
+}
+
+func (c *net_controller) deny_from_net(addr string) {
+	c.deny[addr] = true
 }
 
 func (c *net_controller) _reader_loop() {
@@ -101,6 +107,10 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 		return err
 	}
 
+	if c.deny[addr.String()] {
+		return nil
+	}
+
 	// unpack the outer packet
 	netpath := NetPathFromAddr(addr)
 	pkt, err = parse_pkt(buf, nil, netpath)
@@ -124,7 +134,9 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 
 func (c *net_controller) send_nat_breaker(peer *Peer) {
 	for _, np := range peer.NetPaths() {
-		np.Send(c.sw, nat_breaker_pkt)
+		if np.SendNatBreaker() {
+			np.Send(c.sw, nat_breaker_pkt)
+		}
 	}
 }
 

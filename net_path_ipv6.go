@@ -40,11 +40,18 @@ func (n *IPv6NetPath) Hash() uint32 {
 }
 
 func (n *IPv6NetPath) AddressForSeek() (string, int, bool) {
-	return "", 0, false // no IPv6 for now
+	if n.cat == ip_wan {
+		return n.IP.String(), n.Port, true
+	}
+	return "", 0, false
 }
 
 func (n *IPv6NetPath) AddressForPeer() (string, int, bool) {
 	return "", 0, false // no IPv6 for now
+}
+
+func (n *IPv6NetPath) SendNatBreaker() bool {
+	return n.cat == ip_wan
 }
 
 func (n *IPv6NetPath) String() string {

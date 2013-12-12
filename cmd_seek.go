@@ -87,13 +87,13 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 		peer.AddVia(via)
 
-		peer.AddNetPath(netpath)
+		peer.AddNetPath(netpath, false)
 
 		if h.sw.AllowRelay {
 			peer.AddNetPath(&relay_net_path{
 				to:  hashname,
 				via: via,
-			})
+			}, false)
 		}
 
 		h.sw.main.GetLine(peer.Hashname())
@@ -188,6 +188,7 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 			continue
 		}
 
+		h.log.Infof("netpaths for %s: %+v", peer, peer.NetPaths())
 		for _, np := range peer.NetPaths() {
 			if ip, port, ok := np.AddressForSeek(); ok {
 				see = append(see, fmt.Sprintf("%s,%s,%d", peer.Hashname(), ip, port))

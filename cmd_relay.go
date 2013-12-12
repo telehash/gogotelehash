@@ -43,7 +43,7 @@ func (h *relay_handler) serve(channel *channel_t) {
 		h.log.Noticef("error: %s", err)
 		return
 	}
-	h.log.Noticef("rcv: %+v", pkt.hdr)
+	h.log.Debugf("rcv: %+v %q", pkt.hdr, pkt.body)
 
 	to, err := HashnameFromString(pkt.hdr.To)
 	if err != nil {
@@ -63,46 +63,29 @@ func (h *relay_handler) serve(channel *channel_t) {
 func (h *relay_handler) serve_self(channel *channel_t, opkt *pkt_t) {
 	netpath := &relay_net_path{ZeroHashname, ZeroHashname, channel, 0}
 
-	if len(opkt.body) >= 4 {
-		ipkt, err := parse_pkt(opkt.body, nil, netpath)
-		if err != nil {
-			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-			h.log.Noticef("error: %s", err)
-			return
-		}
-
-		err = h.sw.main.RcvPkt(ipkt)
-		if err != nil {
-			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-			h.log.Noticef("error: %s", err)
-			return
-		}
-
-		atomic.AddUint64(&h.num_pkt_rcv, 1)
-	}
-
 	for {
 		opkt, err := channel.pop_rcv_pkt()
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-			h.log.Noticef("error: %s", err)
+			h.log.Noticef("error: %s opkt=%+v", err, opkt)
 			return
 		}
-		h.log.Noticef("rcv: %+v", opkt.hdr)
+		opkt.hdr.Seq.Clear()
+		h.log.Debugf("rcv: %+v %q", opkt.hdr, opkt.body)
 
 		if len(opkt.body) >= 4 {
 			ipkt, err := parse_pkt(opkt.body, nil, netpath)
 			if err != nil {
 				atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-				h.log.Noticef("error: %s", err)
-				return
+				h.log.Noticef("error: %s opkt=%+v", err, opkt)
+				continue
 			}
 
 			err = h.sw.main.RcvPkt(ipkt)
 			if err != nil {
 				atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-				h.log.Noticef("error: %s", err)
-				return
+				h.log.Noticef("error: %s ipkt=%+v", err, ipkt)
+				continue
 			}
 
 			atomic.AddUint64(&h.num_pkt_rcv, 1)
@@ -111,6 +94,7 @@ func (h *relay_handler) serve_self(channel *channel_t, opkt *pkt_t) {
 }
 
 func (h *relay_handler) serve_other(a *channel_t, opkt *pkt_t, to Hashname) {
+	opkt.hdr.Seq.Clear()
 	b, err := h.sw.main.OpenChannel(to, opkt, true)
 	if err != nil {
 		atomic.AddUint64(&h.num_err_pkt_snd, 1)
@@ -159,7 +143,7 @@ func (h *relay_handler) copy(dst, src *channel_t, break_chan chan bool) {
 			break_chan <- true
 			return
 		}
-		h.log.Noticef("rcv: %+v", opkt.hdr)
+		h.log.Debugf("rcv: %+v %q", opkt.hdr, opkt.body)
 
 		if time.Now().Sub(tick) > time.Second {
 			tick = time.Now()
@@ -171,6 +155,7 @@ func (h *relay_handler) copy(dst, src *channel_t, break_chan chan bool) {
 			continue // drop
 		}
 
+		opkt.hdr.Seq.Clear()
 		err = dst.snd_pkt(opkt)
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rly, 1)
@@ -211,6 +196,14 @@ func (n *relay_net_path) AddressForPeer() (ip string, port int, ok bool) {
 	return "", 0, false
 }
 
+func (n *relay_net_path) SendNatBreaker() bool {
+	return false
+}
+
+func (n *relay_net_path) String() string {
+	return "<net-relay>"
+}
+
 func (n *relay_net_path) Send(sw *Switch, pkt *pkt_t) error {
 	data, err := pkt.format_pkt()
 	if err != nil {
@@ -219,19 +212,8 @@ func (n *relay_net_path) Send(sw *Switch, pkt *pkt_t) error {
 		return err
 	}
 
-	if n.channel != nil {
-		err = n.channel.snd_pkt(&pkt_t{body: data})
-		if err != nil {
-			atomic.AddUint64(&sw.relay_handler.num_err_pkt_snd, 1)
-			sw.relay_handler.log.Noticef("error: %s", err)
-			n.channel = nil
-			return err
-		}
-
-		atomic.AddUint64(&sw.relay_handler.num_pkt_snd, 1)
-		return nil
-	} else {
-		c, err := sw.main.OpenChannel(n.via, &pkt_t{hdr: pkt_hdr_t{Type: "relay", To: n.to.String()}, body: data}, true)
+	if n.channel == nil {
+		c, err := sw.main.OpenChannel(n.via, &pkt_t{hdr: pkt_hdr_t{Type: "relay", To: n.to.String()}}, true)
 		if err != nil {
 			atomic.AddUint64(&sw.relay_handler.num_err_pkt_snd, 1)
 			sw.relay_handler.log.Noticef("error: %s", err)
@@ -241,6 +223,16 @@ func (n *relay_net_path) Send(sw *Switch, pkt *pkt_t) error {
 
 		n.channel = c
 		atomic.AddUint64(&sw.relay_handler.num_pkt_snd, 1)
-		return nil
 	}
+
+	err = n.channel.snd_pkt(&pkt_t{body: data})
+	if err != nil {
+		atomic.AddUint64(&sw.relay_handler.num_err_pkt_snd, 1)
+		sw.relay_handler.log.Noticef("error: %s", err)
+		n.channel = nil
+		return err
+	}
+
+	atomic.AddUint64(&sw.relay_handler.num_pkt_snd, 1)
+	return nil
 }

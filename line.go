@@ -458,7 +458,7 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 
 	// send pkt to existing channel
 	if channel := l.channels[ipkt.hdr.C]; channel != nil {
-		l.peer.AddNetPath(ipkt.netpath)
+		l.peer.AddNetPath(ipkt.netpath, true)
 		l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 		return channel.push_rcv_pkt(ipkt)
 	}
@@ -494,7 +494,7 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		return err
 	}
 
-	l.peer.AddNetPath(ipkt.netpath)
+	l.peer.AddNetPath(ipkt.netpath, true)
 	go channel.run_user_handler()
 
 	return nil
@@ -554,7 +554,7 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	}
 
 	l.peer.SetPublicKey(pub.rsa_pubkey)
-	l.peer.AddNetPath(netpath)
+	l.peer.AddNetPath(netpath, true)
 
 	l.log.Debugf("rcv open from=%s", l.peer)
 

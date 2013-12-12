@@ -5,6 +5,7 @@ type NetPath interface {
 	Hash() uint32
 	AddressForSeek() (ip string, port int, ok bool)
 	AddressForPeer() (ip string, port int, ok bool)
+	SendNatBreaker() bool
 	Send(sw *Switch, pkt *pkt_t) error
 }
 

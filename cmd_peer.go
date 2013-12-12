@@ -124,7 +124,7 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 	peer, _ := h.sw.main.AddPeer(hashname)
 
 	peer.SetPublicKey(pubkey)
-	peer.AddNetPath(netpath)
+	peer.AddNetPath(netpath, true)
 
 	h.log.Noticef("received connect-cmd: peer=%s", peer)
 

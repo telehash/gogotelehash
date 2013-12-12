@@ -575,7 +575,7 @@ func (c *channel_t) _get_missing_packets(now time.Time) []*pkt_t {
 }
 
 func (c *channel_t) _detect_broken(now time.Time) {
-	breaking_point := now.Add(-15 * time.Second)
+	breaking_point := now.Add(-60 * time.Second)
 
 	if c.rcv_last_ack_at.IsZero() {
 		c.rcv_last_ack_at = now

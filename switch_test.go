@@ -123,9 +123,9 @@ func TestSeek(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		// Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 		time.Sleep(200 * time.Millisecond)
-		Log.Infof("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 	}()
 
 	go func() {
@@ -134,9 +134,60 @@ func TestSeek(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		// Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 		time.Sleep(100 * time.Millisecond)
-		Log.Infof("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+	}()
+
+	time.Sleep(60 * time.Second)
+}
+
+func TestRelay(t *testing.T) {
+	defer capture_runtime_state().validate(t)
+
+	runtime.GOMAXPROCS(runtime.NumCPU())
+
+	var (
+		key_a = make_key()
+		a     = make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong))
+
+		key_b = make_key()
+		b     = make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong))
+
+		key_c = make_key()
+		c     = make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong))
+	)
+
+	a.Start()
+	b.Start()
+	c.Start()
+	defer a.Stop()
+	defer b.Stop()
+	defer c.Stop()
+
+	b.net.deny_from_net("127.0.0.1:4002")
+	c.net.deny_from_net("127.0.0.1:4001")
+
+	go func() {
+		_, err := b.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		time.Sleep(200 * time.Millisecond)
+		Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+	}()
+
+	go func() {
+		_, err := c.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		time.Sleep(100 * time.Millisecond)
+		Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 	}()
 
 	time.Sleep(60 * time.Second)

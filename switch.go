@@ -96,7 +96,7 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 
 	peer, _ := s.main.AddPeer(hashname)
 	peer.SetPublicKey(key)
-	peer.AddNetPath(netpath)
+	peer.AddNetPath(netpath, true)
 
 	s.main.GetLine(peer.Hashname())
 

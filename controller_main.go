@@ -175,7 +175,7 @@ func (c *main_controller) RcvPkt(pkt *pkt_t) error {
 		}
 
 		peer, _ := c.AddPeer(pub.hashname)
-		peer.AddNetPath(pkt.netpath)
+		peer.AddNetPath(pkt.netpath, true)
 		peer.SetPublicKey(pub.rsa_pubkey)
 
 		c.get_line_chan <- cmd_line_get{peer.Hashname(), reply}
@@ -234,7 +234,7 @@ func (c *main_controller) run_active_loop() {
 			c.num_open_lines += 1
 		case line := <-c.deactivate_line_chan:
 			delete(c.active_lines, line.prv_key.id)
-			c.num_open_lines += -1
+			c.num_open_lines -= 1
 		case cmd := <-c.get_active_line_chan:
 			cmd.reply <- c.active_lines[cmd.id]
 
