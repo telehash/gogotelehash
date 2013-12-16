@@ -52,9 +52,9 @@ func NetPathFromAddr(addri net.Addr) NetPath {
 	}
 
 	if is_ipv4(ip) {
-		return &IPv4NetPath{cat, ip, port, 0}
+		return &IPv4NetPath{cat, ip, port, 0, 0}
 	} else {
-		return &IPv6NetPath{cat, ip, zone, port, 0}
+		return &IPv6NetPath{cat, ip, zone, port, 0, 0}
 	}
 }
 

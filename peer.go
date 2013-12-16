@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -83,36 +84,46 @@ func (p *Peer) NetPaths() []NetPath {
 	return paths
 }
 
-func (p *Peer) AddNetPath(netpath NetPath, activate bool) {
+func (p *Peer) AddNetPath(netpath NetPath) NetPath {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
 	var (
 		found = false
-		y     = 0
 	)
 
-	for i, np := range p.paths {
+	for _, np := range p.paths {
 		if EqualNetPaths(np, netpath) {
+			np.ResetPriority()
+			netpath = np
 			found = true
-			y = i
 			break
 		}
 	}
 
 	if !found {
-		y = len(p.paths)
 		p.paths = append(p.paths, netpath)
 	}
 
-	if y != 0 && activate {
-		p.paths[0], p.paths[y] = p.paths[y], p.paths[0]
+	sort.Sort(net_path_sorter(p.paths))
+
+	for i, np := range p.paths {
+		if np.Priority() < 3 {
+			p.paths = p.paths[:i]
+			break
+		}
 	}
+
+	return netpath
 }
 
 func (p *Peer) ActivePath() NetPath {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
+
+	if len(p.paths) == 0 {
+		return nil
+	}
 
 	return p.paths[0]
 }

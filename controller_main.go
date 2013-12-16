@@ -175,7 +175,7 @@ func (c *main_controller) RcvPkt(pkt *pkt_t) error {
 		}
 
 		peer, _ := c.AddPeer(pub.hashname)
-		peer.AddNetPath(pkt.netpath, true)
+		peer.AddNetPath(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
 
 		c.get_line_chan <- cmd_line_get{peer.Hashname(), reply}

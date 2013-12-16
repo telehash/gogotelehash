@@ -87,13 +87,13 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 		peer.AddVia(via)
 
-		peer.AddNetPath(netpath, false)
+		peer.AddNetPath(netpath)
 
 		if h.sw.AllowRelay {
 			peer.AddNetPath(&relay_net_path{
 				to:  hashname,
 				via: via,
-			}, false)
+			})
 		}
 
 		h.sw.main.GetLine(peer.Hashname())

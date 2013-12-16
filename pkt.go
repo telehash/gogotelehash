@@ -15,27 +15,28 @@ type pkt_t struct {
 }
 
 type pkt_hdr_t struct {
-	Type   string          `json:"type,omitempty"`
-	Line   string          `json:"line,omitempty"`
-	Iv     string          `json:"iv,omitempty"`
-	Open   string          `json:"open,omitempty"`
-	Sig    string          `json:"sig,omitempty"`
-	C      string          `json:"c,omitempty"`
-	To     string          `json:"to,omitempty"`
-	At     int64           `json:"at,omitempty"`
-	Family string          `json:"family,omitempty"`
-	Seq    seq_t           `json:"seq,omitempty"`
-	Ack    seq_t           `json:"ack,omitempty"`
-	Miss   []seq_t         `json:"miss,omitempty"`
-	End    bool            `json:"end,omitempty"`
-	Err    string          `json:"err,omitempty"`
-	Seek   string          `json:"seek,omitempty"`
-	See    []string        `json:"see,omitempty"`
-	Peer   string          `json:"peer,omitempty"`
-	IP     string          `json:"ip,omitempty"`
-	Port   int             `json:"port,omitempty"`
-	Relay  bool            `json:"relay,omitempty"`
-	Custom json.RawMessage `json:"_,omitempty"`
+	Type     string          `json:"type,omitempty"`
+	Line     string          `json:"line,omitempty"`
+	Iv       string          `json:"iv,omitempty"`
+	Open     string          `json:"open,omitempty"`
+	Sig      string          `json:"sig,omitempty"`
+	C        string          `json:"c,omitempty"`
+	To       string          `json:"to,omitempty"`
+	At       int64           `json:"at,omitempty"`
+	Family   string          `json:"family,omitempty"`
+	Seq      seq_t           `json:"seq,omitempty"`
+	Ack      seq_t           `json:"ack,omitempty"`
+	Miss     []seq_t         `json:"miss,omitempty"`
+	End      bool            `json:"end,omitempty"`
+	Err      string          `json:"err,omitempty"`
+	Seek     string          `json:"seek,omitempty"`
+	See      []string        `json:"see,omitempty"`
+	Peer     string          `json:"peer,omitempty"`
+	IP       string          `json:"ip,omitempty"`
+	Port     int             `json:"port,omitempty"`
+	Relay    bool            `json:"relay,omitempty"`
+	Priority int             `json:"priority,omitempty"`
+	Custom   json.RawMessage `json:"_,omitempty"`
 }
 
 func (p *pkt_t) format_pkt() ([]byte, error) {

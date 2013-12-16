@@ -29,9 +29,10 @@ func (h *peer_handler) SendPeer(to *Peer) {
 
 		h.sw.main.OpenChannel(via, &pkt_t{
 			hdr: pkt_hdr_t{
-				Type: "peer",
-				Peer: to_hn.String(),
-				End:  true,
+				Type:  "peer",
+				Peer:  to_hn.String(),
+				Relay: true,
+				End:   true,
 			},
 		}, true)
 	}
@@ -124,11 +125,19 @@ func (h *peer_handler) serve_connect(channel *channel_t) {
 	peer, _ := h.sw.main.AddPeer(hashname)
 
 	peer.SetPublicKey(pubkey)
-	peer.AddNetPath(netpath, true)
+	netpath = peer.AddNetPath(netpath)
 
 	h.log.Noticef("received connect-cmd: peer=%s", peer)
 
 	line := h.sw.main.GetLine(peer.Hashname())
 	line.EnsureRunning()
 	line.SndOpen(netpath)
+
+	if pkt.hdr.Relay {
+		netpath = peer.AddNetPath(&relay_net_path{
+			to:  hashname,
+			via: channel.line.peer.hashname,
+		})
+		line.SndOpen(netpath)
+	}
 }

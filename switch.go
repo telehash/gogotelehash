@@ -13,7 +13,7 @@ type Switch struct {
 	net           *net_controller
 	peer_handler  peer_handler
 	seek_handler  seek_handler
-	ping_handler  ping_handler
+	path_handler  path_handler
 	relay_handler relay_handler
 	addr          string
 	hashname      Hashname
@@ -50,7 +50,7 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 
 	s.peer_handler.init(s)
 	s.seek_handler.init(s)
-	s.ping_handler.init(s)
+	s.path_handler.init(s)
 	s.relay_handler.init(s)
 
 	return s, nil
@@ -96,7 +96,7 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 
 	peer, _ := s.main.AddPeer(hashname)
 	peer.SetPublicKey(key)
-	peer.AddNetPath(netpath, true)
+	peer.AddNetPath(netpath)
 
 	s.main.GetLine(peer.Hashname())
 

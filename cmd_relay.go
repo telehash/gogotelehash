@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+const _RELAY_DEADLINE = 10 * time.Second
+
 type relay_handler struct {
 	sw  *Switch
 	log log.Logger
@@ -61,7 +63,7 @@ func (h *relay_handler) serve(channel *channel_t) {
 
 // Handle relay channels targeted at the local switch.
 func (h *relay_handler) serve_self(channel *channel_t, opkt *pkt_t) {
-	netpath := &relay_net_path{ZeroHashname, ZeroHashname, channel, 0}
+	netpath := &relay_net_path{ZeroHashname, ZeroHashname, channel, 0, 0}
 
 	for {
 		opkt, err := channel.pop_rcv_pkt()
@@ -103,21 +105,22 @@ func (h *relay_handler) serve_other(a *channel_t, opkt *pkt_t, to Hashname) {
 	}
 
 	break_ch := make(chan bool, 3)
+	deadline := time.NewTimer(_RELAY_DEADLINE)
 
-	go h.copy(a, b, break_ch)
-	go h.copy(b, a, break_ch)
+	go h.copy(a, b, break_ch, deadline)
+	go h.copy(b, a, break_ch, deadline)
 
 	defer b.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true}})
 
 	select {
-	case <-time.After(60 * time.Second):
+	case <-deadline.C:
 		break_ch <- true
 	case <-break_ch:
 		break_ch <- true
 	}
 }
 
-func (h *relay_handler) copy(dst, src *channel_t, break_chan chan bool) {
+func (h *relay_handler) copy(dst, src *channel_t, break_chan chan bool, deadline *time.Timer) {
 	var (
 		tick      = time.Now()
 		pkt_count = 0
@@ -164,19 +167,29 @@ func (h *relay_handler) copy(dst, src *channel_t, break_chan chan bool) {
 			return
 		}
 
+		deadline.Reset(_RELAY_DEADLINE)
 		atomic.AddUint64(&h.num_pkt_rly, 1)
 	}
 }
 
 type relay_net_path struct {
-	to      Hashname
-	via     Hashname
-	channel *channel_t
-	hash    uint32
+	to             Hashname
+	via            Hashname
+	channel        *channel_t
+	hash           uint32
+	priority_delta net_path_priority
 }
 
 func (n *relay_net_path) Priority() int {
-	return 0
+	return 0 + n.priority_delta.Get()
+}
+
+func (n *relay_net_path) SendOpen() {
+	n.priority_delta.Add(-1)
+}
+
+func (n *relay_net_path) ResetPriority() {
+	n.priority_delta.Reset()
 }
 
 func (n *relay_net_path) Hash() uint32 {
