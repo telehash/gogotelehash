@@ -51,25 +51,9 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	for _, rec := range reply.hdr.See {
 		fields := strings.Split(rec, ",")
 
-		if len(fields) != 3 {
-			continue
-		}
-
-		var (
-			hashname_str = fields[0]
-			ip_str       = fields[1]
-			port_str     = fields[2]
-		)
-
-		hashname, err := HashnameFromString(hashname_str)
+		hashname, err := HashnameFromString(fields[0])
 		if err != nil {
 			Log.Debugf("failed to add peer %s (error: %s)", hashname, err)
-			continue
-		}
-
-		netpath, err := ParseIPNetPath(net.JoinHostPort(ip_str, port_str))
-		if err != nil {
-			h.log.Debugf("error: %s", "invalid address")
 			continue
 		}
 
@@ -84,10 +68,16 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		}
 
 		peer, _ := h.sw.main.AddPeer(hashname)
-
 		peer.AddVia(via)
 
-		peer.AddNetPath(netpath)
+		if len(fields) == 3 {
+			netpath, err := ParseIPNetPath(net.JoinHostPort(fields[1], fields[2]))
+			if err != nil {
+				h.log.Debugf("error: %s", "invalid address")
+			} else {
+				peer.AddNetPath(netpath)
+			}
+		}
 
 		if h.sw.AllowRelay {
 			peer.AddNetPath(&relay_net_path{
@@ -175,6 +165,8 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 	see := make([]string, 0, len(closest))
 
 	for _, peer := range closest {
+		added := false
+
 		if peer.PublicKey() == nil {
 			continue // unable to forward peer requests to unless we know the public key
 		}
@@ -189,10 +181,17 @@ func (h *seek_handler) serve_seek(channel *channel_t) {
 		}
 
 		h.log.Infof("netpaths for %s: %+v", peer, peer.NetPaths())
+	FOR_NETPATHS:
 		for _, np := range peer.NetPaths() {
 			if ip, port, ok := np.AddressForSeek(); ok {
+				added = true
 				see = append(see, fmt.Sprintf("%s,%s,%d", peer.Hashname(), ip, port))
+				break FOR_NETPATHS
 			}
+		}
+
+		if !added {
+			see = append(see, peer.Hashname().String())
 		}
 	}
 

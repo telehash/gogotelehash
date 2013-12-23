@@ -108,7 +108,7 @@ func (p *Peer) AddNetPath(netpath NetPath) NetPath {
 	sort.Sort(net_path_sorter(p.paths))
 
 	for i, np := range p.paths {
-		if np.Priority() < 3 {
+		if np.Priority() < -3 {
 			p.paths = p.paths[:i]
 			break
 		}

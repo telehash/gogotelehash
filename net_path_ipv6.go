@@ -49,11 +49,11 @@ func (n *IPv6NetPath) Hash() uint32 {
 }
 
 func (n *IPv6NetPath) AddressForSeek() (string, int, bool) {
-	return "", 0, false // no IPv6 for now
+	return "", 0, false // only IPv4 in seek/see
 }
 
 func (n *IPv6NetPath) AddressForPeer() (string, int, bool) {
-	return "", 0, false // no IPv6 for now
+	return "", 0, false // only IPv4 in peer/connect
 }
 
 func (n *IPv6NetPath) SendNatBreaker() bool {

@@ -48,7 +48,10 @@ func (n *IPv4NetPath) Hash() uint32 {
 }
 
 func (n *IPv4NetPath) AddressForSeek() (string, int, bool) {
-	return n.IP.String(), n.Port, true
+	if n.cat == ip_wan {
+		return n.IP.String(), n.Port, true
+	}
+	return "", 0, false
 }
 
 func (n *IPv4NetPath) AddressForPeer() (string, int, bool) {
