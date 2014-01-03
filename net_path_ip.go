@@ -78,7 +78,7 @@ func (c ip_addr_category) String() string {
 	return ip_addr_category_strings[c]
 }
 
-func get_network_paths() ([]NetPath, error) {
+func get_network_paths(port int) ([]NetPath, error) {
 	var (
 		nets []NetPath
 	)
@@ -99,7 +99,9 @@ func get_network_paths() ([]NetPath, error) {
 		}
 
 		for _, addr := range addrs {
-			nets = append(nets, NetPathFromAddr(addr))
+			if a, ok := addr.(*net.IPNet); ok {
+				nets = append(nets, NetPathFromAddr(&net.UDPAddr{IP: a.IP, Port: port}))
+			}
 		}
 	}
 

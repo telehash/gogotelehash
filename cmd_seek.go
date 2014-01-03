@@ -18,7 +18,7 @@ func (h *seek_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "seek-handler")
 
-	sw.mux.handle_func("seek", h.serve_seek)
+	sw.mux.HandleFunc("seek", h.serve_seek)
 }
 
 func (h *seek_handler) Seek(via, seek Hashname) error {
@@ -26,12 +26,17 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 	pkt := &pkt_t{
 		hdr: pkt_hdr_t{
-			Type: "seek",
 			Seek: seek.String(),
 		},
 	}
 
-	channel, err := h.sw.main.OpenChannel(via, pkt, true)
+	options := ChannelOptions{To: via, Type: "seek", Reliablility: UnreliableChannel}
+	channel, err := h.sw.main.OpenChannel(options)
+	if err != nil {
+		return err
+	}
+
+	err = channel.snd_pkt(pkt)
 	if err != nil {
 		return err
 	}
@@ -67,7 +72,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		peer, _ := h.sw.main.AddPeer(hashname)
+		peer, new_peer := h.sw.main.AddPeer(hashname)
 		peer.AddVia(via)
 
 		if len(fields) == 3 {
@@ -75,15 +80,14 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			if err != nil {
 				h.log.Debugf("error: %s", "invalid address")
 			} else {
-				peer.AddNetPath(netpath)
+				if new_peer {
+					peer.AddNetPath(netpath)
+				}
 			}
 		}
 
-		if h.sw.AllowRelay {
-			peer.AddNetPath(&relay_net_path{
-				to:  hashname,
-				via: via,
-			})
+		if new_peer {
+			peer.set_active_paths(peer.NetPaths())
 		}
 
 		h.sw.main.GetLine(peer.Hashname())
@@ -150,7 +154,7 @@ func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
 	h.Seek(via, seek)
 }
 
-func (h *seek_handler) serve_seek(channel *channel_t) {
+func (h *seek_handler) serve_seek(channel Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
 		return // drop

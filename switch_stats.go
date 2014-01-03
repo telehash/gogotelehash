@@ -50,9 +50,9 @@ func (s SwitchStats) String() string {
 		s.NumOpenLines,
 		s.RelayNumSendPackets,
 		s.RelayNumSendPacketErrors,
-		s.RelayNumRelayedPackets,
-		s.RelayNumRelayedPacketErrors,
 		s.RelayNumReceivedPackets,
 		s.RelayNumReceivedPacketErrors,
+		s.RelayNumRelayedPackets,
+		s.RelayNumRelayedPacketErrors,
 	)
 }

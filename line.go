@@ -23,8 +23,8 @@ type line_t struct {
 	err           error
 	open_retries  int
 
-	channels         map[string]*channel_t
-	add_channel_chan chan *channel_t
+	channels         map[string]Channel
+	add_channel_chan chan Channel
 }
 
 type (
@@ -54,12 +54,15 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 	l.rcv_open_chan = make(chan cmd_open_rcv, 10)
 	l.rcv_line_chan = make(chan *pkt_t, 10)
 
-	l.channels = make(map[string]*channel_t, 10)
-	l.add_channel_chan = make(chan *channel_t, 1)
+	l.channels = make(map[string]Channel, 10)
+	l.add_channel_chan = make(chan Channel, 1)
 }
 
 // atomically get the line state
 func (l *line_t) State() line_state {
+	if l == nil {
+		return line_broken
+	}
 	return line_state(atomic.LoadUint32((*uint32)(&l.state)))
 }
 
@@ -134,24 +137,19 @@ func (l *line_t) RcvOpen(pub *public_line_key, netpath NetPath) {
 	l.rcv_open_chan <- cmd_open_rcv{pub, netpath}
 }
 
-func (l *line_t) OpenChannel(pkt *pkt_t, raw bool) (*channel_t, error) {
-	channel, err := make_channel(l.sw, l, "", pkt.hdr.Type, true, raw)
+func (l *line_t) OpenChannel(options ChannelOptions) (Channel, error) {
+	channel, err := make_channel(l.sw, l, true, options)
 	if err != nil {
 		return nil, err
 	}
 
 	l.add_channel_chan <- channel
 
-	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
-		short_hash(channel.channel_id),
-		pkt.hdr.Type,
+	l.log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.Id()),
+		channel.Type(),
 		l.sw.hashname.Short(),
 		l.peer.Hashname().Short())
-
-	err = channel.snd_pkt(pkt)
-	if err != nil {
-		return nil, err
-	}
 
 	return channel, nil
 }
@@ -173,7 +171,7 @@ func (l *line_t) run_main_loop() {
 			l.run_line_loop()
 
 		case l.state.test(0, line_active):
-			if l.open_retries > 0 {
+			if len(l.peer.NetPaths()) > 0 && l.open_retries > 0 {
 				l.state = line_running
 				l.start_opening()
 			} else {
@@ -204,7 +202,7 @@ func (l *line_t) setup() error {
 func (l *line_t) start_opening() {
 	l.open_retries--
 
-	if l.peer.HasVia() {
+	if l.peer.MustSendPeer() {
 		l.log.Noticef("opening line to=%s (via)", l.peer.Hashname().Short())
 		l.state.mod(line_opening|line_peering, 0)
 	} else {
@@ -308,9 +306,8 @@ func (l *line_t) run_line_loop() {
 		idle_timer     = time.NewTimer(idle_timeout)
 		ack_ticker     = time.NewTicker(10 * time.Millisecond)
 		seek_d         = 30 * time.Second
-		seek_timer     = time.NewTimer(1 * time.Millisecond)
-		path_d         = 10 * time.Second
-		path_timer     = time.NewTimer(path_d)
+		seek_timer     = time.NewTimer(2 * time.Millisecond)
+		path_timer     = time.NewTimer(1 * time.Millisecond)
 	)
 
 	defer broken_timer.Stop()
@@ -332,12 +329,12 @@ func (l *line_t) run_line_loop() {
 	time.Sleep(100 * time.Millisecond)
 
 	for _, c := range l.channels {
-		c.cnd.Broadcast()
+		c.line_state_changed()
 	}
 
 	defer func() {
 		for _, c := range l.channels {
-			c.cnd.Broadcast()
+			c.line_state_changed()
 		}
 	}()
 
@@ -368,18 +365,18 @@ func (l *line_t) run_line_loop() {
 			}
 			for _, c := range l.channels {
 				if c.is_closed() {
-					c.log.Debugf("channel[%s:%s](%s -> %s): closed",
-						short_hash(c.channel_id),
-						c.channel_type,
+					l.log.Debugf("channel[%s:%s](%s -> %s): closed",
+						short_hash(c.Id()),
+						c.Type(),
 						l.sw.hashname.Short(),
 						l.peer.Hashname().Short())
-					delete(l.channels, c.channel_id)
+					delete(l.channels, c.Id())
 				}
 			}
 
 		case <-seek_timer.C:
 			seek_timer.Reset(seek_d)
-			go l.snd_seek(broken_chan, local_hashname)
+			go l.snd_seek(local_hashname)
 
 		case <-path_timer.C:
 			go l.snd_path(broken_chan, path_timer)
@@ -398,8 +395,8 @@ func (l *line_t) run_line_loop() {
 			}
 
 		case channel := <-l.add_channel_chan:
-			l.channels[channel.channel_id] = channel
-			channel.cnd.Broadcast()
+			l.channels[channel.Id()] = channel
+			channel.line_state_changed()
 
 		case cmd := <-l.snd_open_chan:
 			l.snd_open_pkt(cmd.netpath)
@@ -411,21 +408,12 @@ func (l *line_t) run_line_loop() {
 	}
 }
 
-func (l *line_t) snd_seek(broken_chan chan<- time.Time, local_hashname Hashname) {
-	for i := 0; i < 3; i++ {
-		err := l.sw.seek_handler.Seek(l.peer.Hashname(), local_hashname)
-		if err == nil {
-			return
-		}
-		l.log.Noticef("seeking failed: err=%s", err)
-		time.Sleep(1 * time.Second)
+func (l *line_t) snd_seek(local_hashname Hashname) {
+	err := l.sw.seek_handler.Seek(l.peer.Hashname(), local_hashname)
+	if err == nil {
+		return
 	}
-
-	func() {
-		defer func() { recover() }()
-		broken_chan <- time.Now()
-		l.log.Noticef("seeking failed (breaking the line)")
-	}()
+	l.log.Noticef("seeking failed: err=%s", err)
 }
 
 func (l *line_t) snd_path(broken_chan chan<- time.Time, path_timer *time.Timer) {
@@ -450,6 +438,11 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 	ipkt.peer = l.peer
 	ipkt.netpath = opkt.netpath
 
+	if ipkt.hdr.C != "" && ipkt.hdr.Type == "relay" {
+		l.sw.relay_handler.rcv(ipkt)
+		return nil
+	}
+
 	if ipkt.hdr.C == "" {
 		return errInvalidPkt
 	}
@@ -466,24 +459,28 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 		return errInvalidPkt
 	}
 
-	raw := !ipkt.hdr.Seq.IsSet()
+	reliablility := ReliableChannel
+	if !ipkt.hdr.Seq.IsSet() {
+		reliablility = UnreliableChannel
+	}
 
-	if !raw && ipkt.hdr.Seq.Get() != 0 {
+	if reliablility == ReliableChannel && ipkt.hdr.Seq.Get() != 0 {
 		return errInvalidPkt
 	}
 
-	channel, err := make_channel(l.sw, l, ipkt.hdr.C, ipkt.hdr.Type, false, raw)
+	options := ChannelOptions{To: l.peer.hashname, Id: ipkt.hdr.C, Type: ipkt.hdr.Type, Reliablility: reliablility}
+	channel, err := make_channel(l.sw, l, false, options)
 	if err != nil {
 		return err
 	}
 
-	l.channels[channel.channel_id] = channel
+	l.channels[channel.Id()] = channel
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
-	channel.log.Debugf("channel[%s:%s](%s -> %s): opened",
-		short_hash(channel.channel_id),
-		ipkt.hdr.Type,
+	l.log.Debugf("channel[%s:%s](%s -> %s): opened",
+		short_hash(channel.Id()),
+		channel.Type(),
 		l.sw.hashname.Short(),
 		l.peer.Hashname().Short())
 
@@ -499,6 +496,8 @@ func (l *line_t) rcv_line_pkt(opkt *pkt_t) error {
 }
 
 func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
+	cmd.pkt.peer = l.peer
+
 	pkt, err := l.shr_key.enc(cmd.pkt)
 	if err != nil {
 		if cmd.reply != nil {
@@ -513,7 +512,7 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 	}
 	if sender == nil {
 		cmd.reply <- ErrPeerBroken
-		return ErrPeerBroken
+		return nil
 	}
 
 	err = sender.Send(l.sw, pkt)
@@ -521,7 +520,7 @@ func (l *line_t) snd_line_pkt(cmd cmd_line_snd) error {
 		if cmd.reply != nil {
 			cmd.reply <- err
 		}
-		return err
+		return nil
 	}
 
 	if cmd.reply != nil {
@@ -551,7 +550,7 @@ func (l *line_t) rcv_open_pkt(cmd cmd_open_rcv) error {
 	err = pub.verify(l.pub_key, local_hashname)
 	if err != nil {
 		l.log.Noticef("rcv open from=%s err=%s", netpath, err)
-		return err
+		return nil
 	}
 
 	shr, err := line_activate(prv, pub)
@@ -591,7 +590,7 @@ func (l *line_t) snd_open_pkt(np NetPath) error {
 
 	if len(netpaths) == 0 {
 		l.log.Debugf("snd open to=%s err=%s", l.peer, errInvalidOpenReq)
-		return errInvalidOpenReq
+		return ErrPeerBroken
 	}
 
 	if l.peer.PublicKey() == nil {
@@ -609,7 +608,7 @@ func (l *line_t) snd_open_pkt(np NetPath) error {
 	}
 
 	for _, np := range netpaths {
-		np.SendOpen()
+		np.Demote()
 		pkt, err := l.prv_key.compose_open_pkt()
 		pkt.netpath = np
 		pkt.peer = l.peer
@@ -640,7 +639,7 @@ func (l *line_t) teardown() {
 		l.log.Noticef("line closed: peer=%s (reason=%s)",
 			l.peer.String(),
 			"broken")
-	} else if l.state.test(line_idle, 0) {
+	} else {
 		l.log.Noticef("line closed: peer=%s (reason=%s)",
 			l.peer.String(),
 			"idle")
@@ -648,26 +647,20 @@ func (l *line_t) teardown() {
 }
 
 func (l *line_t) flush() {
-	for {
-		select {
-		case <-l.snd_open_chan:
-		case <-l.rcv_open_chan:
-		case <-l.rcv_line_chan:
-		case <-l.shutdown:
-		case <-l.add_channel_chan:
-		default:
-			return
-		}
-	}
+	close(l.snd_open_chan)
+	close(l.rcv_open_chan)
+	close(l.rcv_line_chan)
+	close(l.add_channel_chan)
+	close(l.shutdown)
 }
 
 func (l *line_t) break_channels() {
 	for _, c := range l.channels {
 		c.mark_as_broken()
 
-		c.log.Debugf("channel[%s:%s](%s -> %s): broken",
-			short_hash(c.channel_id),
-			c.channel_type,
+		l.log.Debugf("channel[%s:%s](%s -> %s): broken",
+			short_hash(c.Id()),
+			c.Type(),
 			l.sw.hashname.Short(),
 			l.peer.Hashname().Short())
 	}

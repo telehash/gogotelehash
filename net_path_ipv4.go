@@ -1,9 +1,11 @@
 package telehash
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net"
+	"strconv"
 )
 
 type IPv4NetPath struct {
@@ -28,8 +30,12 @@ func (n *IPv4NetPath) Priority() int {
 	}
 }
 
-func (n *IPv4NetPath) SendOpen() {
+func (n *IPv4NetPath) Demote() {
 	n.priority_delta.Add(-1)
+}
+
+func (n *IPv4NetPath) Break() {
+	n.priority_delta.Add(-3 - n.Priority())
 }
 
 func (n *IPv4NetPath) ResetPriority() {
@@ -54,8 +60,11 @@ func (n *IPv4NetPath) AddressForSeek() (string, int, bool) {
 	return "", 0, false
 }
 
-func (n *IPv4NetPath) AddressForPeer() (string, int, bool) {
-	return n.IP.String(), n.Port, true
+func (n *IPv4NetPath) IncludeInConnect() bool {
+	if n.cat == ip_wan {
+		return true
+	}
+	return false
 }
 
 func (n *IPv4NetPath) SendNatBreaker() bool {
@@ -68,4 +77,48 @@ func (n *IPv4NetPath) String() string {
 
 func (n *IPv4NetPath) Send(sw *Switch, pkt *pkt_t) error {
 	return ip_snd_pkt(sw, &net.UDPAddr{IP: n.IP, Port: n.Port}, pkt)
+}
+
+func (n *IPv4NetPath) MarshalJSON() ([]byte, error) {
+	var (
+		j = struct {
+			IP   string `json:"ip"`
+			Port int    `json:"port"`
+		}{
+			IP:   n.IP.String(),
+			Port: n.Port,
+		}
+	)
+
+	return json.Marshal(j)
+}
+
+func (n *IPv4NetPath) UnmarshalJSON(data []byte) error {
+	var (
+		j struct {
+			IP   string `json:"ip"`
+			Port int    `json:"port"`
+		}
+	)
+
+	err := json.Unmarshal(data, &j)
+	if err != nil {
+		return err
+	}
+
+	if j.IP == "" || j.Port == 0 {
+		return fmt.Errorf("Invalid IPv4 netpath")
+	}
+
+	m, err := ParseIPNetPath(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
+	if err != nil {
+		return err
+	}
+
+	if o, ok := m.(*IPv4NetPath); ok {
+		*n = *o
+		return nil
+	}
+
+	return fmt.Errorf("Invalid IPv4 netpath")
 }

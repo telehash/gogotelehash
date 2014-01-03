@@ -32,9 +32,7 @@ type pkt_hdr_t struct {
 	Seek     string          `json:"seek,omitempty"`
 	See      []string        `json:"see,omitempty"`
 	Peer     string          `json:"peer,omitempty"`
-	IP       string          `json:"ip,omitempty"`
-	Port     int             `json:"port,omitempty"`
-	Relay    bool            `json:"relay,omitempty"`
+	Paths    NetPaths        `json:"paths,omitempty"`
 	Priority int             `json:"priority,omitempty"`
 	Custom   json.RawMessage `json:"_,omitempty"`
 }

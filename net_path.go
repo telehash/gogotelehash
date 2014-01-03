@@ -7,12 +7,15 @@ import (
 type NetPath interface {
 	Priority() int
 	ResetPriority()
-	SendOpen()
+	Demote()
+	Break()
 	Hash() uint32
 	AddressForSeek() (ip string, port int, ok bool)
-	AddressForPeer() (ip string, port int, ok bool)
+	IncludeInConnect() bool
 	SendNatBreaker() bool
 	Send(sw *Switch, pkt *pkt_t) error
+	MarshalJSON() ([]byte, error)
+	UnmarshalJSON(data []byte) error
 }
 
 func EqualNetPaths(a, b NetPath) bool {

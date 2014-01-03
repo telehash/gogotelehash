@@ -18,7 +18,7 @@ func TestOpen(t *testing.T) {
 
 	done := make(chan bool, 2)
 
-	greetings := HandlerFunc(func(c *Channel) {
+	greetings := HandlerFunc(func(c Channel) {
 		defer func() { done <- true }()
 
 		buf := make([]byte, 1500)
@@ -75,7 +75,7 @@ func TestOpen(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		channel, err := a.Open(hashname, "_greetings")
+		channel, err := a.Open(ChannelOptions{To: hashname, Type: "_greetings"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -209,7 +209,7 @@ func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
 	return s
 }
 
-func ping_pong(c *Channel) {
+func ping_pong(c Channel) {
 	var (
 		buf = make([]byte, 1500)
 	)

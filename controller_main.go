@@ -62,9 +62,8 @@ type (
 
 	cmd_line_get struct {
 		hashname Hashname
-		// addr     addr_t
-		// pub   *public_line_key
-		reply chan *line_t
+		test     bool
+		reply    chan *line_t
 	}
 )
 
@@ -122,14 +121,14 @@ func (c *main_controller) AddPeer(hashname Hashname) (*Peer, bool) {
 	return res.peer, res.discovered
 }
 
-func (c *main_controller) OpenChannel(to Hashname, pkt *pkt_t, raw bool) (*channel_t, error) {
-	line := c.GetLine(to)
+func (c *main_controller) OpenChannel(options ChannelOptions) (Channel, error) {
+	line := c.GetLine(options.To)
 
 	if line == nil {
 		return nil, ErrUnknownPeer
 	}
 
-	return line.OpenChannel(pkt, raw)
+	return line.OpenChannel(options)
 }
 
 func (c *main_controller) PopulateStats(s *SwitchStats) {
@@ -140,7 +139,13 @@ func (c *main_controller) PopulateStats(s *SwitchStats) {
 
 func (c *main_controller) GetLine(to Hashname) *line_t {
 	reply := make(chan *line_t)
-	c.get_line_chan <- cmd_line_get{to, reply}
+	c.get_line_chan <- cmd_line_get{to, false, reply}
+	return <-reply
+}
+
+func (c *main_controller) GetActiveLine(to Hashname) *line_t {
+	reply := make(chan *line_t)
+	c.get_line_chan <- cmd_line_get{to, true, reply}
 	return <-reply
 }
 
@@ -174,11 +179,14 @@ func (c *main_controller) RcvPkt(pkt *pkt_t) error {
 			return err
 		}
 
-		peer, _ := c.AddPeer(pub.hashname)
+		peer, newpeer := c.AddPeer(pub.hashname)
 		peer.AddNetPath(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
+		if newpeer {
+			peer.set_active_paths(peer.NetPaths())
+		}
 
-		c.get_line_chan <- cmd_line_get{peer.Hashname(), reply}
+		c.get_line_chan <- cmd_line_get{peer.Hashname(), false, reply}
 		line := <-reply
 
 		if line == nil {
@@ -345,7 +353,7 @@ func (c *main_controller) add_peer(cmd cmd_peer_add) {
 func (c *main_controller) get_line(cmd cmd_line_get) {
 	line := c.lines[cmd.hashname]
 
-	if line == nil {
+	if line == nil && !cmd.test {
 		peer := c.peers.get_peer(cmd.hashname)
 		if peer == nil {
 			line = nil

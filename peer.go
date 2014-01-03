@@ -8,13 +8,14 @@ import (
 )
 
 type Peer struct {
-	sw       *Switch
-	hashname Hashname
-	paths    []NetPath
-	pubkey   *rsa.PublicKey
-	is_down  bool
-	via      map[Hashname]bool
-	mtx      sync.RWMutex
+	sw           *Switch
+	hashname     Hashname
+	paths        NetPaths
+	active_paths NetPaths
+	pubkey       *rsa.PublicKey
+	is_down      bool
+	via          map[Hashname]bool
+	mtx          sync.RWMutex
 }
 
 func make_peer(sw *Switch, hashname Hashname) *Peer {
@@ -75,11 +76,11 @@ func (p *Peer) ViaTable() []Hashname {
 	return m
 }
 
-func (p *Peer) NetPaths() []NetPath {
+func (p *Peer) NetPaths() NetPaths {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
-	paths := make([]NetPath, len(p.paths))
+	paths := make(NetPaths, len(p.paths))
 	copy(paths, p.paths)
 	return paths
 }
@@ -94,7 +95,6 @@ func (p *Peer) AddNetPath(netpath NetPath) NetPath {
 
 	for _, np := range p.paths {
 		if EqualNetPaths(np, netpath) {
-			np.ResetPriority()
 			netpath = np
 			found = true
 			break
@@ -105,34 +105,59 @@ func (p *Peer) AddNetPath(netpath NetPath) NetPath {
 		p.paths = append(p.paths, netpath)
 	}
 
-	sort.Sort(net_path_sorter(p.paths))
-
-	for i, np := range p.paths {
-		if np.Priority() < -3 {
-			p.paths = p.paths[:i]
-			break
-		}
-	}
-
 	return netpath
 }
 
-func (p *Peer) ActivePath() NetPath {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+func (p *Peer) update_paths() {
+	sort.Sort(net_path_sorter(p.active_paths))
 
-	if len(p.paths) == 0 {
+	for i, np := range p.active_paths {
+		if np.Priority() < -3 {
+			p.active_paths = p.active_paths[:i]
+			break
+		}
+	}
+}
+
+func (p *Peer) ActivePath() NetPath {
+	if p == nil {
 		return nil
 	}
 
-	return p.paths[0]
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	if len(p.active_paths) == 0 {
+		return nil
+	}
+
+	return p.active_paths[0]
+}
+
+func (p *Peer) set_active_paths(paths NetPaths) {
+	if p == nil {
+		return
+	}
+
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	p.active_paths = paths
+	p.update_paths()
 }
 
 func (p *Peer) CanOpen() bool {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
-	return (p.pubkey != nil || len(p.via) > 0) && len(p.paths) > 0
+	return p.pubkey != nil && len(p.paths) > 0 || len(p.via) > 0
+}
+
+func (p *Peer) MustSendPeer() bool {
+	p.mtx.RLock()
+	defer p.mtx.RUnlock()
+
+	return p.pubkey == nil && len(p.via) > 0
 }
 
 func (p *Peer) HasVia() bool {

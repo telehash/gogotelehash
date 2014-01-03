@@ -17,15 +17,18 @@ func (h *path_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "path-handler")
 
-	sw.mux.handle_func("path", h.serve_path)
+	sw.mux.HandleFunc("path", h.serve_path)
 }
 
 func (h *path_handler) Negotiate(to Hashname) bool {
 	var (
 		wg       sync.WaitGroup
 		peer     *Peer
-		netpaths []NetPath
-		results  chan bool
+		netpaths NetPaths
+		active   NetPaths
+		relays   NetPaths
+		results  []bool
+		score    int
 	)
 
 	peer = h.sw.main.GetPeer(to)
@@ -34,33 +37,81 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	}
 
 	netpaths = peer.NetPaths()
-	results = make(chan bool, len(netpaths))
+	active = make(NetPaths, 0, len(netpaths))
+	results = make([]bool, len(netpaths))
+	relays = make(NetPaths, len(netpaths))
 
-	for _, np := range netpaths {
+	for i, np := range netpaths {
+		if _, ok := np.(*relay_net_path); ok {
+			relays[i] = np
+			continue
+		}
+
 		wg.Add(1)
-		go func(np NetPath) {
+		go func(np NetPath, wg *sync.WaitGroup, i int) {
 			defer wg.Done()
-			results <- h.negotiate_netpath(to, np)
-		}(np)
+			ok := h.negotiate_netpath(to, np)
+			results[i] = ok
+			if ok {
+				np.ResetPriority()
+			} else {
+				np.Break()
+			}
+		}(np, &wg, i)
 	}
 
 	wg.Wait()
-	close(results)
 
-	for ok := range results {
+	for _, ok := range results {
 		if ok {
-			return true
+			score++
 		}
 	}
 
-	return false
+	if score > 0 {
+		for _, np := range relays {
+			if np != nil {
+				np.Demote()
+			}
+		}
+	} else {
+		for i, np := range relays {
+			if np != nil {
+				wg.Add(1)
+				go func(np NetPath, wg *sync.WaitGroup, i int) {
+					defer wg.Done()
+					ok := h.negotiate_netpath(to, np)
+					results[i] = ok
+					if ok {
+						np.ResetPriority()
+					} else {
+						np.Break()
+					}
+				}(np, &wg, i)
+			}
+		}
+
+		wg.Wait()
+	}
+
+	score = 0
+	for i, ok := range results {
+		if ok {
+			score++
+			active = append(active, netpaths[i])
+		}
+	}
+
+	peer.set_active_paths(active)
+
+	return score > 0
 }
 
 func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	var (
 		priority int
 		pkt      *pkt_t
-		channel  *channel_t
+		channel  Channel
 		err      error
 		latency  time.Duration
 		now      = time.Now()
@@ -71,15 +122,27 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 		priority = 0
 	}
 
+	paths, err := get_network_paths(h.sw.net.GetPort())
+	if err != nil {
+		paths = nil
+	}
+
 	pkt = &pkt_t{
 		hdr: pkt_hdr_t{
-			Type:     "path",
 			Priority: priority,
+			Paths:    paths,
 		},
 		netpath: netpath,
 	}
 
-	channel, err = h.sw.main.OpenChannel(to, pkt, true)
+	options := ChannelOptions{To: to, Type: "path", Reliablility: UnreliableChannel}
+	channel, err = h.sw.main.OpenChannel(options)
+	if err != nil {
+		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		return false
+	}
+
+	err = channel.snd_pkt(pkt)
 	if err != nil {
 		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
@@ -101,14 +164,14 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	latency = time.Now().Sub(now)
 	// TODO record latency
 
-	h.log.Noticef("path: to=%s netpath=%s priority=%d latency=%s", to.Short(), netpath, priority, latency)
+	h.log.Noticef("path: to=%s netpath=%s priority=%d latency=%s send-paths=%s", to.Short(), netpath, priority, latency, paths)
 	return true
 }
 
-func (h *path_handler) serve_path(channel *channel_t) {
+func (h *path_handler) serve_path(channel Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
-		h.log.Debugf("failed snd: peer=%s err=%s", channel.line.peer, err)
+		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
 	priority := pkt.netpath.Priority()
@@ -124,6 +187,10 @@ func (h *path_handler) serve_path(channel *channel_t) {
 		netpath: pkt.netpath,
 	})
 	if err != nil {
-		h.log.Debugf("failed snd: peer=%s err=%s", channel.line.peer, err)
+		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
+	}
+
+	for _, np := range pkt.hdr.Paths {
+		pkt.peer.AddNetPath(np)
 	}
 }
