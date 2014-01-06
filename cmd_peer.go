@@ -61,7 +61,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 }
 
 func (h *peer_handler) serve_peer(channel *Channel) {
-	pkt, err := channel.pop_rcv_pkt()
+	pkt, err := channel.receive_packet()
 	if err != nil {
 		h.log.Debugf("error: %s", err)
 		return
@@ -125,7 +125,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 }
 
 func (h *peer_handler) serve_connect(channel *Channel) {
-	pkt, err := channel.pop_rcv_pkt()
+	pkt, err := channel.receive_packet()
 	if err != nil {
 		h.log.Debugf("error: %s", err)
 		return

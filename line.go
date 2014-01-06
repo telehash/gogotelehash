@@ -24,7 +24,7 @@ type line_t struct {
 	state   line_state
 
 	backlog  backlog_t
-	channels map[string]channel_i
+	channels map[string]*Channel
 
 	idle_timer   *time.Timer
 	broken_timer *time.Timer
@@ -38,7 +38,7 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 	l.peer = peer
 	l.log = sw.log.Sub(log_level_for("LINE", log.DEFAULT), "line["+l.peer.Hashname().Short()+"]")
 
-	l.channels = make(map[string]channel_i, 10)
+	l.channels = make(map[string]*Channel, 10)
 
 	l.idle_timer = sw.reactor.CastAfter(line_idle_timeout, &cmd_line_close_idle{l})
 	l.broken_timer = sw.reactor.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
@@ -58,50 +58,38 @@ func (l *line_t) State() line_state {
 	return line_state(atomic.LoadUint32((*uint32)(&l.state)))
 }
 
-func (l *line_t) run_line_loop() {
-	var (
-		ack_ticker = time.NewTicker(10 * time.Millisecond)
-	)
+// func (l *line_t) run_line_loop() {
+//   var (
+//     ack_ticker = time.NewTicker(10 * time.Millisecond)
+//   )
 
-	defer ack_ticker.Stop()
+//   defer ack_ticker.Stop()
 
-	l.log.Noticef("line opened: id=%s:%s",
-		short_hash(l.prv_key.id),
-		short_hash(l.pub_key.id))
+//   l.log.Noticef("line opened: id=%s:%s",
+//     short_hash(l.prv_key.id),
+//     short_hash(l.pub_key.id))
 
-	time.Sleep(100 * time.Millisecond)
+//   time.Sleep(100 * time.Millisecond)
 
-	for _, c := range l.channels {
-		c.line_state_changed()
-	}
+//   for l.state.test(line_opened, 0) {
+//     select {
 
-	for l.state.test(line_opened, 0) {
-		select {
+//     case now := <-ack_ticker.C:
 
-		case now := <-ack_ticker.C:
-			for _, c := range l.channels {
-				ack, miss := c.tick(now)
-				if ack != nil {
-					l.sw.reactor.Cast(&cmd_snd_pkt{l, ack, nil})
-				}
-				for _, pkt := range miss {
-					l.sw.reactor.Cast(&cmd_snd_pkt{l, pkt, nil})
-				}
-			}
-			for _, c := range l.channels {
-				if c.is_closed() {
-					l.log.Debugf("channel[%s:%s](%s -> %s): closed",
-						short_hash(c.Id()),
-						c.Type(),
-						l.sw.hashname.Short(),
-						l.peer.Hashname().Short())
-					delete(l.channels, c.Id())
-				}
-			}
+//       for _, c := range l.channels {
+//         if c.is_closed() {
+//           l.log.Debugf("channel[%s:%s](%s -> %s): closed",
+//             short_hash(c.Id()),
+//             c.Type(),
+//             l.sw.hashname.Short(),
+//             l.peer.Hashname().Short())
+//           delete(l.channels, c.Id())
+//         }
+//       }
 
-		}
-	}
-}
+//     }
+//   }
+// }
 
 func (l *line_t) SndOpen(np NetPath) error {
 	var (
@@ -159,30 +147,4 @@ func (l *line_t) SndOpen(np NetPath) error {
 	}
 
 	return nil
-}
-
-func (l *line_t) teardown() {
-
-	l.break_channels()
-
-}
-
-func (l *line_t) break_channels() {
-	for _, c := range l.channels {
-		c.mark_as_broken()
-
-		l.log.Debugf("channel[%s:%s](%s -> %s): broken",
-			short_hash(c.Id()),
-			c.Type(),
-			l.sw.hashname.Short(),
-			l.peer.Hashname().Short())
-	}
-
-	// flush channel sends
-	for {
-		select {
-		default:
-			return
-		}
-	}
 }

@@ -148,9 +148,9 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 		return false
 	}
 
-	channel.set_rcv_deadline(now.Add(_PATH_DEADLINE))
+	channel.SetReceiveDeadline(now.Add(_PATH_DEADLINE))
 
-	pkt, err = channel.pop_rcv_pkt()
+	pkt, err = channel.receive_packet()
 	if err != nil {
 		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
@@ -169,7 +169,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 }
 
 func (h *path_handler) serve_path(channel *Channel) {
-	pkt, err := channel.pop_rcv_pkt()
+	pkt, err := channel.receive_packet()
 	if err != nil {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}

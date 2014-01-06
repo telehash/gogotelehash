@@ -1,11 +1,11 @@
 package telehash
 
 type Handler interface {
-	ServeTelehash(ch channel_i)
+	ServeTelehash(ch *Channel)
 }
 
-type HandlerFunc func(channel_i)
+type HandlerFunc func(*Channel)
 
-func (f HandlerFunc) ServeTelehash(ch channel_i) {
+func (f HandlerFunc) ServeTelehash(ch *Channel) {
 	f(ch)
 }

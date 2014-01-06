@@ -4,35 +4,39 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/fd/go-util/log"
 	"io"
 	"runtime/debug"
 	"time"
 )
 
 type Channel struct {
-	imp         channel_i
-	line        *line_t
-	sw          *Switch
-	snd_backlog backlog_t
+	initiator            bool
+	options              ChannelOptions
+	imp                  channel_imp
+	line                 *line_t
+	sw                   *Switch
+	broken               bool
+	broken_timer         *time.Timer
+	snd_backlog          backlog_t
+	snd_end              bool
+	rcv_backlog          backlog_t
+	rcv_deadline         *time.Timer
+	rcv_deadline_reached bool
+	rcv_end              bool
+	rcv_err              string
+	read_end             bool
+	log                  log.Logger
 }
 
-type channel_i interface {
-	To() Hashname
-	Id() string
-	Type() string
-	Reliablility() Reliablility
-
-	set_rcv_deadline(at time.Time)
+type channel_imp interface {
+	can_pop_rcv_pkt() bool
+	can_snd_pkt() bool
 	pop_rcv_pkt() (*pkt_t, error)
 	push_rcv_pkt(pkt *pkt_t) error
-	will_send_packet(pkt *pkt_t) (bool, error)
+	will_send_packet(pkt *pkt_t) error
 	did_send_packet(pkt *pkt_t)
 	is_closed() bool
-
-	// problems
-	tick(now time.Time) (ack *pkt_t, miss []*pkt_t)
-	mark_as_broken()
-	line_state_changed()
 }
 
 type ChannelOptions struct {
@@ -50,7 +54,12 @@ const (
 	StatelessChannel
 )
 
-func make_channel(sw *Switch, line *line_t, initiator bool, options ChannelOptions) (channel_i, error) {
+func make_channel(sw *Switch, line *line_t, initiator bool, options ChannelOptions) (*Channel, error) {
+	var (
+		imp channel_imp
+		err error
+	)
+
 	if options.Id == "" {
 		bin_id, err := make_rand(16)
 		if err != nil {
@@ -60,23 +69,46 @@ func make_channel(sw *Switch, line *line_t, initiator bool, options ChannelOptio
 		options.Id = hex.EncodeToString(bin_id)
 	}
 
-	return make_channel_reliable(sw, line, initiator, options)
+	channel := &Channel{
+		line:      line,
+		sw:        sw,
+		options:   options,
+		initiator: initiator,
+		log:       line.log.Sub(log_level_for("CHANNEL", log.DEFAULT), "channel["+options.Id[:8]+"]"),
+	}
+
+	switch options.Reliablility {
+	case ReliableChannel:
+		imp, err = make_channel_reliable(line, channel)
+	case UnreliableChannel:
+		imp, err = make_channel_unreliable(line, channel)
+	case StatelessChannel:
+		imp, err = make_channel_stateless(line, channel)
+	default:
+		panic("unknown channel type")
+	}
+	if err != nil {
+		return nil, err
+	}
+	channel.imp = imp
+
+	return channel, nil
 }
 
 func (c *Channel) To() Hashname {
-	return c.imp.To()
+	return c.options.To
 }
 
 func (c *Channel) Id() string {
-	return c.imp.Id()
+	return c.options.Id
 }
 
 func (c *Channel) Type() string {
-	return c.imp.Type()
+	return c.options.Type
 }
 
 func (c *Channel) Reliablility() Reliablility {
-	return c.imp.Reliablility()
+	return c.options.Reliablility
 }
 
 func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
@@ -146,6 +178,12 @@ func (c *Channel) send_packet(p *pkt_t) error {
 	return cmd.err
 }
 
+func (c *Channel) receive_packet() (*pkt_t, error) {
+	cmd := cmd_get_rcv_pkt{c, nil, nil}
+	c.sw.reactor.Call(&cmd)
+	return cmd.pkt, cmd.err
+}
+
 func (c *Channel) run_user_handler() {
 	defer func() {
 		c.log.Debug("handler returned: closing channel")
@@ -160,4 +198,139 @@ func (c *Channel) run_user_handler() {
 	}()
 
 	c.sw.mux.ServeTelehash(c)
+}
+
+func (c *Channel) can_pop_rcv_pkt() bool {
+	if c.broken || c.snd_end || c.read_end || c.rcv_deadline_reached {
+		return true
+	}
+
+	return c.imp.can_pop_rcv_pkt()
+}
+
+func (c *Channel) can_snd_pkt() bool {
+	if c.rcv_end || c.snd_end || c.broken {
+		return true
+	}
+
+	return c.imp.can_snd_pkt()
+}
+
+func (c *Channel) pop_rcv_pkt() (*pkt_t, error) {
+	defer c.reschedule()
+
+	if c.broken {
+		return nil, ErrChannelBroken
+	}
+
+	if c.snd_end {
+		return nil, ErrReceiveOnClosedChannel
+	}
+
+	if c.rcv_deadline_reached {
+		return nil, ErrTimeout
+	}
+
+	if c.read_end {
+		return nil, io.EOF
+	}
+
+	pkt, err := c.imp.pop_rcv_pkt()
+	if err != nil {
+		return pkt, err
+	}
+
+	if pkt.hdr.End {
+		c.read_end = true
+	}
+
+	return pkt, nil
+}
+
+func (c *Channel) push_rcv_pkt(pkt *pkt_t) error {
+	err := c.imp.push_rcv_pkt(pkt)
+
+	// mark the end pkt
+	if pkt.hdr.End {
+		c.rcv_end = true
+		if pkt.hdr.Err != "" {
+			c.rcv_err = pkt.hdr.Err
+		}
+	}
+
+	c.log.Debugf("rcv pkt: hdr=%+v", pkt.hdr)
+
+	if err == nil {
+		if c.broken_timer == nil {
+			c.broken_timer = c.sw.reactor.CastAfter(60*time.Second, &cmd_channel_break{c})
+		} else {
+			c.broken_timer.Reset(60 * time.Second)
+		}
+	}
+
+	c.reschedule()
+	return err
+}
+
+func (c *Channel) will_send_packet(pkt *pkt_t) error {
+	if c.broken {
+		return ErrChannelBroken
+	}
+
+	if c.snd_end {
+		return ErrSendOnClosedChannel
+	}
+
+	if c.rcv_end {
+		return ErrSendOnClosedChannel
+	}
+
+	pkt.hdr.C = c.options.Id
+
+	return c.imp.will_send_packet(pkt)
+}
+
+func (c *Channel) did_send_packet(pkt *pkt_t) {
+	if pkt.hdr.End {
+		c.snd_end = true
+	}
+
+	c.imp.did_send_packet(pkt)
+	c.reschedule()
+}
+
+func (c *Channel) is_closed() bool {
+	if c.broken {
+		return true
+	}
+
+	return c.imp.is_closed()
+}
+
+func (c *Channel) mark_as_broken() {
+	c.broken = true
+}
+
+func (c *Channel) reschedule() {
+	if len(c.rcv_backlog) > 0 && c.can_pop_rcv_pkt() {
+		c.rcv_backlog.RescheduleOne(&c.sw.reactor)
+	}
+
+	if len(c.snd_backlog) > 0 && c.can_snd_pkt() {
+		c.snd_backlog.RescheduleOne(&c.sw.reactor)
+	}
+}
+
+func (c *Channel) SetReceiveDeadline(t time.Time) {
+	cmd := cmd_channel_set_rcv_deadline{c, t}
+	c.sw.reactor.Call(&cmd)
+}
+
+type cmd_channel_break struct {
+	channel *Channel
+}
+
+func (cmd *cmd_channel_break) Exec(sw *Switch) {
+	cmd.channel.broken = true
+	cmd.channel.reschedule()
 }

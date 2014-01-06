@@ -44,9 +44,9 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 	defer channel.Fatal(errors.New("timeout"))
 
-	channel.set_rcv_deadline(time.Now().Add(15 * time.Second))
+	channel.SetReceiveDeadline(time.Now().Add(15 * time.Second))
 
-	reply, err := channel.pop_rcv_pkt()
+	reply, err := channel.receive_packet()
 	if err != nil {
 		Log.Debugf("failed to send seek to %s (error: %s)", via.Short(), err)
 		return err
@@ -156,7 +156,7 @@ func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
 }
 
 func (h *seek_handler) serve_seek(channel *Channel) {
-	pkt, err := channel.pop_rcv_pkt()
+	pkt, err := channel.receive_packet()
 	if err != nil {
 		return // drop
 	}
@@ -198,7 +198,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 
 	h.log.Infof("rcv seek: see=%+v closest=%+v", see, closest)
 
-	err = channel.snd_pkt(&pkt_t{
+	err = channel.send_packet(&pkt_t{
 		hdr: pkt_hdr_t{
 			See: see,
 			End: true,

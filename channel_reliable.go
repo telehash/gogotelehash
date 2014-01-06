@@ -1,238 +1,151 @@
 package telehash
 
 import (
-	"github.com/fd/go-util/log"
-	"io"
-	"sync"
 	"time"
 )
 
 type channel_reliable_t struct {
-	sw                   *Switch
-	line                 *line_t
-	channel_id           string
-	channel_type         string
-	raw                  bool
-	initiator            bool      // is this side of the channel the initiating side?
-	broken               bool      // is the channel broken?
-	miss                 []seq_t   // missing packets (yet to be received)
-	rcv_buf              []*pkt_t  // buffer of unread received packets
-	rcv_deadline         time.Time // time after which reads
-	rcv_deadline_reached bool      // was the received deadline reached
-	rcv_end              bool      // was a `end` packet received?
-	rcv_err              string    // the err that was received
-	rcv_last_ack         seq_t     // the last `ack` seq received (-1 when no acks have been received)
-	rcv_last_ack_at      time.Time // the last time any ack was received
-	rcv_last_pkt_at      time.Time // the last time any packet was recieved
-	rcv_last_seq         seq_t     // the seq of the last received seq (-1 when no pkts have been received)
-	rcv_unacked          int       // number of unacked received packets
-	read_end             bool      // did the user read the end packet
-	read_last_seq        seq_t     // the last seq that was read by the user code (-1 when no packets were read yet)
-	snd_first_pkt        bool      // was the first pkt already send?
-	snd_buf              []*pkt_t  // buffer of unacked send packets
-	snd_end              bool      // was a `end` packet send?
-	snd_end_ack          bool      // was an ack send for the last packet?
-	snd_inflight         int       // number of in flight packets
-	snd_last_ack         seq_t     // the last `ack` seq send (-1 when no acks have been received)
-	snd_last_ack_at      time.Time // the last time any ack was send
-	snd_last_pkt_at      time.Time // the last time any packet was send
-	snd_last_seq         seq_t     // the seq of the last send packet (-1 when no pkts have been send)
-	snd_miss_at          time.Time // the last time the missing packets were sent
-	state                channel_state
-
-	mtx sync.RWMutex
-	cnd sync.Cond
-	log log.Logger
+	line            *line_t
+	channel         *Channel
+	miss            []seq_t   // missing packets (yet to be received)
+	rcv_buf         []*pkt_t  // buffer of unread received packets
+	rcv_last_ack    seq_t     // the last `ack` seq received (-1 when no acks have been received)
+	rcv_last_ack_at time.Time // the last time any ack was received
+	rcv_last_pkt_at time.Time // the last time any packet was recieved
+	rcv_last_seq    seq_t     // the seq of the last received seq (-1 when no pkts have been received)
+	rcv_unacked     int       // number of unacked received packets
+	read_last_seq   seq_t     // the last seq that was read by the user code (-1 when no packets were read yet)
+	snd_first_pkt   bool      // was the first pkt already send?
+	snd_buf         []*pkt_t  // buffer of unacked send packets
+	snd_end_ack     bool      // was an ack send for the last packet?
+	snd_inflight    int       // number of in flight packets
+	snd_last_ack    seq_t     // the last `ack` seq send (-1 when no acks have been received)
+	snd_last_ack_at time.Time // the last time any ack was send
+	snd_last_pkt_at time.Time // the last time any packet was send
+	snd_last_seq    seq_t     // the seq of the last send packet (-1 when no pkts have been send)
+	snd_miss_at     time.Time // the last time the missing packets were sent
+	ack_timer       *time.Timer
+	miss_timer      *time.Timer
 }
 
-func make_channel_reliable(sw *Switch, line *line_t, initiator bool, options ChannelOptions) (*channel_reliable_t, error) {
+func make_channel_reliable(line *line_t, channel *Channel) (channel_imp, error) {
 	c := &channel_reliable_t{
-		sw:           sw,
-		line:         line,
-		channel_id:   options.Id,
-		channel_type: options.Type,
-		raw:          options.Reliablility != ReliableChannel,
-		initiator:    initiator,
-		rcv_buf:      make([]*pkt_t, 0, 100),
+		line:    line,
+		channel: channel,
+		rcv_buf: make([]*pkt_t, 0, 100),
 	}
-
-	c.log = line.log.Sub(log_level_for("CHANNEL", log.DEFAULT), "channel["+c.channel_id[:8]+"]")
-	c.cnd.L = &c.mtx
 
 	return c, nil
 }
 
-func (c *channel_reliable_t) To() Hashname {
-	return c.line.peer.hashname
-}
-
-func (c *channel_reliable_t) Id() string {
-	return c.channel_id
-}
-
-func (c *channel_reliable_t) Type() string {
-	return c.channel_type
-}
-
-func (c *channel_reliable_t) Reliablility() Reliablility {
-	if c.raw {
-		return UnreliableChannel
-	}
-	return ReliableChannel
-}
-
-func (c *channel_reliable_t) line_state_changed() {
-	c.cnd.Broadcast()
-}
-
-func (c *channel_reliable_t) will_send_packet(pkt *pkt_t) (defer_ bool, err error) {
-	if c.broken || c.rcv_end || c.snd_end {
-		// never block when closed
-		return false, c._snd_pkt_err()
-	}
-
+func (c *channel_reliable_t) can_snd_pkt() bool {
 	if c.line.State() == line_closed {
-		return false, ErrPeerBroken
+		return true
 	}
 
 	if c.line.State() != line_opened {
-		return true, nil
+		return false
 	}
 
-	if !c.raw {
-		if c.snd_inflight >= 100 {
-			// wait for progress
-			return true, nil
-		}
-
-		if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
-			// wait for first ack
-			return true, nil
-		}
+	if c.snd_inflight >= 100 {
+		// wait for progress
+		return false
 	}
 
-	pkt.hdr.C = c.channel_id
-	if !c.raw {
-		pkt.hdr.Seq = c.snd_last_seq.Incr()
-		pkt.hdr.Miss = c.miss
-		pkt.hdr.Ack = c.read_last_seq
+	if c.channel.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
+		// wait for first ack
+		return false
 	}
+
+	return true
+}
+
+func (c *channel_reliable_t) will_send_packet(pkt *pkt_t) error {
+
+	if c.line.State() == line_closed {
+		return ErrPeerBroken
+	}
+
+	pkt.hdr.Seq = c.snd_last_seq.Incr()
+	pkt.hdr.Miss = c.miss
+	pkt.hdr.Ack = c.read_last_seq
 	if !c.snd_first_pkt {
 		c.snd_first_pkt = true
-		if c.initiator {
-			pkt.hdr.Type = c.channel_type
+		if c.channel.initiator {
+			pkt.hdr.Type = c.channel.options.Type
 		}
 	}
 
-	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
-	return false, nil
+	return nil
 }
 
 func (c *channel_reliable_t) did_send_packet(pkt *pkt_t) {
 	now := time.Now()
 
-	if c.rcv_end {
+	if c.channel.rcv_end {
 		c.snd_end_ack = true
 	}
-	if pkt.hdr.End {
-		c.snd_end = true
-	}
-	if !c.raw {
-		c.snd_last_ack = pkt.hdr.Ack
-		c.snd_last_seq = pkt.hdr.Seq
-		c.snd_inflight++
-		c.snd_buf = append(c.snd_buf, pkt)
-		c.rcv_unacked = 0
-		c.snd_last_ack_at = now
-	}
+	c.snd_last_ack = pkt.hdr.Ack
+	c.snd_last_seq = pkt.hdr.Seq
+	c.snd_inflight++
+	c.snd_buf = append(c.snd_buf, pkt)
+	c.rcv_unacked = 0
+	c.snd_last_ack_at = now
 	c.snd_last_pkt_at = now
 
-	// state changed
-	c.cnd.Broadcast()
-}
-
-func (c *channel_reliable_t) _snd_pkt_err() error {
-	if c.broken {
-		return ErrChannelBroken
+	if c.ack_timer != nil {
+		c.ack_timer.Reset(time.Second)
 	}
-
-	if c.rcv_end {
-		return ErrSendOnClosedChannel
-	}
-
-	if c.snd_end {
-		return ErrSendOnClosedChannel
-	}
-
-	return nil
 }
 
 // push_rcv_pkt()
 // called by the peer code
 func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 	var (
-		buf_idx      int = -1
-		err          error
-		new_readable bool
-		unlock_send  bool
+		buf_idx int = -1
 	)
-
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	if pkt.hdr.Ack.IsSet() {
 		// handle ack
-		unlock_send = c._rcv_ack(pkt)
+		c._rcv_ack(pkt)
 	}
 
 	if !pkt.hdr.Seq.IsSet() {
-		if c.raw {
-			pkt.hdr.Seq = c.rcv_last_seq.Incr()
-		} else {
-			// pkt is just an ack
-			c.log.Debugf("rcv ack: hdr=%+v", pkt.hdr)
-			err = nil
-			goto EXIT
-		}
+		// pkt is just an ack
+		// c.log.Debugf("rcv ack: hdr=%+v", pkt.hdr)
+		return nil
 	}
 
-	if c.snd_end {
+	if c.channel.snd_end {
 		// drop; cannot read packets after having send end
-		err = nil
-		goto EXIT
+		return nil
 	}
 
 	if len(c.rcv_buf) >= 100 {
 		// drop packet when buffer is full
-		err = nil
-		goto EXIT
+		return nil
 	}
 
-	if c.rcv_end && pkt.hdr.Seq > c.rcv_last_seq {
+	if c.channel.rcv_end && pkt.hdr.Seq > c.rcv_last_seq {
 		// drop packet sent after `end`
-		err = nil
-		goto EXIT
+		return nil
 	}
 
 	// check if pkt is a duplicate
 	if pkt.hdr.Seq <= c.read_last_seq {
 		// already read (duplicate)
-		err = errDuplicatePacket
-		goto EXIT
+		return errDuplicatePacket
 	}
 	for idx, p := range c.rcv_buf {
 		if p.hdr.Seq == pkt.hdr.Seq {
 			// already in buffer
-			err = errDuplicatePacket
-			goto EXIT
+			return errDuplicatePacket
 		}
 		if p.hdr.Seq > pkt.hdr.Seq {
 			buf_idx = idx
 			break
 		}
 	}
-
-	c.log.Debugf("rcv pkt: bufferd=%d hdr=%+v", len(c.rcv_buf), pkt.hdr)
 
 	c.rcv_last_pkt_at = time.Now()
 
@@ -247,14 +160,6 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 		c.rcv_buf = rcv_buf
 	}
 
-	// mark the end pkt
-	if pkt.hdr.End {
-		c.rcv_end = true
-		if pkt.hdr.Err != "" {
-			c.rcv_err = pkt.hdr.Err
-		}
-	}
-
 	// record last received seq
 	if c.rcv_last_seq < pkt.hdr.Seq {
 		c.rcv_last_seq = pkt.hdr.Seq
@@ -262,19 +167,10 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 
 	c._update_miss_list()
 
-	new_readable = c.read_last_seq.Incr() == pkt.hdr.Seq
-
-EXIT:
-
-	// state changed
-	if new_readable || unlock_send {
-		c.cnd.Broadcast()
-	}
-
-	return err
+	return nil
 }
 
-func (c *channel_reliable_t) _rcv_ack(pkt *pkt_t) (unlock bool) {
+func (c *channel_reliable_t) _rcv_ack(pkt *pkt_t) {
 	if pkt.hdr.Ack > c.rcv_last_ack {
 		c.rcv_last_ack = pkt.hdr.Ack
 	}
@@ -299,15 +195,13 @@ func (c *channel_reliable_t) _rcv_ack(pkt *pkt_t) (unlock bool) {
 		// other wise drop
 	}
 
-	if c.snd_inflight == 100 && len(snd_buf) < 100 {
-		unlock = true
+	if len(snd_buf) > 0 && c.miss_timer == nil {
+		go c.channel.sw.reactor.CastAfter(100*time.Millisecond, &cmd_channel_snd_miss{c.channel, c})
 	}
 
 	c.rcv_last_ack_at = time.Now()
 	c.snd_inflight = len(snd_buf)
-
 	c.snd_buf = snd_buf
-	return unlock
 }
 
 func (c *channel_reliable_t) _update_miss_list() {
@@ -325,19 +219,22 @@ func (c *channel_reliable_t) _update_miss_list() {
 	}
 }
 
-func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
+func (c *channel_reliable_t) can_pop_rcv_pkt() bool {
 
-	for {
-		blocked, err := c._rcv_blocked()
-		if err != nil {
-			return nil, err
-		}
-		if !blocked {
-			break
-		}
-		c.cnd.Wait()
+	if len(c.rcv_buf) == 0 {
+		return false
+	}
+
+	if c.rcv_buf[0].hdr.Seq == c.read_last_seq.Incr() {
+		return true
+	}
+
+	return false
+}
+
+func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
+	if len(c.rcv_buf) == 0 {
+		return nil, nil
 	}
 
 	// pop the packet
@@ -348,164 +245,81 @@ func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
 	c.read_last_seq = pkt.hdr.Seq
 	c.rcv_unacked++
 
-	if pkt.hdr.End {
-		c.read_end = true
+	if c.ack_timer == nil {
+		c.ack_timer = c.channel.sw.reactor.CastAfter(time.Second, &cmd_channel_ack{c.channel, c})
 	}
 
-	// state changed
-	c.cnd.Broadcast()
-
-	return pkt, nil
-}
-
-func (c *channel_reliable_t) _rcv_blocked() (bool, error) {
-	if c.broken || c.snd_end || c.read_end || c.rcv_deadline_reached {
-		// never block when closed
-		return false, c._rcv_err()
-	}
-
-	if len(c.rcv_buf) == 0 {
-		// wait for progress
-		return true, nil
-	}
-
-	next_read_seq := c.read_last_seq.Incr()
-	if c.rcv_buf[0].hdr.Seq != next_read_seq {
-		// wait for progress
-		return true, nil
-	}
-
-	return false, nil
-}
-
-func (c *channel_reliable_t) _rcv_err() error {
-	if c.rcv_deadline_reached {
-		return ErrTimeout
-	}
-
-	if c.broken {
-		return ErrChannelBroken
-	}
-
-	if c.snd_end {
-		return ErrReceiveOnClosedChannel
-	}
-
-	if c.read_end {
-		return io.EOF
-	}
-
-	return nil
-}
-
-func (c *channel_reliable_t) set_rcv_deadline(deadline time.Time) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	c.rcv_deadline = deadline
-	c.rcv_deadline_reached = false
-}
-
-func (c *channel_reliable_t) tick(now time.Time) (ack *pkt_t, miss []*pkt_t) {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	var (
-		err error
-	)
-
-	ack, err = c._get_auto_ack()
-	if err != nil {
-		c.log.Debugf("auto-ack: error=%s", err)
-	}
-
-	miss = c._get_missing_packets(now)
-
-	c._detect_rcv_deadline(now)
-	c._detect_broken(now)
-
-	c.cnd.Broadcast()
-
-	return ack, miss
-}
-
-func (c *channel_reliable_t) _get_auto_ack() (*pkt_t, error) {
-	var (
-		err error
-		now = time.Now()
-	)
-
-	if c.raw {
-		return nil, nil
-	}
-
-	if !c._needs_auto_ack(now) {
-		return nil, nil
-	}
-
-	err = c._snd_ack_err()
-	if err != nil {
-		return nil, err
-	}
-
-	pkt := &pkt_t{}
-	pkt.hdr.C = c.channel_id
-	pkt.hdr.Ack = c.read_last_seq
-	pkt.hdr.Miss = c.miss
-
-	if c.rcv_end {
-		c.snd_end_ack = true
-	}
-	c.rcv_unacked = 0
-	c.snd_last_ack_at = now
-	c.snd_last_ack = pkt.hdr.Ack
-
-	return pkt, nil
-}
-
-func (c *channel_reliable_t) _needs_auto_ack(now time.Time) bool {
-	if c.snd_last_ack_at.IsZero() {
-		if !c.initiator && c.read_last_seq.IsSet() {
-			return true
+	if c.rcv_unacked > 30 {
+		go c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
+	} else if c.snd_last_ack_at.IsZero() {
+		if !c.channel.initiator && c.read_last_seq.IsSet() {
+			go c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
 		} else {
-			c.snd_last_ack_at = now
+			c.snd_last_ack_at = time.Now()
 		}
 	}
 
-	if c.rcv_end && !c.snd_end_ack {
-		return true
-	}
-
-	return c.rcv_unacked > 30 || c.snd_last_ack_at.Before(now.Add(-1*time.Second))
+	return pkt, nil
 }
 
-func (c *channel_reliable_t) _snd_ack_err() error {
-	if c.broken {
-		return ErrChannelBroken
-	}
+// func (c *channel_reliable_t) tick(now time.Time) (ack *pkt_t, miss []*pkt_t) {
+//   var (
+//     err error
+//   )
 
-	return nil
-}
+//   // miss = c._get_missing_packets(now)
 
-func (c *channel_reliable_t) _detect_rcv_deadline(now time.Time) {
-	if c.rcv_deadline_reached {
-		return
-	}
+//   c._detect_broken(now)
 
-	if c.rcv_deadline.IsZero() {
-		return
-	}
+//   return ack, miss
+// }
 
-	if c.rcv_deadline.Before(now) {
-		c.rcv_deadline_reached = true
-	}
-}
+// func (c *channel_reliable_t) _get_auto_ack() (*pkt_t, error) {
+//   var (
+//     err error
+//     now = time.Now()
+//   )
+
+//   if !c._needs_auto_ack(now) {
+//     return nil, nil
+//   }
+
+//   if c.broken {
+//     return nil, ErrChannelBroken
+//   }
+
+//   pkt := &pkt_t{}
+//   pkt.hdr.C = c.channel.options.Id
+//   pkt.hdr.Ack = c.read_last_seq
+//   pkt.hdr.Miss = c.miss
+
+//   if c.channel.rcv_end {
+//     c.snd_end_ack = true
+//   }
+//   c.rcv_unacked = 0
+//   c.snd_last_ack_at = now
+//   c.snd_last_ack = pkt.hdr.Ack
+
+//   return pkt, nil
+// }
+
+// func (c *channel_reliable_t) _needs_auto_ack(now time.Time) bool {
+//   if c.snd_last_ack_at.IsZero() {
+//     if !c.channel.initiator && c.read_last_seq.IsSet() {
+//       return true
+//     } else {
+//       c.snd_last_ack_at = now
+//     }
+//   }
+
+//   if c.channel.rcv_end && !c.snd_end_ack {
+//     return true
+//   }
+
+//   return
+// }
 
 func (c *channel_reliable_t) _get_missing_packets(now time.Time) []*pkt_t {
-	if c.raw {
-		return nil
-	}
-
 	if c.snd_miss_at.After(now.Add(-1 * time.Second)) {
 		return nil
 	}
@@ -532,67 +346,105 @@ func (c *channel_reliable_t) _get_missing_packets(now time.Time) []*pkt_t {
 	return buf
 }
 
-func (c *channel_reliable_t) _detect_broken(now time.Time) {
-	breaking_point := now.Add(-60 * time.Second)
+// func (c *channel_reliable_t) _detect_broken(now time.Time) {
+//   breaking_point := now.Add(-60 * time.Second)
 
-	if c.rcv_last_ack_at.IsZero() {
-		c.rcv_last_ack_at = now
-	}
+//   if c.rcv_last_ack_at.IsZero() {
+//     c.rcv_last_ack_at = now
+//   }
 
-	if c.rcv_last_pkt_at.IsZero() {
-		c.rcv_last_pkt_at = now
-	}
+//   if c.rcv_last_pkt_at.IsZero() {
+//     c.rcv_last_pkt_at = now
+//   }
 
-	if c.snd_last_ack_at.IsZero() {
-		c.snd_last_ack_at = now
-	}
+//   if c.snd_last_ack_at.IsZero() {
+//     c.snd_last_ack_at = now
+//   }
 
-	if c.snd_last_pkt_at.IsZero() {
-		c.snd_last_pkt_at = now
-	}
+//   if c.snd_last_pkt_at.IsZero() {
+//     c.snd_last_pkt_at = now
+//   }
 
-	if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
-		c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
-		c.broken = true
-	}
-}
+//   if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
+//     c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
+//     c.broken = true
+//   }
+// }
 
-func (c *channel_reliable_t) is_closed() bool {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
-
-	if c.broken {
-		return true
-	}
-
-	if c.raw && (c.snd_end || c.rcv_end) {
-		return true
-	}
+func (i *channel_reliable_t) is_closed() bool {
 
 	// when:
 	// - received `end` packet
 	// - and there are no missing packets
 	// - and there are no inflight packets
-	if c.rcv_end && len(c.miss) == 0 && c.snd_inflight == 0 && c.snd_last_ack == c.rcv_last_seq {
+	if i.channel.rcv_end && len(i.miss) == 0 && i.snd_inflight == 0 && i.snd_last_ack == i.rcv_last_seq {
 		return true
 	}
 
 	// when:
 	// - send `end` packet
 	// - and there are no inflight packets
-	if c.snd_end && c.snd_inflight == 0 {
+	if i.channel.snd_end && i.snd_inflight == 0 {
 		return true
 	}
 
 	return false
 }
 
-func (c *channel_reliable_t) mark_as_broken() {
-	c.mtx.Lock()
-	defer c.mtx.Unlock()
+type cmd_channel_ack struct {
+	channel *Channel
+	imp     *channel_reliable_t
+}
 
-	if !c.broken {
-		c.broken = true
-		c.cnd.Broadcast()
+func (cmd *cmd_channel_ack) Exec(sw *Switch) {
+	var (
+		channel = cmd.channel
+		imp     = cmd.imp
+	)
+
+	pkt := &pkt_t{}
+	pkt.hdr.C = channel.options.Id
+	pkt.hdr.Ack = imp.read_last_seq
+	pkt.hdr.Miss = make([]seq_t, len(imp.miss))
+	copy(pkt.hdr.Miss, imp.miss)
+
+	go func() {
+		cmd := cmd_snd_pkt{nil, channel.line, pkt, nil}
+		channel.sw.reactor.Cast(&cmd)
+	}()
+
+	if channel.rcv_end {
+		imp.snd_end_ack = true
 	}
+
+	imp.rcv_unacked = 0
+	imp.snd_last_ack_at = time.Now()
+	imp.snd_last_ack = pkt.hdr.Ack
+
+	imp.ack_timer.Reset(time.Second)
+}
+
+type cmd_channel_snd_miss struct {
+	channel *Channel
+	imp     *channel_reliable_t
+}
+
+func (cmd *cmd_channel_snd_miss) Exec(sw *Switch) {
+	var (
+		channel = cmd.channel
+		imp     = cmd.imp
+		snd_buf []*pkt_t
+	)
+
+	imp.miss_timer = nil
+
+	snd_buf = make([]*pkt_t, len(imp.snd_buf))
+	copy(snd_buf, imp.snd_buf)
+
+	go func() {
+		for _, pkt := range snd_buf {
+			cmd := cmd_snd_pkt{nil, channel.line, pkt, nil}
+			channel.sw.reactor.Cast(&cmd)
+		}
+	}()
 }

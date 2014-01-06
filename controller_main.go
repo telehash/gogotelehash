@@ -283,7 +283,6 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 	}
 
 	l.channels[channel.Id()] = channel
-	channel.line_state_changed()
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
@@ -306,8 +305,8 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 
 func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath NetPath) error {
 	var (
-		err            error
-		local_rsa_key  = l.sw.key
+		err error
+		// local_rsa_key  = l.sw.key
 		local_hashname = l.sw.hashname
 	)
 
@@ -355,7 +354,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath Ne
 	l.idle_timer.Reset(line_idle_timeout)
 	l.sw.main.active_lines[l.prv_key.id] = l
 
-	l.backlog.CatchUp(&l.sw.reactor)
+	l.backlog.RescheduleAll(&l.sw.reactor)
 	return nil
 }
 
@@ -375,15 +374,16 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 	)
 
 	if channel != nil {
-		defer_, err = channel.imp.will_send_packet(pkt)
+		if !channel.can_snd_pkt() {
+			sw.reactor.Defer(&channel.snd_backlog)
+			return
+		}
+		err = channel.will_send_packet(pkt)
 		if err != nil {
 			cmd.err = err
 			return
 		}
-		if defer_ {
-			sw.reactor.Defer(&channel.snd_backlog)
-			return
-		}
+		channel.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 	}
 
 	pkt.peer = line.peer
@@ -409,19 +409,21 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 		return
 	}
 
-	channel.imp.did_send_packet(pkt)
+	if channel != nil {
+		channel.did_send_packet(pkt)
+	}
 }
 
 type cmd_channel_open struct {
 	options ChannelOptions
-	channel channel_i
+	channel *Channel
 	err     error
 }
 
 func (cmd *cmd_channel_open) Exec(sw *Switch) {
 	var (
 		line    *line_t
-		channel channel_i
+		channel *Channel
 		err     error
 	)
 
@@ -450,7 +452,6 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 	}
 
 	line.channels[channel.Id()] = channel
-	channel.line_state_changed()
 
 	line.log.Debugf("channel[%s:%s](%s -> %s): opened",
 		short_hash(channel.Id()),
@@ -526,7 +527,8 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
-		c.line_state_changed()
+		c.mark_as_broken()
+		c.reschedule()
 	}
 
 	cmd.line.broken_timer.Stop()
@@ -549,7 +551,8 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
-		c.line_state_changed()
+		c.mark_as_broken()
+		c.reschedule()
 	}
 
 	cmd.line.broken_timer.Stop()
@@ -572,7 +575,8 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
-		c.line_state_changed()
+		c.mark_as_broken()
+		c.reschedule()
 	}
 
 	cmd.line.broken_timer.Stop()
@@ -631,4 +635,79 @@ func (cmd *cmd_line_snd_seek) Exec(sw *Switch) {
 		}
 		l.log.Noticef("seeking failed: err=%s", err)
 	}()
+}
+
+type cmd_get_rcv_pkt struct {
+	channel *Channel
+	pkt     *pkt_t
+	err     error
+}
+
+func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) {
+	var (
+		channel = cmd.channel
+	)
+
+	if !channel.can_pop_rcv_pkt() {
+		sw.reactor.Defer(&channel.rcv_backlog)
+		return
+	}
+
+	pkt, err := channel.pop_rcv_pkt()
+	cmd.pkt = pkt
+	cmd.err = err
+}
+
+type cmd_channel_set_rcv_deadline struct {
+	channel  *Channel
+	deadline time.Time
+}
+
+func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) {
+	var (
+		channel  = cmd.channel
+		deadline = cmd.deadline
+		now      = time.Now()
+	)
+
+	switch {
+
+	case deadline.IsZero():
+		// unset deadline
+		channel.rcv_deadline_reached = false
+		if channel.rcv_deadline != nil {
+			channel.rcv_deadline.Stop()
+		}
+
+	case deadline.Before(now):
+		// deadline reached (.deadline is in the past)
+		channel.rcv_deadline_reached = true
+		if channel.rcv_deadline != nil {
+			channel.rcv_deadline.Stop()
+		}
+		channel.reschedule()
+
+	default:
+		// deadline scheduled (.deadline is in the future)
+		channel.rcv_deadline_reached = false
+		if channel.rcv_deadline != nil {
+			channel.rcv_deadline.Reset(deadline.Sub(now))
+		} else {
+			sw.reactor.CastAfter(deadline.Sub(now), &cmd_channel_deadline_reached{channel})
+		}
+
+	}
+}
+
+type cmd_channel_deadline_reached struct {
+	channel *Channel
+}
+
+func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) {
+	var (
+		channel = cmd.channel
+	)
+
+	channel.rcv_deadline_reached = true
+	channel.reschedule()
 }

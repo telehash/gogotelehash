@@ -24,7 +24,7 @@ type execer interface {
 
 type backlog_t []cmd
 
-func (b *backlog_t) CatchUp(r *reactor_t) {
+func (b *backlog_t) RescheduleAll(r *reactor_t) {
 	l := *b
 	*b = nil
 
@@ -32,6 +32,23 @@ func (b *backlog_t) CatchUp(r *reactor_t) {
 		for _, cmd := range l {
 			r.commands <- cmd
 		}
+	}()
+}
+
+func (b *backlog_t) RescheduleOne(r *reactor_t) {
+	l := *b
+
+	if len(l) == 0 {
+		return
+	}
+
+	cmd := l[0]
+	copy(l, l[1:])
+	l = l[:len(l)-1]
+	*b = l
+
+	go func() {
+		r.commands <- cmd
 	}()
 }
 
