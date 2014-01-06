@@ -111,7 +111,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	var (
 		priority int
 		pkt      *pkt_t
-		channel  Channel
+		channel  *Channel
 		err      error
 		latency  time.Duration
 		now      = time.Now()
@@ -142,7 +142,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 		return false
 	}
 
-	err = channel.snd_pkt(pkt)
+	err = channel.send_packet(pkt)
 	if err != nil {
 		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
@@ -168,7 +168,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	return true
 }
 
-func (h *path_handler) serve_path(channel Channel) {
+func (h *path_handler) serve_path(channel *Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
@@ -179,7 +179,7 @@ func (h *path_handler) serve_path(channel Channel) {
 		priority = pkt.hdr.Priority
 	}
 
-	err = channel.snd_pkt(&pkt_t{
+	err = channel.send_packet(&pkt_t{
 		hdr: pkt_hdr_t{
 			End:      true,
 			Priority: priority,

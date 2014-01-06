@@ -3,7 +3,6 @@ package telehash
 import (
 	"github.com/fd/go-util/log"
 	"io"
-	"runtime/debug"
 	"sync"
 	"time"
 )
@@ -82,60 +81,34 @@ func (c *channel_reliable_t) Reliablility() Reliablility {
 	return ReliableChannel
 }
 
-func (c *channel_reliable_t) Close() error {
-	return c.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true}})
-}
-
-func (c *channel_reliable_t) Send(hdr interface{}, body []byte) (int, error) {
-	return exported_snd_pkt(c, hdr, body)
-}
-
-func (c *channel_reliable_t) Receive(hdr interface{}, body []byte) (n int, err error) {
-	return exported_rcv_pkt(c, hdr, body)
-}
-
-func (c *channel_reliable_t) Write(b []byte) (n int, err error) {
-	return c.Send(nil, b)
-}
-
-func (c *channel_reliable_t) Read(b []byte) (n int, err error) {
-	return c.Receive(nil, b)
-}
-
 func (c *channel_reliable_t) line_state_changed() {
 	c.cnd.Broadcast()
 }
 
-// snd_pkt()
-// is called by the user code
-//
-// blocks when
-// - there are to many inflight packtes
-// - when the other side didn't send the first ack yet
-// - when there is no open line yet
-//
-// does never block when
-// - the channel is broken
-// - the channel was closed by the other side
-// - the channel was closed by this side
-func (c *channel_reliable_t) snd_pkt(pkt *pkt_t) error {
-	var (
-		err     error
-		blocked bool
-	)
+func (c *channel_reliable_t) will_send_packet(pkt *pkt_t) (defer_ bool, err error) {
+	if c.broken || c.rcv_end || c.snd_end {
+		// never block when closed
+		return false, c._snd_pkt_err()
+	}
 
-	c.mtx.Lock()
+	if c.line.State() == line_closed {
+		return false, ErrPeerBroken
+	}
 
-	for {
-		blocked, err = c._snd_pkt_blocked()
-		if err != nil {
-			c.mtx.Unlock()
-			return err
+	if c.line.State() != line_opened {
+		return true, nil
+	}
+
+	if !c.raw {
+		if c.snd_inflight >= 100 {
+			// wait for progress
+			return true, nil
 		}
-		if !blocked {
-			break
+
+		if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
+			// wait for first ack
+			return true, nil
 		}
-		c.cnd.Wait()
 	}
 
 	pkt.hdr.C = c.channel_id
@@ -152,16 +125,10 @@ func (c *channel_reliable_t) snd_pkt(pkt *pkt_t) error {
 	}
 
 	c.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
+	return false, nil
+}
 
-	c.mtx.Unlock()
-
-	err = c.line.Snd(pkt)
-	if err != nil {
-		return err
-	}
-
-	c.mtx.Lock()
-
+func (c *channel_reliable_t) did_send_packet(pkt *pkt_t) {
 	now := time.Now()
 
 	if c.rcv_end {
@@ -182,39 +149,6 @@ func (c *channel_reliable_t) snd_pkt(pkt *pkt_t) error {
 
 	// state changed
 	c.cnd.Broadcast()
-
-	c.mtx.Unlock()
-
-	return nil
-}
-
-func (c *channel_reliable_t) _snd_pkt_blocked() (bool, error) {
-	if c.broken || c.rcv_end || c.snd_end {
-		// never block when closed
-		return false, c._snd_pkt_err()
-	}
-
-	if c.line.State().test(line_broken, 0) {
-		return false, ErrPeerBroken
-	}
-
-	if c.line.State().test(0, line_opened) {
-		return true, nil
-	}
-
-	if !c.raw {
-		if c.snd_inflight >= 100 {
-			// wait for progress
-			return true, nil
-		}
-
-		if c.initiator && c.snd_last_seq.IsSet() && !c.rcv_last_ack.IsSet() {
-			// wait for first ack
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 func (c *channel_reliable_t) _snd_pkt_err() error {
@@ -462,22 +396,6 @@ func (c *channel_reliable_t) _rcv_err() error {
 	}
 
 	return nil
-}
-
-func (c *channel_reliable_t) run_user_handler() {
-	defer func() {
-		c.log.Debug("handler returned: closing channel")
-
-		r := recover()
-		if r != nil {
-			c.log.Errorf("panic: %s\n%s", r, debug.Stack())
-			c.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true, Err: "internal server error"}})
-		} else {
-			c.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true}})
-		}
-	}()
-
-	c.sw.mux.ServeTelehash(c)
 }
 
 func (c *channel_reliable_t) set_rcv_deadline(deadline time.Time) {

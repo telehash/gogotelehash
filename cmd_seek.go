@@ -1,6 +1,7 @@
 package telehash
 
 import (
+	"errors"
 	"fmt"
 	"github.com/fd/go-util/log"
 	"net"
@@ -36,12 +37,12 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		return err
 	}
 
-	err = channel.snd_pkt(pkt)
+	err = channel.send_packet(pkt)
 	if err != nil {
 		return err
 	}
 
-	defer channel.snd_pkt(&pkt_t{hdr: pkt_hdr_t{End: true, Err: "timeout"}})
+	defer channel.Fatal(errors.New("timeout"))
 
 	channel.set_rcv_deadline(time.Now().Add(15 * time.Second))
 
@@ -154,7 +155,7 @@ func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
 	h.Seek(via, seek)
 }
 
-func (h *seek_handler) serve_seek(channel Channel) {
+func (h *seek_handler) serve_seek(channel *Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
 		return // drop
@@ -175,12 +176,8 @@ func (h *seek_handler) serve_seek(channel Channel) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		line := h.sw.main.GetLine(peer.Hashname())
+		line := h.sw.main.GetActiveLine(peer.Hashname())
 		if line == nil {
-			continue
-		}
-
-		if !line.State().test(line_opened, 0) {
 			continue
 		}
 

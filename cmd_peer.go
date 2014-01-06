@@ -50,7 +50,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 			continue
 		}
 
-		channel.snd_pkt(&pkt_t{
+		channel.send_packet(&pkt_t{
 			hdr: pkt_hdr_t{
 				Peer:  to_hn.String(),
 				Paths: paths,
@@ -60,7 +60,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 	}
 }
 
-func (h *peer_handler) serve_peer(channel Channel) {
+func (h *peer_handler) serve_peer(channel *Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
 		h.log.Debugf("error: %s", err)
@@ -112,7 +112,7 @@ func (h *peer_handler) serve_peer(channel Channel) {
 		h.log.Debugf("peer:connect err=%s", err)
 	}
 
-	err = channel.snd_pkt(&pkt_t{
+	err = channel.send_packet(&pkt_t{
 		hdr: pkt_hdr_t{
 			Paths: paths,
 			End:   true,
@@ -124,7 +124,7 @@ func (h *peer_handler) serve_peer(channel Channel) {
 	}
 }
 
-func (h *peer_handler) serve_connect(channel Channel) {
+func (h *peer_handler) serve_connect(channel *Channel) {
 	pkt, err := channel.pop_rcv_pkt()
 	if err != nil {
 		h.log.Debugf("error: %s", err)
@@ -157,11 +157,5 @@ func (h *peer_handler) serve_connect(channel Channel) {
 
 	h.log.Noticef("received connect-cmd: peer=%s", peer)
 
-	line := h.sw.main.GetLine(peer.Hashname())
-	line.EnsureRunning()
-
-	for _, np := range peer.NetPaths() {
-		h.log.Noticef("snd-open: to=%s netpath=%s", hashname.Short(), np)
-		line.SndOpen(np)
-	}
+	h.sw.seek_handler.Seek(peer.Hashname(), h.sw.hashname)
 }

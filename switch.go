@@ -7,6 +7,7 @@ import (
 
 type Switch struct {
 	AllowRelay    bool
+	reactor       reactor_t
 	main          *main_controller
 	net           *net_controller
 	peer_handler  peer_handler
@@ -42,6 +43,7 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 		AllowRelay: true,
 	}
 
+	s.reactor.sw = s
 	s.peer_handler.init(s)
 	s.seek_handler.init(s)
 	s.path_handler.init(s)
@@ -51,6 +53,7 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 }
 
 func (s *Switch) Start() error {
+	s.reactor.Run()
 
 	main, err := main_controller_open(s)
 	if err != nil {
@@ -70,6 +73,7 @@ func (s *Switch) Start() error {
 func (s *Switch) Stop() error {
 	s.net.close()
 	s.main.Close()
+	s.reactor.StopAndWait()
 	return nil
 }
 
@@ -113,6 +117,6 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 	return hashnames
 }
 
-func (s *Switch) Open(options ChannelOptions) (Channel, error) {
+func (s *Switch) Open(options ChannelOptions) (*Channel, error) {
 	return s.main.OpenChannel(options)
 }

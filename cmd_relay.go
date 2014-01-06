@@ -1,6 +1,7 @@
 package telehash
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/fd/go-util/log"
@@ -82,21 +83,33 @@ func (h *relay_handler) rcv_self(opkt *pkt_t) {
 }
 
 func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
-	line := h.sw.main.GetLine(to)
+	line := h.sw.main.GetActiveLine(to)
 	if line == nil {
 		return // drop
 	}
 
-	err := line.Snd(&pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body})
-	if err != nil {
+	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
+	cmd := cmd_snd_pkt{nil, line, opkt, nil}
+	h.sw.reactor.Call(&cmd)
+	if cmd.err != nil {
 		atomic.AddUint64(&h.num_err_pkt_rly, 1)
-		h.log.Noticef("error: %s opkt=%+v", err, opkt)
+		h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
 		return
 	}
 
 	atomic.AddUint64(&h.num_pkt_rly, 1)
 	h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
-	return
+}
+
+func make_relay_net_path() NetPath {
+	c, err := make_rand(16)
+	if err != nil {
+		return nil
+	}
+
+	return &relay_net_path{
+		C: hex.EncodeToString(c),
+	}
 }
 
 type relay_net_path struct {
@@ -164,7 +177,7 @@ REROUTE:
 				continue
 			}
 
-			if line.State().test(0, line_opened) {
+			if line.State() == line_opened {
 				continue
 			}
 
@@ -184,7 +197,7 @@ REROUTE:
 	}
 
 	line = sw.main.GetActiveLine(n.via)
-	if line.State().test(0, line_opened) {
+	if line.State() == line_opened {
 		n.via = ZeroHashname
 		if routed {
 			return nil // drop
@@ -207,11 +220,12 @@ REROUTE:
 	}
 
 	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
-	err = line.Snd(opkt)
-	if err != nil {
+	cmd := cmd_snd_pkt{nil, line, opkt, nil}
+	h.sw.reactor.Call(&cmd)
+	if cmd.err != nil {
 		n.via = ZeroHashname
 		atomic.AddUint64(&h.num_err_pkt_snd, 1)
-		h.log.Noticef("error: %s opkt=%+v", err, opkt)
+		h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
 		return nil
 	}
 
