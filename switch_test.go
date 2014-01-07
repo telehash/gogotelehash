@@ -23,11 +23,11 @@ func TestOpen(t *testing.T) {
 
 		buf := make([]byte, 1500)
 
-		n, err := c.Receive(nil, nil)
+		n, err := c.Receive(nil, buf)
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("err=%s", err)
 		}
-		Log.Infof("msg=%q", buf[:0])
+		Log.Infof("msg=%q", buf[:n])
 
 		for {
 			buf = buf[:cap(buf)]

@@ -83,14 +83,14 @@ func (h *relay_handler) rcv_self(opkt *pkt_t) {
 }
 
 func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
-	line := h.sw.main.GetActiveLine(to)
-	if line == nil {
+	line := h.sw.main.lines[to]
+	if line == nil || line.State() != line_opened {
 		return // drop
 	}
 
 	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
 	cmd := cmd_snd_pkt{nil, line, opkt, nil}
-	h.sw.reactor.Call(&cmd)
+	go h.sw.reactor.Call(&cmd)
 	if cmd.err != nil {
 		atomic.AddUint64(&h.num_err_pkt_rly, 1)
 		h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
@@ -172,12 +172,8 @@ REROUTE:
 	if n.via == ZeroHashname {
 		routed = true
 		for _, via := range pkt.peer.ViaTable() {
-			line := sw.main.GetActiveLine(via)
-			if line == nil {
-				continue
-			}
-
-			if line.State() == line_opened {
+			line := sw.main.lines[via]
+			if line == nil || line.State() == line_opened {
 				continue
 			}
 
@@ -188,29 +184,22 @@ REROUTE:
 			n.via = via
 			break
 		}
-
-		h.log.Noticef("routing %s via=%+v", n, pkt.peer.ViaTable())
 	}
 
 	if n.via == ZeroHashname {
 		return nil // drop
 	}
 
-	line = sw.main.GetActiveLine(n.via)
-	if line.State() == line_opened {
+	line = sw.main.lines[n.via]
+	if line == nil || line.State() == line_opened {
 		n.via = ZeroHashname
 		if routed {
 			return nil // drop
 		}
 		goto REROUTE
 	}
-	if line == nil {
-		n.via = ZeroHashname
-		if routed {
-			return nil // drop
-		}
-		goto REROUTE
-	}
+
+	h.log.Noticef("routing %s via=%+v", n, pkt.peer.ViaTable())
 
 	data, err := pkt.format_pkt()
 	if err != nil {
@@ -221,16 +210,19 @@ REROUTE:
 
 	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
 	cmd := cmd_snd_pkt{nil, line, opkt, nil}
-	h.sw.reactor.Call(&cmd)
-	if cmd.err != nil {
-		n.via = ZeroHashname
-		atomic.AddUint64(&h.num_err_pkt_snd, 1)
-		h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
-		return nil
-	}
+	go func() {
+		h.sw.reactor.Call(&cmd)
+		if cmd.err != nil {
+			n.via = ZeroHashname
+			atomic.AddUint64(&h.num_err_pkt_snd, 1)
+			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
+			return
+		}
 
-	atomic.AddUint64(&h.num_pkt_snd, 1)
-	h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
+		atomic.AddUint64(&h.num_pkt_snd, 1)
+		h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
+	}()
+
 	return nil
 }
 

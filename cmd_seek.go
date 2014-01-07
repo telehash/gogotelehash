@@ -89,9 +89,8 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 
 		if new_peer {
 			peer.set_active_paths(peer.NetPaths())
+			go h.Seek(peer.hashname, h.sw.hashname)
 		}
-
-		h.sw.main.GetLine(peer.Hashname())
 	}
 
 	return nil

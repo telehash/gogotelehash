@@ -58,39 +58,6 @@ func (l *line_t) State() line_state {
 	return line_state(atomic.LoadUint32((*uint32)(&l.state)))
 }
 
-// func (l *line_t) run_line_loop() {
-//   var (
-//     ack_ticker = time.NewTicker(10 * time.Millisecond)
-//   )
-
-//   defer ack_ticker.Stop()
-
-//   l.log.Noticef("line opened: id=%s:%s",
-//     short_hash(l.prv_key.id),
-//     short_hash(l.pub_key.id))
-
-//   time.Sleep(100 * time.Millisecond)
-
-//   for l.state.test(line_opened, 0) {
-//     select {
-
-//     case now := <-ack_ticker.C:
-
-//       for _, c := range l.channels {
-//         if c.is_closed() {
-//           l.log.Debugf("channel[%s:%s](%s -> %s): closed",
-//             short_hash(c.Id()),
-//             c.Type(),
-//             l.sw.hashname.Short(),
-//             l.peer.Hashname().Short())
-//           delete(l.channels, c.Id())
-//         }
-//       }
-
-//     }
-//   }
-// }
-
 func (l *line_t) SndOpen(np NetPath) error {
 	var (
 		local_rsa_key = l.sw.key

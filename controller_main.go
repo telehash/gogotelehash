@@ -181,6 +181,10 @@ func (cmd *cmd_shutdown) Exec(sw *Switch) {
 	sw.main.state.mod(main_terminating, main_running)
 
 	sw.main.log.Noticef("shutdown lines=%d", len(sw.main.lines))
+
+	for _, line := range sw.main.lines {
+		sw.reactor.CastAfter(10*time.Second, &cmd_line_close_broken{line})
+	}
 }
 
 type cmd_rcv_pkt struct {
@@ -224,6 +228,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 			line = &line_t{}
 			line.Init(sw, peer)
 			main.lines[peer.Hashname()] = line
+			main.num_running_lines += 1
 		}
 
 		cmd.rcv_open_pkt(line, pub, pkt.netpath)
@@ -339,20 +344,21 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath Ne
 	l.peer.SetPublicKey(pub.rsa_pubkey)
 	l.peer.AddNetPath(netpath)
 
-	l.log.Debugf("rcv open from=%s", l.peer)
-
 	l.prv_key = prv
 	l.pub_key = pub
 	l.shr_key = shr
 
 	l.state = line_opened
-	l.open_timer.Stop()
+	stop_timer(l.open_timer)
 	l.open_timer = nil
 	l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
-	l.seek_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_seek{l})
+	l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
 	l.broken_timer.Reset(line_broken_timeout)
 	l.idle_timer.Reset(line_idle_timeout)
 	l.sw.main.active_lines[l.prv_key.id] = l
+	l.sw.main.num_open_lines += 1
+
+	l.log.Debugf("line opened")
 
 	l.backlog.RescheduleAll(&l.sw.reactor)
 	return nil
@@ -369,7 +375,8 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 	var (
 		channel = cmd.channel
 		line    = cmd.line
-		pkt     = cmd.pkt
+		ipkt    = cmd.pkt
+		opkt    *pkt_t
 		err     error
 	)
 
@@ -378,23 +385,22 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 			sw.reactor.Defer(&channel.snd_backlog)
 			return
 		}
-		err = channel.will_send_packet(pkt)
+		err = channel.will_send_packet(ipkt)
 		if err != nil {
 			cmd.err = err
 			return
 		}
-		channel.log.Debugf("snd pkt: hdr=%+v", pkt.hdr)
 	}
 
-	pkt.peer = line.peer
+	ipkt.peer = line.peer
 
-	pkt, err = line.shr_key.enc(pkt)
+	opkt, err = line.shr_key.enc(ipkt)
 	if err != nil {
 		cmd.err = err
 		return
 	}
 
-	sender := pkt.netpath
+	sender := opkt.netpath
 	if sender == nil {
 		sender = line.peer.ActivePath()
 	}
@@ -403,15 +409,18 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 		return
 	}
 
-	err = sender.Send(sw, pkt)
+	err = sender.Send(sw, opkt)
 	if err != nil {
 		cmd.err = err
 		return
 	}
 
 	if channel != nil {
-		channel.did_send_packet(pkt)
+		channel.did_send_packet(ipkt)
+		channel.log.Debugf("snd pkt: hdr=%+v", ipkt.hdr)
 	}
+
+	line.log.Debugf("snd pkt: hdr=%+v", opkt.hdr)
 }
 
 type cmd_channel_open struct {
@@ -493,6 +502,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	}
 
 	main.lines[cmd.options.To] = line
+	sw.main.num_running_lines += 1
 
 	sw.reactor.Defer(&line.backlog)
 	return nil
@@ -531,12 +541,14 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
-	cmd.line.broken_timer.Stop()
-	cmd.line.idle_timer.Stop()
-	cmd.line.path_timer.Stop()
-	cmd.line.seek_timer.Stop()
+	stop_timer(cmd.line.broken_timer)
+	stop_timer(cmd.line.idle_timer)
+	stop_timer(cmd.line.path_timer)
+	stop_timer(cmd.line.seek_timer)
 	delete(sw.main.active_lines, cmd.line.prv_key.id)
 	delete(sw.main.lines, cmd.line.peer.hashname)
+	sw.main.num_open_lines -= 1
+	sw.main.num_running_lines -= 1
 
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
@@ -555,10 +567,10 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
-	cmd.line.broken_timer.Stop()
-	cmd.line.idle_timer.Stop()
-	cmd.line.path_timer.Stop()
-	cmd.line.seek_timer.Stop()
+	stop_timer(cmd.line.broken_timer)
+	stop_timer(cmd.line.idle_timer)
+	stop_timer(cmd.line.path_timer)
+	stop_timer(cmd.line.seek_timer)
 	delete(sw.main.active_lines, cmd.line.prv_key.id)
 	delete(sw.main.lines, cmd.line.peer.hashname)
 
@@ -579,10 +591,10 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
-	cmd.line.broken_timer.Stop()
-	cmd.line.idle_timer.Stop()
-	cmd.line.path_timer.Stop()
-	cmd.line.seek_timer.Stop()
+	stop_timer(cmd.line.broken_timer)
+	stop_timer(cmd.line.idle_timer)
+	stop_timer(cmd.line.path_timer)
+	stop_timer(cmd.line.seek_timer)
 	delete(sw.main.active_lines, cmd.line.prv_key.id)
 	delete(sw.main.lines, cmd.line.peer.hashname)
 }
@@ -592,6 +604,10 @@ type cmd_line_snd_path struct {
 }
 
 func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
+	if sw.main.State().test(main_terminating, 0) {
+		return
+	}
+
 	if cmd.line.state != line_opened {
 		return
 	}
@@ -656,6 +672,10 @@ func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) {
 	pkt, err := channel.pop_rcv_pkt()
 	cmd.pkt = pkt
 	cmd.err = err
+
+	if err == nil && pkt == nil {
+		sw.reactor.Defer(&channel.rcv_backlog)
+	}
 }
 
 type cmd_channel_set_rcv_deadline struct {
@@ -676,14 +696,14 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) {
 		// unset deadline
 		channel.rcv_deadline_reached = false
 		if channel.rcv_deadline != nil {
-			channel.rcv_deadline.Stop()
+			stop_timer(channel.rcv_deadline)
 		}
 
 	case deadline.Before(now):
 		// deadline reached (.deadline is in the past)
 		channel.rcv_deadline_reached = true
 		if channel.rcv_deadline != nil {
-			channel.rcv_deadline.Stop()
+			stop_timer(channel.rcv_deadline)
 		}
 		channel.reschedule()
 
@@ -710,4 +730,10 @@ func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) {
 
 	channel.rcv_deadline_reached = true
 	channel.reschedule()
+}
+
+func stop_timer(t *time.Timer) {
+	if t != nil {
+		t.Stop()
+	}
 }

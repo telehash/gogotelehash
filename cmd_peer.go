@@ -30,7 +30,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		if relay == nil {
 			c, err := make_rand(16)
 			if err != nil {
-				h.log.Debugf("error: %s", err)
+				h.log.Noticef("error: %s", err)
 				return
 			}
 
@@ -63,7 +63,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 func (h *peer_handler) serve_peer(channel *Channel) {
 	pkt, err := channel.receive_packet()
 	if err != nil {
-		h.log.Debugf("error: %s", err)
+		h.log.Noticef("error: %s", err)
 		return
 	}
 
@@ -94,7 +94,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 
 	pubkey, err := enc_DER_RSA(from_peer.PublicKey())
 	if err != nil {
-		h.log.Debugf("error: %s", err)
+		h.log.Noticef("error: %s", err)
 		return
 	}
 
@@ -109,7 +109,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	options := ChannelOptions{To: peer_hashname, Type: "connect", Reliablility: UnreliableChannel}
 	channel, err = h.sw.main.OpenChannel(options)
 	if err != nil {
-		h.log.Debugf("peer:connect err=%s", err)
+		h.log.Noticef("peer:connect err=%s", err)
 	}
 
 	err = channel.send_packet(&pkt_t{
@@ -120,26 +120,26 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		body: pubkey,
 	})
 	if err != nil {
-		h.log.Debugf("peer:connect err=%s", err)
+		h.log.Noticef("peer:connect err=%s", err)
 	}
 }
 
 func (h *peer_handler) serve_connect(channel *Channel) {
 	pkt, err := channel.receive_packet()
 	if err != nil {
-		h.log.Debugf("error: %s", err)
+		h.log.Noticef("error: %s", err)
 		return
 	}
 
 	pubkey, err := dec_DER_RSA(pkt.body)
 	if err != nil {
-		h.log.Debugf("error: %s", err)
+		h.log.Noticef("error: %s", err)
 		return
 	}
 
 	hashname, err := HashnameFromPublicKey(pubkey)
 	if err != nil {
-		h.log.Debugf("error: %s", err)
+		h.log.Noticef("error: %s", err)
 		return
 	}
 

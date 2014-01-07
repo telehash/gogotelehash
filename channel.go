@@ -133,7 +133,7 @@ func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
 }
 
 func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
-	pkt, err := c.imp.pop_rcv_pkt()
+	pkt, err := c.receive_packet()
 	if err != nil {
 		return 0, err
 	}

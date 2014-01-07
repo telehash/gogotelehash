@@ -138,13 +138,13 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	options := ChannelOptions{To: to, Type: "path", Reliablility: UnreliableChannel}
 	channel, err = h.sw.main.OpenChannel(options)
 	if err != nil {
-		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
 
 	err = channel.send_packet(pkt)
 	if err != nil {
-		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
 
@@ -152,7 +152,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 
 	pkt, err = channel.receive_packet()
 	if err != nil {
-		h.log.Noticef("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
 

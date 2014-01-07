@@ -30,7 +30,7 @@ func (b *backlog_t) RescheduleAll(r *reactor_t) {
 
 	go func() {
 		for _, cmd := range l {
-			r.commands <- cmd
+			r.push(cmd)
 		}
 	}()
 }
@@ -48,7 +48,7 @@ func (b *backlog_t) RescheduleOne(r *reactor_t) {
 	*b = l
 
 	go func() {
-		r.commands <- cmd
+		r.push(cmd)
 	}()
 }
 
@@ -98,18 +98,23 @@ func (r *reactor_t) Defer(b *backlog_t) {
 
 func (r *reactor_t) Call(e execer) {
 	c := cmd{e, make(chan bool)}
-	r.commands <- c
+	r.push(c)
 	<-c.reply
 }
 
 func (r *reactor_t) CallAsync(e execer) <-chan bool {
 	c := cmd{e, make(chan bool, 1)}
-	r.commands <- c
+	r.push(c)
 	return c.reply
 }
 
 func (r *reactor_t) Cast(e execer) {
-	r.commands <- cmd{e, nil}
+	r.push(cmd{e, nil})
+}
+
+func (r *reactor_t) push(c cmd) {
+	defer func() { recover() }()
+	r.commands <- c
 }
 
 func (r *reactor_t) CastAfter(d time.Duration, e execer) *time.Timer {
