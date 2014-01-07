@@ -86,7 +86,7 @@ func make_key() *rsa.PrivateKey {
 	return key
 }
 
-func pong(c *Channel) {
+func pong(c *telehash.Channel) {
 	var (
 		body = make([]byte, 1500)
 	)

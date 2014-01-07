@@ -23,7 +23,7 @@ func (h *seek_handler) init(sw *Switch) {
 }
 
 func (h *seek_handler) Seek(via, seek Hashname) error {
-	h.log.Infof("seeking=%s via=%s", seek.Short(), via.Short())
+	h.log.Debugf("seeking=%s via=%s", seek.Short(), via.Short())
 
 	pkt := &pkt_t{
 		hdr: pkt_hdr_t{
@@ -52,7 +52,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		return err
 	}
 
-	h.log.Infof("rcv seek: see=%+v", reply.hdr.See)
+	h.log.Debugf("rcv seek: see=%+v", reply.hdr.See)
 
 	for _, rec := range reply.hdr.See {
 		fields := strings.Split(rec, ",")
@@ -180,7 +180,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 			continue
 		}
 
-		h.log.Infof("netpaths for %s: %+v", peer, peer.NetPaths())
+		h.log.Debugf("netpaths for %s: %+v", peer, peer.NetPaths())
 	FOR_NETPATHS:
 		for _, np := range peer.NetPaths() {
 			if ip, port, ok := np.AddressForSeek(); ok {
@@ -195,7 +195,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 		}
 	}
 
-	h.log.Infof("rcv seek: see=%+v closest=%+v", see, closest)
+	h.log.Debugf("rcv seek: see=%+v closest=%+v", see, closest)
 
 	err = channel.send_packet(&pkt_t{
 		hdr: pkt_hdr_t{

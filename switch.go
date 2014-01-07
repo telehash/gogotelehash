@@ -99,9 +99,10 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		peer.set_active_paths(peer.NetPaths())
 	}
 
-	s.main.GetLine(peer.Hashname())
-
-	s.seek_handler.RecusiveSeek(s.hashname, 10)
+	err = s.seek_handler.Seek(hashname, s.hashname)
+	if err != nil {
+		return hashname, err
+	}
 
 	return hashname, nil
 }

@@ -164,7 +164,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	latency = time.Now().Sub(now)
 	// TODO record latency
 
-	h.log.Noticef("path: to=%s netpath=%s priority=%d latency=%s send-paths=%s", to.Short(), netpath, priority, latency, paths)
+	h.log.Debugf("path: to=%s netpath=%s priority=%d latency=%s", to.Short(), netpath, priority, latency)
 	return true
 }
 

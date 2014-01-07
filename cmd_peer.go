@@ -146,6 +146,7 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 	peer, newpeer := h.sw.main.AddPeer(hashname)
 
 	peer.SetPublicKey(pubkey)
+	peer.AddVia(channel.To())
 
 	for _, np := range pkt.hdr.Paths {
 		peer.AddNetPath(np)
@@ -155,7 +156,7 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 		peer.set_active_paths(peer.NetPaths())
 	}
 
-	h.log.Noticef("received connect-cmd: peer=%s", peer)
+	h.log.Noticef("received connect-cmd: peer=%s paths=%s", peer, peer.ActivePath())
 
 	h.sw.seek_handler.Seek(peer.Hashname(), h.sw.hashname)
 }

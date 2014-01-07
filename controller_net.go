@@ -3,7 +3,6 @@ package telehash
 import (
 	"github.com/fd/go-util/log"
 	"net"
-	"runtime"
 	"sync"
 	"sync/atomic"
 )
@@ -43,10 +42,8 @@ func net_controller_open(sw *Switch) (*net_controller, error) {
 		deny: make(map[string]bool),
 	}
 
-	for i := 0; i < runtime.NumCPU(); i++ {
-		c.wg.Add(1)
-		go c._reader_loop()
-	}
+	c.wg.Add(1)
+	go c._reader_loop()
 
 	return c, nil
 }

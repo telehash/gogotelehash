@@ -63,23 +63,25 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 }
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
-	ipkt, err := parse_pkt(opkt.body, nil, &relay_net_path{opkt.hdr.C, ZeroHashname, 0, 0})
-	if err != nil {
-		atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-		h.log.Noticef("error: %s opkt=%+v", err, opkt)
-		return
-	}
+	go func() {
+		ipkt, err := parse_pkt(opkt.body, nil, &relay_net_path{opkt.hdr.C, ZeroHashname, 0, 0})
+		if err != nil {
+			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
+			h.log.Noticef("error: %s opkt=%+v", err, opkt)
+			return
+		}
 
-	err = h.sw.main.RcvPkt(ipkt)
-	if err != nil {
-		atomic.AddUint64(&h.num_err_pkt_rcv, 1)
-		h.log.Noticef("error: %s ipkt=%+v", err, ipkt)
-		return
-	}
+		err = h.sw.main.RcvPkt(ipkt)
+		if err != nil {
+			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
+			h.log.Noticef("error: %s ipkt=%+v", err, ipkt)
+			return
+		}
 
-	atomic.AddUint64(&h.num_pkt_rcv, 1)
-	h.log.Debugf("rcv-self: %+v %q", opkt.hdr, opkt.body)
-	return
+		atomic.AddUint64(&h.num_pkt_rcv, 1)
+		h.log.Debugf("rcv-self: %+v %q", opkt.hdr, opkt.body)
+		return
+	}()
 }
 
 func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
@@ -88,17 +90,19 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 		return // drop
 	}
 
-	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
-	cmd := cmd_snd_pkt{nil, line, opkt, nil}
-	go h.sw.reactor.Call(&cmd)
-	if cmd.err != nil {
-		atomic.AddUint64(&h.num_err_pkt_rly, 1)
-		h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
-		return
-	}
+	go func() {
+		opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
+		cmd := cmd_snd_pkt{nil, line, opkt, nil}
+		go h.sw.reactor.Call(&cmd)
+		if cmd.err != nil {
+			atomic.AddUint64(&h.num_err_pkt_rly, 1)
+			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
+			return
+		}
 
-	atomic.AddUint64(&h.num_pkt_rly, 1)
-	h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
+		atomic.AddUint64(&h.num_pkt_rly, 1)
+		h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
+	}()
 }
 
 func make_relay_net_path() NetPath {
@@ -173,7 +177,7 @@ REROUTE:
 		routed = true
 		for _, via := range pkt.peer.ViaTable() {
 			line := sw.main.lines[via]
-			if line == nil || line.State() == line_opened {
+			if line == nil || line.State() != line_opened {
 				continue
 			}
 
@@ -191,7 +195,7 @@ REROUTE:
 	}
 
 	line = sw.main.lines[n.via]
-	if line == nil || line.State() == line_opened {
+	if line == nil || line.State() != line_opened {
 		n.via = ZeroHashname
 		if routed {
 			return nil // drop
@@ -199,7 +203,7 @@ REROUTE:
 		goto REROUTE
 	}
 
-	h.log.Noticef("routing %s via=%+v", n, pkt.peer.ViaTable())
+	h.log.Noticef("routing %s", n)
 
 	data, err := pkt.format_pkt()
 	if err != nil {
@@ -209,8 +213,8 @@ REROUTE:
 	}
 
 	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
-	cmd := cmd_snd_pkt{nil, line, opkt, nil}
 	go func() {
+		cmd := cmd_snd_pkt{nil, line, opkt, nil}
 		h.sw.reactor.Call(&cmd)
 		if cmd.err != nil {
 			n.via = ZeroHashname

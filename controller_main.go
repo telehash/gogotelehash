@@ -541,14 +541,24 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
+	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
 	stop_timer(cmd.line.seek_timer)
-	delete(sw.main.active_lines, cmd.line.prv_key.id)
-	delete(sw.main.lines, cmd.line.peer.hashname)
-	sw.main.num_open_lines -= 1
-	sw.main.num_running_lines -= 1
+
+	if cmd.line.prv_key != nil {
+		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
+			sw.main.num_open_lines -= 1
+			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		}
+	}
+	if cmd.line.peer != nil {
+		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
+			sw.main.num_running_lines -= 1
+			delete(sw.main.lines, cmd.line.peer.hashname)
+		}
+	}
 
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
@@ -567,12 +577,24 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
+	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
 	stop_timer(cmd.line.seek_timer)
-	delete(sw.main.active_lines, cmd.line.prv_key.id)
-	delete(sw.main.lines, cmd.line.peer.hashname)
+
+	if cmd.line.prv_key != nil {
+		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
+			sw.main.num_open_lines -= 1
+			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		}
+	}
+	if cmd.line.peer != nil {
+		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
+			sw.main.num_running_lines -= 1
+			delete(sw.main.lines, cmd.line.peer.hashname)
+		}
+	}
 
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
@@ -591,12 +613,28 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) {
 		c.reschedule()
 	}
 
+	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
 	stop_timer(cmd.line.seek_timer)
-	delete(sw.main.active_lines, cmd.line.prv_key.id)
-	delete(sw.main.lines, cmd.line.peer.hashname)
+
+	if cmd.line.prv_key != nil {
+		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
+			sw.main.num_open_lines -= 1
+			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		}
+	}
+	if cmd.line.peer != nil {
+		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
+			sw.main.num_running_lines -= 1
+			delete(sw.main.lines, cmd.line.peer.hashname)
+		}
+	}
+
+	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
+		cmd.line.peer.String(),
+		"peer down")
 }
 
 type cmd_line_snd_path struct {
