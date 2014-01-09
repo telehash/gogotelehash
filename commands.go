@@ -88,10 +88,10 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 		}
 
 		peer, newpeer := sw.peers.add_peer(sw, pub.hashname)
-		peer.AddNetPath(pkt.netpath)
+		peer.add_net_path(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
 		if newpeer {
-			peer.set_active_paths(peer.NetPaths())
+			peer.set_active_paths(peer.net_paths())
 		}
 
 		line := sw.lines[peer.Hashname()]
@@ -133,7 +133,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 
 	// send pkt to existing channel
 	if channel := l.channels[ipkt.hdr.C]; channel != nil {
-		l.peer.AddNetPath(ipkt.netpath)
+		l.peer.add_net_path(ipkt.netpath)
 		l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 		return channel.push_rcv_pkt(ipkt)
 	}
@@ -173,13 +173,13 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 		return err
 	}
 
-	l.peer.AddNetPath(ipkt.netpath)
+	l.peer.add_net_path(ipkt.netpath)
 	go channel.run_user_handler()
 
 	return nil
 }
 
-func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath NetPath) error {
+func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *net_path) error {
 	var (
 		err error
 		// local_rsa_key  = l.sw.key
@@ -213,7 +213,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath Ne
 	}
 
 	l.peer.SetPublicKey(pub.rsa_pubkey)
-	l.peer.AddNetPath(netpath)
+	l.peer.add_net_path(netpath)
 
 	l.prv_key = prv
 	l.pub_key = pub
@@ -273,7 +273,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 
 	sender := opkt.netpath
 	if sender == nil {
-		sender = line.peer.ActivePath()
+		sender = line.peer.active_path()
 	}
 	if sender == nil {
 		cmd.err = ErrPeerBroken
@@ -379,8 +379,8 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 }
 
 func (cmd *cmd_channel_open) open(l *line_t, peer *Peer) error {
-	if len(peer.NetPaths()) == 0 && len(peer.via) != 0 {
-		peer.AddNetPath(make_relay_net_path())
+	if len(peer.net_paths()) == 0 && len(peer.via) != 0 {
+		peer.add_net_path(&net_path{Network: "relay", Address: make_relay_addr()})
 	}
 
 	if peer.pubkey == nil && len(peer.via) != 0 {

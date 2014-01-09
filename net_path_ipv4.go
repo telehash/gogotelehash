@@ -8,7 +8,7 @@ import (
 	"strconv"
 )
 
-type IPv4NetPath struct {
+type IPv4net_path struct {
 	cat            ip_addr_category
 	IP             net.IP
 	Port           int
@@ -16,7 +16,7 @@ type IPv4NetPath struct {
 	priority_delta net_path_priority
 }
 
-func (n *IPv4NetPath) Priority() int {
+func (n *IPv4net_path) Priority() int {
 	// 1 = relay 2 = bridge 3-8 ip
 	switch n.cat {
 	case ip_localhost:
@@ -30,19 +30,19 @@ func (n *IPv4NetPath) Priority() int {
 	}
 }
 
-func (n *IPv4NetPath) Demote() {
+func (n *IPv4net_path) Demote() {
 	n.priority_delta.Add(-1)
 }
 
-func (n *IPv4NetPath) Break() {
+func (n *IPv4net_path) Break() {
 	n.priority_delta.Add(-3 - n.Priority())
 }
 
-func (n *IPv4NetPath) ResetPriority() {
+func (n *IPv4net_path) ResetPriority() {
 	n.priority_delta.Reset()
 }
 
-func (n *IPv4NetPath) Hash() uint32 {
+func (n *IPv4net_path) Hash() uint32 {
 	if n.hash == 0 {
 		h := fnv.New32()
 		fmt.Fprintln(h, "ipv4")
@@ -53,33 +53,33 @@ func (n *IPv4NetPath) Hash() uint32 {
 	return n.hash
 }
 
-func (n *IPv4NetPath) AddressForSeek() (string, int, bool) {
+func (n *IPv4net_path) AddressForSeek() (string, int, bool) {
 	if n.cat == ip_wan {
 		return n.IP.String(), n.Port, true
 	}
 	return "", 0, false
 }
 
-func (n *IPv4NetPath) IncludeInConnect() bool {
+func (n *IPv4net_path) IncludeInConnect() bool {
 	if n.cat == ip_wan {
 		return true
 	}
 	return false
 }
 
-func (n *IPv4NetPath) SendNatBreaker() bool {
+func (n *IPv4net_path) SendNatBreaker() bool {
 	return n.cat == ip_wan
 }
 
-func (n *IPv4NetPath) String() string {
+func (n *IPv4net_path) String() string {
 	return fmt.Sprintf("<net-ipv4 %s %s port=%d>", n.IP, n.cat, n.Port)
 }
 
-func (n *IPv4NetPath) Send(sw *Switch, pkt *pkt_t) error {
+func (n *IPv4net_path) Send(sw *Switch, pkt *pkt_t) error {
 	return ip_snd_pkt(sw, &net.UDPAddr{IP: n.IP, Port: n.Port}, pkt)
 }
 
-func (n *IPv4NetPath) MarshalJSON() ([]byte, error) {
+func (n *IPv4net_path) MarshalJSON() ([]byte, error) {
 	var (
 		j = struct {
 			IP   string `json:"ip"`
@@ -93,7 +93,7 @@ func (n *IPv4NetPath) MarshalJSON() ([]byte, error) {
 	return json.Marshal(j)
 }
 
-func (n *IPv4NetPath) UnmarshalJSON(data []byte) error {
+func (n *IPv4net_path) UnmarshalJSON(data []byte) error {
 	var (
 		j struct {
 			IP   string `json:"ip"`
@@ -110,12 +110,12 @@ func (n *IPv4NetPath) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("Invalid IPv4 netpath")
 	}
 
-	m, err := ParseIPNetPath(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
+	m, err := ParseIPnet_path(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
 	if err != nil {
 		return err
 	}
 
-	if o, ok := m.(*IPv4NetPath); ok {
+	if o, ok := m.(*IPv4net_path); ok {
 		*n = *o
 		return nil
 	}

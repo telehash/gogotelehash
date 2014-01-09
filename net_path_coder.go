@@ -8,9 +8,9 @@ import (
 
 var (
 	np_name_to_type = map[string]reflect.Type{
-		"ipv4":  reflect.TypeOf(IPv4NetPath{}),
-		"ipv6":  reflect.TypeOf(IPv6NetPath{}),
-		"relay": reflect.TypeOf(relay_net_path{}),
+		"ipv4":  reflect.TypeOf(IPv4net_path{}),
+		"ipv6":  reflect.TypeOf(IPv6net_path{}),
+		"relay": reflect.TypeOf(relay_addr{}),
 	}
 	np_type_to_name = func() map[reflect.Type]string {
 		m := map[reflect.Type]string{}
@@ -21,7 +21,7 @@ var (
 	}()
 )
 
-func DecodeNetPath(data []byte) (NetPath, error) {
+func (s *Switch) decode_net_path(data []byte) (*net_path, error) {
 	var (
 		typ struct {
 			Type string `json:"type"`
@@ -38,7 +38,7 @@ func DecodeNetPath(data []byte) (NetPath, error) {
 		return nil, fmt.Errorf("Unknown type %q", typ.Type)
 	}
 
-	np := reflect.New(t).Interface().(NetPath)
+	np := reflect.New(t).Interface().(net_path)
 
 	err = json.Unmarshal(data, &np)
 	if err != nil {
@@ -48,7 +48,7 @@ func DecodeNetPath(data []byte) (NetPath, error) {
 	return np, nil
 }
 
-func EncodeNetPath(n NetPath) ([]byte, error) {
+func (s *Switch) encode_net_path(n *net_path) ([]byte, error) {
 	t := reflect.TypeOf(n)
 	for t.Kind() == reflect.Ptr {
 		t = t.Elem()

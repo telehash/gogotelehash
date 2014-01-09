@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/fd/go-util/log"
-	"hash/fnv"
+	"github.com/telehash/gogotelehash/net"
 	"sync/atomic"
 )
 
@@ -60,7 +60,7 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	go func() {
-		ipkt, err := parse_pkt(opkt.body, nil, &relay_net_path{opkt.hdr.C, ZeroHashname, 0, 0})
+		ipkt, err := parse_pkt(opkt.body, nil, &relay_addr{opkt.hdr.C, ZeroHashname, 0, 0})
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s opkt=%+v", err, opkt)
@@ -101,65 +101,64 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 	}()
 }
 
-func make_relay_net_path() NetPath {
+func make_relay_addr() net.Addr {
 	c, err := make_hex_rand(16)
 	if err != nil {
 		return nil
 	}
 
-	return &relay_net_path{C: c}
+	return &relay_addr{C: c}
 }
 
-type relay_net_path struct {
-	C              string
-	via            Hashname
-	hash           uint32
-	priority_delta net_path_priority
+type relay_addr struct {
+	C   string
+	via Hashname
 }
 
-func (n *relay_net_path) Priority() int {
-	return 0 + n.priority_delta.Get()
+func (n *relay_addr) DefaultPriority() int {
+	return 0
 }
 
-func (n *relay_net_path) Demote() {
-	n.priority_delta.Add(-1)
+func (n *relay_addr) PublishWithPath() bool {
+	return false
 }
 
-func (n *relay_net_path) Break() {
-	n.priority_delta.Add(-3 - n.Priority())
+func (n *relay_addr) PublishWithPeer() bool {
+	return true
 }
 
-func (n *relay_net_path) ResetPriority() {
-	n.priority_delta.Reset()
+func (n *relay_addr) PublishWithConnect() bool {
+	return true
 }
 
-func (n *relay_net_path) Hash() uint32 {
-	if n.hash == 0 {
-		h := fnv.New32()
-		fmt.Fprintln(h, "relay")
-		fmt.Fprintln(h, n.C)
-		n.hash = h.Sum32()
+func (n *relay_addr) PublishWithSeek() bool {
+	return false
+}
+
+func (n *relay_addr) NeedNatHolePunching() bool {
+	return false
+}
+
+func (r *relay_addr) SeekString() string {
+	return ""
+}
+
+func (n *relay_addr) SendNatBreaker() bool {
+	return false
+}
+
+func (n *relay_addr) EqualTo(other net.Addr) bool {
+	if o, ok := other.(*relay_addr); ok {
+		return o.C == n.C
 	}
-	return n.hash
-}
-
-func (n *relay_net_path) AddressForSeek() (ip string, port int, ok bool) {
-	return "", 0, false
-}
-
-func (n *relay_net_path) IncludeInConnect() bool {
 	return false
 }
 
-func (n *relay_net_path) SendNatBreaker() bool {
-	return false
-}
-
-func (n *relay_net_path) String() string {
+func (n *relay_addr) String() string {
 	return fmt.Sprintf("<relay c=%s via=%s>", n.C, n.via.Short())
 }
 
-func (n *relay_net_path) Send(sw *Switch, pkt *pkt_t) error {
+func (n *relay_addr) Send(sw *Switch, pkt *pkt_t) error {
 	var (
 		h      = &sw.relay_handler
 		line   *line_t
@@ -175,7 +174,7 @@ REROUTE:
 				continue
 			}
 
-			if _, is_relay := line.peer.ActivePath().(*relay_net_path); is_relay {
+			if line.peer.active_path().Network == "relay" {
 				continue
 			}
 
@@ -224,7 +223,7 @@ REROUTE:
 	return nil
 }
 
-func (n *relay_net_path) MarshalJSON() ([]byte, error) {
+func (n *relay_addr) MarshalJSON() ([]byte, error) {
 	var (
 		j = struct {
 			C string `json:"c"`
@@ -236,7 +235,7 @@ func (n *relay_net_path) MarshalJSON() ([]byte, error) {
 	return json.Marshal(j)
 }
 
-func (n *relay_net_path) UnmarshalJSON(data []byte) error {
+func (n *relay_addr) UnmarshalJSON(data []byte) error {
 	var (
 		j struct {
 			C string `json:"c"`

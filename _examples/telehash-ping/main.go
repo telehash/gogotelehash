@@ -8,13 +8,26 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/net/ipv4"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
 )
 
+import (
+	"net/http"
+	_ "net/http/pprof"
+)
+
 func main() {
+
+	if os.Getenv("PROFILE") == "true" {
+		go func() {
+			http.ListenAndServe("localhost:6060", nil)
+		}()
+	}
+
 	defer fmt.Println("BYE!")
 
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)

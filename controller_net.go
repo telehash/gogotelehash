@@ -105,7 +105,7 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 	}
 
 	// unpack the outer packet
-	netpath := NetPathFromAddr(addr)
+	netpath := net_pathFromAddr(addr)
 	pkt, err = parse_pkt(buf, nil, netpath)
 	if err != nil {
 		atomic.AddUint64(&c.num_err_pkt_rcv, 1)
@@ -126,9 +126,9 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 }
 
 func (c *net_controller) send_nat_breaker(peer *Peer) {
-	for _, np := range peer.NetPaths() {
-		if np.SendNatBreaker() {
-			np.Send(c.sw, nat_breaker_pkt)
+	for _, np := range peer.net_paths() {
+		if np.Address.NeedNatHolePunching() {
+			np.Send(c.sw, &pkt_t{})
 		}
 	}
 }

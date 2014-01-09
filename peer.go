@@ -10,8 +10,8 @@ import (
 type Peer struct {
 	sw           *Switch
 	hashname     Hashname
-	paths        NetPaths
-	active_paths NetPaths
+	paths        net_paths
+	active_paths net_paths
 	pubkey       *rsa.PublicKey
 	is_down      bool
 	via          map[Hashname]bool
@@ -76,16 +76,16 @@ func (p *Peer) ViaTable() []Hashname {
 	return m
 }
 
-func (p *Peer) NetPaths() NetPaths {
+func (p *Peer) net_paths() net_paths {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
-	paths := make(NetPaths, len(p.paths))
+	paths := make(net_paths, len(p.paths))
 	copy(paths, p.paths)
 	return paths
 }
 
-func (p *Peer) AddNetPath(netpath NetPath) NetPath {
+func (p *Peer) add_net_path(netpath *net_path) *net_path {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
@@ -94,7 +94,7 @@ func (p *Peer) AddNetPath(netpath NetPath) NetPath {
 	)
 
 	for _, np := range p.paths {
-		if EqualNetPaths(np, netpath) {
+		if Equalnet_paths(np, netpath) {
 			netpath = np
 			found = true
 			break
@@ -119,7 +119,7 @@ func (p *Peer) update_paths() {
 	}
 }
 
-func (p *Peer) ActivePath() NetPath {
+func (p *Peer) active_path() *net_path {
 	if p == nil {
 		return nil
 	}
@@ -134,7 +134,7 @@ func (p *Peer) ActivePath() NetPath {
 	return p.active_paths[0]
 }
 
-func (p *Peer) set_active_paths(paths NetPaths) {
+func (p *Peer) set_active_paths(paths net_paths) {
 	if p == nil {
 		return
 	}

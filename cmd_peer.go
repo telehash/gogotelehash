@@ -22,10 +22,10 @@ func (h *peer_handler) SendPeer(to *Peer) {
 
 	h.sw.net.send_nat_breaker(to)
 
-	paths := NetPaths{}
+	paths := net_paths{}
 
 	if h.sw.AllowRelay {
-		relay := to.NetPaths().FirstOfType(&relay_net_path{})
+		relay := to.net_paths().FirstOfType("relay")
 		if relay == nil {
 			c, err := make_hex_rand(16)
 			if err != nil {
@@ -33,7 +33,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 				return
 			}
 
-			relay = to.AddNetPath(&relay_net_path{C: c})
+			relay = to.add_net_path(&net_path{Network: "relay", Address: &relay_addr{C: c}})
 		}
 		paths = append(paths, relay)
 	}
@@ -96,8 +96,8 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	}
 
 	paths := pkt.hdr.Paths
-	for _, np := range from_peer.NetPaths() {
-		if np.IncludeInConnect() {
+	for _, np := range from_peer.net_paths() {
+		if np.Address.PublishWithConnect() {
 			paths = append(paths, np)
 		}
 	}
@@ -147,14 +147,14 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 	peer.is_down = false
 
 	for _, np := range pkt.hdr.Paths {
-		peer.AddNetPath(np)
+		peer.add_net_path(np)
 	}
 
 	if newpeer {
-		peer.set_active_paths(peer.NetPaths())
+		peer.set_active_paths(peer.net_paths())
 	}
 
-	h.log.Noticef("received connect-cmd: peer=%s paths=%s", peer, peer.ActivePath())
+	h.log.Noticef("received connect-cmd: peer=%s paths=%s", peer, peer.active_path())
 
 	h.sw.seek_handler.Seek(peer.Hashname(), h.sw.hashname)
 }

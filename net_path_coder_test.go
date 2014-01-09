@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-func TestNetPathCoder(t *testing.T) {
+func Testnet_pathCoder(t *testing.T) {
 	var table = []struct{ I, E string }{
 		{`{"type":"ipv4","ip":"127.0.0.1","port":1024}`, ""},
 		{`{"type":"ipv6","ip":"::1","port":1024}`, ""},
@@ -17,7 +17,7 @@ func TestNetPathCoder(t *testing.T) {
 	}
 
 	for i, row := range table {
-		np, err := DecodeNetPath([]byte(row.I))
+		np, err := decode_net_path([]byte(row.I))
 		if err != nil {
 			if err.Error() != row.E {
 				t.Errorf("[%d]: expected error to be %q but was %q", i, row.E, err)
@@ -30,7 +30,7 @@ func TestNetPathCoder(t *testing.T) {
 			continue
 		}
 
-		o, err := EncodeNetPath(np)
+		o, err := encode_net_path(np)
 		if err != nil {
 			if err.Error() != row.E {
 				t.Errorf("[%d]: expected error to be %q but was %q", i, row.E, err)

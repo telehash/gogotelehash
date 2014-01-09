@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestNetPathIPLan(t *testing.T) {
+func Testnet_pathIPLan(t *testing.T) {
 	var ips = []string{
 		"192.168.0.177",
 		"fc00::6598",

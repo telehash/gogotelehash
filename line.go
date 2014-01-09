@@ -58,16 +58,16 @@ func (l *line_t) State() line_state {
 	return line_state(atomic.LoadUint32((*uint32)(&l.state)))
 }
 
-func (l *line_t) SndOpen(np NetPath) error {
+func (l *line_t) SndOpen(np *net_path) error {
 	var (
 		local_rsa_key = l.sw.key
-		netpaths      []NetPath
+		netpaths      []*net_path
 	)
 
 	if np == nil {
-		netpaths = l.peer.NetPaths()
+		netpaths = l.peer.net_paths()
 	} else {
-		netpaths = []NetPath{np}
+		netpaths = []*net_path{np}
 	}
 
 	if l.peer.Hashname().IsZero() {

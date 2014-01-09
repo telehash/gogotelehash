@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/net"
 	"time"
 )
 
@@ -78,6 +79,31 @@ func (s *Switch) Start() error {
 	return nil
 }
 
+func (s *Switch) Listen(net string, t net.Transport) error {
+	var (
+		buf = make([]byte, 1400)
+	)
+
+	for {
+		n, addr, err := t.ReadFrom(buf)
+		if err != nil {
+			return err
+		}
+
+		pkt, err := parse_pkt(buf[:n], nil, &net_path{Network: net, Address: addr})
+		if err != nil {
+			return err
+		}
+
+		err = s.rcv_pkt(pkt)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (s *Switch) Stop() error {
 	s.reactor.Cast(&cmd_shutdown{})
 	s.net.close()
@@ -97,16 +123,16 @@ func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
 		return ZeroHashname, err
 	}
 
-	netpath, err := ParseIPNetPath(addr)
+	netpath, err := ParseIPnet_path(addr)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
 	peer, newpeer := s.AddPeer(hashname)
 	peer.SetPublicKey(key)
-	peer.AddNetPath(netpath)
+	peer.add_net_path(netpath)
 	if newpeer {
-		peer.set_active_paths(peer.NetPaths())
+		peer.set_active_paths(peer.net_paths())
 	}
 
 	err = s.seek_handler.Seek(hashname, s.hashname)

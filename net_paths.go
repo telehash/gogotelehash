@@ -2,24 +2,14 @@ package telehash
 
 import (
 	"encoding/json"
-	"reflect"
 )
 
-type NetPaths []NetPath
+type net_paths []*net_path
 
-func (n NetPaths) FirstOfType(t NetPath) NetPath {
-	rt := reflect.TypeOf(t)
-	for rt.Kind() == reflect.Ptr {
-		rt = rt.Elem()
-	}
+func (n net_paths) FirstOfType(t string) *net_path {
 
 	for _, np := range n {
-		npt := reflect.TypeOf(np)
-		for npt.Kind() == reflect.Ptr {
-			npt = npt.Elem()
-		}
-
-		if npt == rt {
+		if np.Network == t {
 			return np
 		}
 	}
@@ -27,11 +17,11 @@ func (n NetPaths) FirstOfType(t NetPath) NetPath {
 	return nil
 }
 
-func (n NetPaths) MarshalJSON() ([]byte, error) {
+func (n net_paths) MarshalJSON() ([]byte, error) {
 	raw := make([]json.RawMessage, len(n))
 
 	for i, np := range n {
-		data, err := EncodeNetPath(np)
+		data, err := encode_net_path(np)
 		if err != nil {
 			return nil, err
 		}
@@ -42,7 +32,7 @@ func (n NetPaths) MarshalJSON() ([]byte, error) {
 	return json.Marshal(raw)
 }
 
-func (n *NetPaths) UnmarshalJSON(data []byte) error {
+func (n *net_paths) UnmarshalJSON(data []byte) error {
 	var (
 		raw []json.RawMessage
 	)
@@ -52,10 +42,10 @@ func (n *NetPaths) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	paths := make(NetPaths, 0, len(raw))
+	paths := make(net_paths, 0, len(raw))
 
 	for _, data := range raw {
-		np, err := DecodeNetPath(data)
+		np, err := decode_net_path(data)
 		if err != nil {
 			continue // drop invalid netpaths
 		}

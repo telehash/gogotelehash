@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fd/go-util/log"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -76,19 +75,19 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		peer, new_peer := h.sw.AddPeer(hashname)
 		peer.AddVia(via)
 
-		if len(fields) == 3 {
-			netpath, err := ParseIPNetPath(net.JoinHostPort(fields[1], fields[2]))
-			if err != nil {
-				h.log.Debugf("error: %s", "invalid address")
-			} else {
-				if new_peer {
-					peer.AddNetPath(netpath)
-				}
-			}
+		if len(fields) > 1 {
+			// netpath, err := ParseIPnet_path(net.JoinHostPort(fields[1], fields[2]))
+			// if err != nil {
+			//   h.log.Debugf("error: %s", "invalid address")
+			// } else {
+			//   if new_peer {
+			//     peer.add_net_path(netpath)
+			//   }
+			// }
 		}
 
 		if new_peer {
-			peer.set_active_paths(peer.NetPaths())
+			peer.set_active_paths(peer.net_paths())
 			go h.Seek(peer.hashname, h.sw.hashname)
 		}
 	}
@@ -180,13 +179,16 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 			continue
 		}
 
-		h.log.Debugf("netpaths for %s: %+v", peer, peer.NetPaths())
+		h.log.Debugf("netpaths for %s: %+v", peer, peer.net_paths())
 	FOR_NETPATHS:
-		for _, np := range peer.NetPaths() {
-			if ip, port, ok := np.AddressForSeek(); ok {
-				added = true
-				see = append(see, fmt.Sprintf("%s,%s,%d", peer.Hashname(), ip, port))
-				break FOR_NETPATHS
+		for _, np := range peer.net_paths() {
+			if np.Address.PublishWithSeek() {
+				s := np.Address.SeekString()
+				if s != "" {
+					added = true
+					see = append(see, fmt.Sprintf("%s,%s", peer.Hashname(), s))
+					break FOR_NETPATHS
+				}
 			}
 		}
 

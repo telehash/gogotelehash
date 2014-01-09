@@ -6,16 +6,16 @@ import (
 	"sync/atomic"
 )
 
-func ParseIPNetPath(str string) (NetPath, error) {
+func ParseIPnet_path(str string) (net_path, error) {
 	addr, err := net.ResolveUDPAddr("udp", str)
 	if err != nil {
 		return nil, err
 	}
 
-	return NetPathFromAddr(addr), nil
+	return net_pathFromAddr(addr), nil
 }
 
-func NetPathFromAddr(addri net.Addr) NetPath {
+func net_pathFromAddr(addri net.Addr) net_path {
 	if addri == nil {
 		return nil
 	}
@@ -52,9 +52,9 @@ func NetPathFromAddr(addri net.Addr) NetPath {
 	}
 
 	if is_ipv4(ip) {
-		return &IPv4NetPath{cat, ip, port, 0, 0}
+		return &IPv4net_path{cat, ip, port, 0, 0}
 	} else {
-		return &IPv6NetPath{cat, ip, zone, port, 0, 0}
+		return &IPv6net_path{cat, ip, zone, port, 0, 0}
 	}
 }
 
@@ -78,9 +78,9 @@ func (c ip_addr_category) String() string {
 	return ip_addr_category_strings[c]
 }
 
-func get_network_paths(port int) ([]NetPath, error) {
+func get_network_paths(port int) ([]*net_path, error) {
 	var (
-		nets []NetPath
+		nets []net_path
 	)
 
 	ifaces, err := net.Interfaces()
@@ -100,7 +100,7 @@ func get_network_paths(port int) ([]NetPath, error) {
 
 		for _, addr := range addrs {
 			if a, ok := addr.(*net.IPNet); ok {
-				nets = append(nets, NetPathFromAddr(&net.UDPAddr{IP: a.IP, Port: port}))
+				nets = append(nets, net_pathFromAddr(&net.UDPAddr{IP: a.IP, Port: port}))
 			}
 		}
 	}
