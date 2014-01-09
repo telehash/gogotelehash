@@ -1,135 +1,8 @@
 package telehash
 
 import (
-	"github.com/fd/go-util/log"
-	"sync"
-	"sync/atomic"
 	"time"
 )
-
-type main_controller struct {
-	sw    *Switch
-	log   log.Logger
-	wg    sync.WaitGroup
-	state main_state
-
-	peers        peer_table
-	lines        map[Hashname]*line_t
-	active_lines map[string]*line_t
-
-	num_open_lines    int32
-	num_running_lines int32
-}
-
-func main_controller_open(sw *Switch) (*main_controller, error) {
-	c := &main_controller{
-		sw:           sw,
-		log:          sw.log,
-		lines:        make(map[Hashname]*line_t),
-		active_lines: make(map[string]*line_t),
-	}
-
-	c.peers.Init(sw.hashname)
-
-	c.wg.Add(1)
-	c.state.mod(main_running, 0)
-	go c.run_main_loop()
-
-	return c, nil
-}
-
-// atomically get the main state
-func (c *main_controller) State() main_state {
-	return main_state(atomic.LoadUint32((*uint32)(&c.state)))
-}
-
-func (c *main_controller) GetPeer(hashname Hashname) *Peer {
-	cmd := cmd_peer_get{hashname, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.peer
-}
-
-func (c *main_controller) GetClosestPeers(hashname Hashname, n int) []*Peer {
-	cmd := cmd_peer_get_closest{hashname, n, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.peers
-}
-
-func (c *main_controller) AddPeer(hashname Hashname) (*Peer, bool) {
-	cmd := cmd_peer_add{hashname, nil, false}
-	c.sw.reactor.Call(&cmd)
-	return cmd.peer, cmd.discovered
-}
-
-func (c *main_controller) OpenChannel(options ChannelOptions) (*Channel, error) {
-	cmd := cmd_channel_open{options, nil, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.channel, cmd.err
-}
-
-func (c *main_controller) PopulateStats(s *SwitchStats) {
-	s.NumOpenLines += int(atomic.LoadInt32(&c.num_open_lines))
-	s.NumRunningLines += int(atomic.LoadInt32(&c.num_running_lines))
-	s.KnownPeers = int(atomic.LoadUint32(&c.peers.num_peers))
-}
-
-func (c *main_controller) GetLine(to Hashname) *line_t {
-	cmd := cmd_line_get{to, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.line
-}
-
-func (c *main_controller) GetActiveLine(to Hashname) *line_t {
-	line := c.GetLine(to)
-	if line != nil && line.state == line_opened {
-		return line
-	}
-	return nil
-}
-
-func (c *main_controller) Close() {
-	c.sw.reactor.Cast(&cmd_shutdown{})
-	c.wg.Wait()
-}
-
-func (c *main_controller) RcvPkt(pkt *pkt_t) error {
-	cmd := cmd_rcv_pkt{pkt}
-	c.sw.reactor.Cast(&cmd)
-	return nil
-}
-
-func (c *main_controller) run_main_loop() {
-	defer c.teardown()
-
-	c.setup()
-	c.run_active_loop()
-}
-
-func (c *main_controller) run_active_loop() {
-	var (
-		stats = time.NewTicker(5 * time.Second)
-	)
-
-	defer stats.Stop()
-
-	for c.state.test(0, main_terminating) || len(c.lines) > 0 {
-		select {
-
-		case <-stats.C:
-			c.sw.log.Noticef("stats: %s", c.sw.Stats())
-
-		}
-	}
-}
-
-func (c *main_controller) setup() {
-	c.state.mod(main_running, 0)
-}
-
-func (c *main_controller) teardown() {
-	c.sw.log.Noticef("stats: %s", c.sw.Stats())
-	c.wg.Done()
-}
 
 type cmd_peer_get struct {
 	hashname Hashname
@@ -137,7 +10,7 @@ type cmd_peer_get struct {
 }
 
 func (cmd *cmd_peer_get) Exec(sw *Switch) {
-	cmd.peer = sw.main.peers.get_peer(cmd.hashname)
+	cmd.peer = sw.peers.get_peer(cmd.hashname)
 }
 
 type cmd_peer_add struct {
@@ -147,12 +20,11 @@ type cmd_peer_add struct {
 }
 
 func (cmd *cmd_peer_add) Exec(sw *Switch) {
-	cmd.peer, cmd.discovered = sw.main.peers.add_peer(sw, cmd.hashname)
+	cmd.peer, cmd.discovered = sw.peers.add_peer(sw, cmd.hashname)
 
 	if cmd.discovered {
-		sw.main.log.Noticef("discovered: %s (add_peer)", cmd.peer)
+		sw.log.Noticef("discovered: %s (add_peer)", cmd.peer)
 	}
-
 }
 
 type cmd_peer_get_closest struct {
@@ -162,7 +34,7 @@ type cmd_peer_get_closest struct {
 }
 
 func (cmd *cmd_peer_get_closest) Exec(sw *Switch) {
-	cmd.peers = sw.main.peers.find_closest_peers(cmd.hashname, cmd.n)
+	cmd.peers = sw.peers.find_closest_peers(cmd.hashname, cmd.n)
 }
 
 type cmd_line_get struct {
@@ -171,18 +43,18 @@ type cmd_line_get struct {
 }
 
 func (cmd *cmd_line_get) Exec(sw *Switch) {
-	cmd.line = sw.main.lines[cmd.hashname]
+	cmd.line = sw.lines[cmd.hashname]
 }
 
 type cmd_shutdown struct {
 }
 
 func (cmd *cmd_shutdown) Exec(sw *Switch) {
-	sw.main.state.mod(main_terminating, main_running)
+	sw.terminating = true
 
-	sw.main.log.Noticef("shutdown lines=%d", len(sw.main.lines))
+	sw.log.Noticef("shutdown lines=%d", len(sw.lines))
 
-	for _, line := range sw.main.lines {
+	for _, line := range sw.lines {
 		sw.reactor.CastAfter(10*time.Second, &cmd_line_close_broken{line})
 	}
 }
@@ -193,15 +65,14 @@ type cmd_rcv_pkt struct {
 
 func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 	var (
-		main = sw.main
-		pkt  = cmd.pkt
+		pkt = cmd.pkt
 	)
 
 	if pkt.hdr.Type == "line" {
-		line := main.active_lines[pkt.hdr.Line]
+		line := sw.active_lines[pkt.hdr.Line]
 
 		if line == nil {
-			main.log.Errorf("line: error: %s", errUnknownLine)
+			sw.log.Errorf("line: error: %s", errUnknownLine)
 			return
 		}
 
@@ -212,23 +83,23 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 	if pkt.hdr.Type == "open" {
 		pub, err := decompose_open_pkt(sw.key, pkt)
 		if err != nil {
-			main.log.Errorf("open: error: %s", err)
+			sw.log.Errorf("open: error: %s", err)
 			return
 		}
 
-		peer, newpeer := main.peers.add_peer(sw, pub.hashname)
+		peer, newpeer := sw.peers.add_peer(sw, pub.hashname)
 		peer.AddNetPath(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
 		if newpeer {
 			peer.set_active_paths(peer.NetPaths())
 		}
 
-		line := main.lines[peer.Hashname()]
+		line := sw.lines[peer.Hashname()]
 		if line == nil {
 			line = &line_t{}
 			line.Init(sw, peer)
-			main.lines[peer.Hashname()] = line
-			main.num_running_lines += 1
+			sw.lines[peer.Hashname()] = line
+			sw.num_running_lines += 1
 		}
 
 		cmd.rcv_open_pkt(line, pub, pkt.netpath)
@@ -291,11 +162,11 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
-	l.log.Debugf("channel[%s:%s](%s -> %s): opened",
+	l.log.Noticef("channel[%s:%s](%s -> %s): opened (initiator=false)",
 		short_hash(channel.Id()),
 		channel.Type(),
-		l.sw.hashname.Short(),
-		l.peer.Hashname().Short())
+		l.peer.Hashname().Short(),
+		l.sw.hashname.Short())
 
 	err = channel.push_rcv_pkt(ipkt)
 	if err != nil {
@@ -355,8 +226,8 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath Ne
 	l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
 	l.broken_timer.Reset(line_broken_timeout)
 	l.idle_timer.Reset(line_idle_timeout)
-	l.sw.main.active_lines[l.prv_key.id] = l
-	l.sw.main.num_open_lines += 1
+	l.sw.active_lines[l.prv_key.id] = l
+	l.sw.num_open_lines += 1
 
 	l.log.Debugf("line opened")
 
@@ -436,12 +307,12 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 		err     error
 	)
 
-	if sw.main.State().test(main_terminating, 0) {
+	if sw.terminating {
 		cmd.err = errNoOpenLine
 		return
 	}
 
-	line = sw.main.lines[cmd.options.To]
+	line = sw.lines[cmd.options.To]
 	if line == nil {
 		err = cmd.open_line(sw)
 		if err != nil {
@@ -462,7 +333,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 
 	line.channels[channel.Id()] = channel
 
-	line.log.Debugf("channel[%s:%s](%s -> %s): opened",
+	line.log.Noticef("channel[%s:%s](%s -> %s): opened (initiator=true)",
 		short_hash(channel.Id()),
 		channel.Type(),
 		sw.hashname.Short(),
@@ -473,13 +344,12 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 
 func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	var (
-		main = sw.main
 		peer *Peer
 		line *line_t
 		err  error
 	)
 
-	peer = main.peers.get_peer(cmd.options.To)
+	peer = sw.peers.get_peer(cmd.options.To)
 
 	if peer == nil {
 		// seek
@@ -501,8 +371,8 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		return err
 	}
 
-	main.lines[cmd.options.To] = line
-	sw.main.num_running_lines += 1
+	sw.lines[cmd.options.To] = line
+	sw.num_running_lines += 1
 
 	sw.reactor.Defer(&line.backlog)
 	return nil
@@ -548,15 +418,15 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
 	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
-		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
-			sw.main.num_open_lines -= 1
-			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
+			sw.num_open_lines -= 1
+			delete(sw.active_lines, cmd.line.prv_key.id)
 		}
 	}
 	if cmd.line.peer != nil {
-		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
-			sw.main.num_running_lines -= 1
-			delete(sw.main.lines, cmd.line.peer.hashname)
+		if _, p := sw.lines[cmd.line.peer.hashname]; p {
+			sw.num_running_lines -= 1
+			delete(sw.lines, cmd.line.peer.hashname)
 		}
 	}
 
@@ -584,15 +454,15 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
 	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
-		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
-			sw.main.num_open_lines -= 1
-			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
+			sw.num_open_lines -= 1
+			delete(sw.active_lines, cmd.line.prv_key.id)
 		}
 	}
 	if cmd.line.peer != nil {
-		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
-			sw.main.num_running_lines -= 1
-			delete(sw.main.lines, cmd.line.peer.hashname)
+		if _, p := sw.lines[cmd.line.peer.hashname]; p {
+			sw.num_running_lines -= 1
+			delete(sw.lines, cmd.line.peer.hashname)
 		}
 	}
 
@@ -620,15 +490,15 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) {
 	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
-		if _, p := sw.main.active_lines[cmd.line.prv_key.id]; p {
-			sw.main.num_open_lines -= 1
-			delete(sw.main.active_lines, cmd.line.prv_key.id)
+		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
+			sw.num_open_lines -= 1
+			delete(sw.active_lines, cmd.line.prv_key.id)
 		}
 	}
 	if cmd.line.peer != nil {
-		if _, p := sw.main.lines[cmd.line.peer.hashname]; p {
-			sw.main.num_running_lines -= 1
-			delete(sw.main.lines, cmd.line.peer.hashname)
+		if _, p := sw.lines[cmd.line.peer.hashname]; p {
+			sw.num_running_lines -= 1
+			delete(sw.lines, cmd.line.peer.hashname)
 		}
 	}
 
@@ -642,7 +512,7 @@ type cmd_line_snd_path struct {
 }
 
 func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
-	if sw.main.State().test(main_terminating, 0) {
+	if sw.terminating {
 		return
 	}
 
@@ -768,6 +638,32 @@ func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) {
 
 	channel.rcv_deadline_reached = true
 	channel.reschedule()
+}
+
+type cmd_stats_log struct{}
+
+func (cmd *cmd_stats_log) Exec(sw *Switch) {
+	sw.log.Noticef("stats: %s", sw.Stats())
+	sw.reactor.CastAfter(5*time.Second, cmd)
+}
+
+type cmd_clean struct{}
+
+func (cmd *cmd_clean) Exec(sw *Switch) {
+	for _, l := range sw.lines {
+		for i, c := range l.channels {
+			if c.is_closed() {
+				l.log.Noticef("channel[%s:%s](%s -> %s): closed",
+					short_hash(c.Id()),
+					c.Type(),
+					sw.hashname.Short(),
+					l.peer.Hashname().Short())
+				delete(l.channels, i)
+			}
+		}
+	}
+
+	sw.reactor.CastAfter(2*time.Second, cmd)
 }
 
 func stop_timer(t *time.Timer) {

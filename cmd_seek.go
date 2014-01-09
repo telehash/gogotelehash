@@ -32,7 +32,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	}
 
 	options := ChannelOptions{To: via, Type: "seek", Reliablility: UnreliableChannel}
-	channel, err := h.sw.main.OpenChannel(options)
+	channel, err := h.sw.Open(options)
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		peer, new_peer := h.sw.main.AddPeer(hashname)
+		peer, new_peer := h.sw.AddPeer(hashname)
 		peer.AddVia(via)
 
 		if len(fields) == 3 {
@@ -99,7 +99,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
 	var (
 		wg    sync.WaitGroup
-		last  = h.sw.main.GetClosestPeers(hashname, n)
+		last  = h.sw.GetClosestPeers(hashname, n)
 		cache = map[Hashname]bool{}
 	)
 
@@ -128,7 +128,7 @@ RECURSOR:
 
 		wg.Wait()
 
-		curr := h.sw.main.GetClosestPeers(hashname, n)
+		curr := h.sw.GetClosestPeers(hashname, n)
 		h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last, curr)
 
 		if len(curr) != len(last) {
@@ -165,7 +165,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 		Log.Debug(err)
 	}
 
-	closest := h.sw.main.GetClosestPeers(seek, 25)
+	closest := h.sw.GetClosestPeers(seek, 25)
 	see := make([]string, 0, len(closest))
 
 	for _, peer := range closest {
@@ -175,7 +175,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 			continue // unable to forward peer requests to unless we know the public key
 		}
 
-		line := h.sw.main.GetActiveLine(peer.Hashname())
+		line := h.sw.get_active_line(peer.Hashname())
 		if line == nil {
 			continue
 		}

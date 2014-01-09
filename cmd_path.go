@@ -31,7 +31,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 		score    int
 	)
 
-	peer = h.sw.main.GetPeer(to)
+	peer = h.sw.GetPeer(to)
 	if peer == nil {
 		return false
 	}
@@ -136,7 +136,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 	}
 
 	options := ChannelOptions{To: to, Type: "path", Reliablility: UnreliableChannel}
-	channel, err = h.sw.main.OpenChannel(options)
+	channel, err = h.sw.Open(options)
 	if err != nil {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false

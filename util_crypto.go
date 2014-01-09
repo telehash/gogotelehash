@@ -8,6 +8,7 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 )
@@ -25,6 +26,14 @@ func make_rand(n int) ([]byte, error) {
 	}
 
 	return b, nil
+}
+
+func make_hex_rand(n int) (string, error) {
+	buf, err := make_rand(n)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func hash_SHA256(data ...[]byte) []byte {

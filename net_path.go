@@ -10,8 +10,10 @@ type NetPath interface {
 	Demote()
 	Break()
 	Hash() uint32
+
 	AddressForSeek() (ip string, port int, ok bool)
 	IncludeInConnect() bool
+
 	SendNatBreaker() bool
 	Send(sw *Switch, pkt *pkt_t) error
 	MarshalJSON() ([]byte, error)

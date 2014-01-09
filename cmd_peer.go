@@ -1,7 +1,6 @@
 package telehash
 
 import (
-	"encoding/hex"
 	"github.com/fd/go-util/log"
 )
 
@@ -28,15 +27,13 @@ func (h *peer_handler) SendPeer(to *Peer) {
 	if h.sw.AllowRelay {
 		relay := to.NetPaths().FirstOfType(&relay_net_path{})
 		if relay == nil {
-			c, err := make_rand(16)
+			c, err := make_hex_rand(16)
 			if err != nil {
 				h.log.Noticef("error: %s", err)
 				return
 			}
 
-			relay = to.AddNetPath(&relay_net_path{
-				C: hex.EncodeToString(c),
-			})
+			relay = to.AddNetPath(&relay_net_path{C: c})
 		}
 		paths = append(paths, relay)
 	}
@@ -45,7 +42,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
 
 		options := ChannelOptions{To: via, Type: "peer", Reliablility: UnreliableChannel}
-		channel, err := h.sw.main.OpenChannel(options)
+		channel, err := h.sw.Open(options)
 		if err != nil {
 			continue
 		}
@@ -67,7 +64,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	from_peer := h.sw.main.GetPeer(channel.To())
+	from_peer := h.sw.GetPeer(channel.To())
 
 	peer_hashname, err := HashnameFromString(pkt.hdr.Peer)
 	if err != nil {
@@ -87,7 +84,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	to_peer := h.sw.main.GetPeer(peer_hashname)
+	to_peer := h.sw.GetPeer(peer_hashname)
 	if to_peer == nil {
 		return
 	}
@@ -107,7 +104,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	h.log.Noticef("received peer-cmd: from=%s to=%s paths=%s", channel.To().Short(), peer_hashname.Short(), paths)
 
 	options := ChannelOptions{To: peer_hashname, Type: "connect", Reliablility: UnreliableChannel}
-	channel, err = h.sw.main.OpenChannel(options)
+	channel, err = h.sw.Open(options)
 	if err != nil {
 		h.log.Noticef("peer:connect err=%s", err)
 	}
@@ -143,10 +140,11 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 		return
 	}
 
-	peer, newpeer := h.sw.main.AddPeer(hashname)
+	peer, newpeer := h.sw.AddPeer(hashname)
 
 	peer.SetPublicKey(pubkey)
 	peer.AddVia(channel.To())
+	peer.is_down = false
 
 	for _, np := range pkt.hdr.Paths {
 		peer.AddNetPath(np)

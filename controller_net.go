@@ -7,10 +7,6 @@ import (
 	"sync/atomic"
 )
 
-const (
-	c_ClosedNet = "use of closed network connection"
-)
-
 type net_controller struct {
 	sw   *Switch
 	conn *net.UDPConn
@@ -119,7 +115,7 @@ func (c *net_controller) _read_pkt(buf []byte) error {
 	c.log.Debugf("rcv pkt: addr=%s hdr=%+v",
 		pkt.netpath, pkt.hdr)
 
-	err = c.sw.main.RcvPkt(pkt)
+	err = c.sw.rcv_pkt(pkt)
 	if err != nil {
 		atomic.AddUint64(&c.num_err_pkt_rcv, 1)
 		return err

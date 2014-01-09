@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"fmt"
+	"sync/atomic"
 )
 
 type SwitchStats struct {
@@ -31,8 +32,10 @@ func (s *Switch) Stats() SwitchStats {
 		stats SwitchStats
 	)
 
+	stats.KnownPeers = int(atomic.LoadUint32(&s.peers.num_peers))
+	stats.NumOpenLines += int(atomic.LoadInt32(&s.num_open_lines))
+	stats.NumRunningLines += int(atomic.LoadInt32(&s.num_running_lines))
 	s.net.PopulateStats(&stats)
-	s.main.PopulateStats(&stats)
 	s.relay_handler.PopulateStats(&stats)
 
 	return stats

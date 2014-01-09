@@ -1,16 +1,12 @@
 package telehash
 
 import (
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/fd/go-util/log"
 	"hash/fnv"
 	"sync/atomic"
-	"time"
 )
-
-const _RELAY_DEADLINE = 12 * time.Second
 
 type relay_handler struct {
 	sw  *Switch
@@ -71,7 +67,7 @@ func (h *relay_handler) rcv_self(opkt *pkt_t) {
 			return
 		}
 
-		err = h.sw.main.RcvPkt(ipkt)
+		err = h.sw.rcv_pkt(ipkt)
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s ipkt=%+v", err, ipkt)
@@ -85,7 +81,7 @@ func (h *relay_handler) rcv_self(opkt *pkt_t) {
 }
 
 func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
-	line := h.sw.main.lines[to]
+	line := h.sw.lines[to]
 	if line == nil || line.State() != line_opened {
 		return // drop
 	}
@@ -106,14 +102,12 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 }
 
 func make_relay_net_path() NetPath {
-	c, err := make_rand(16)
+	c, err := make_hex_rand(16)
 	if err != nil {
 		return nil
 	}
 
-	return &relay_net_path{
-		C: hex.EncodeToString(c),
-	}
+	return &relay_net_path{C: c}
 }
 
 type relay_net_path struct {
@@ -176,7 +170,7 @@ REROUTE:
 	if n.via == ZeroHashname {
 		routed = true
 		for _, via := range pkt.peer.ViaTable() {
-			line := sw.main.lines[via]
+			line := sw.lines[via]
 			if line == nil || line.State() != line_opened {
 				continue
 			}
@@ -194,7 +188,7 @@ REROUTE:
 		return nil // drop
 	}
 
-	line = sw.main.lines[n.via]
+	line = sw.lines[n.via]
 	if line == nil || line.State() != line_opened {
 		n.via = ZeroHashname
 		if routed {

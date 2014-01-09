@@ -300,6 +300,10 @@ func (c *Channel) did_send_packet(pkt *pkt_t) {
 }
 
 func (c *Channel) is_closed() bool {
+	if len(c.rcv_backlog) > 0 || len(c.snd_backlog) > 0 {
+		return false
+	}
+
 	if c.broken {
 		return true
 	}
@@ -321,6 +325,16 @@ func (c *Channel) reschedule() {
 	}
 }
 
+func (c *Channel) reschedule_all() {
+	if len(c.rcv_backlog) > 0 && c.can_pop_rcv_pkt() {
+		c.rcv_backlog.RescheduleAll(&c.sw.reactor)
+	}
+
+	if len(c.snd_backlog) > 0 && c.can_snd_pkt() {
+		c.snd_backlog.RescheduleAll(&c.sw.reactor)
+	}
+}
+
 func (c *Channel) SetReceiveDeadline(t time.Time) {
 	cmd := cmd_channel_set_rcv_deadline{c, t}
 	c.sw.reactor.Call(&cmd)
@@ -332,5 +346,5 @@ type cmd_channel_break struct {
 
 func (cmd *cmd_channel_break) Exec(sw *Switch) {
 	cmd.channel.broken = true
-	cmd.channel.reschedule()
+	cmd.channel.reschedule_all()
 }

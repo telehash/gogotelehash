@@ -85,7 +85,7 @@ func parse_pkt(in []byte, peer *Peer, netpath NetPath) (*pkt_t, error) {
 		pkt      = &pkt_t{peer: peer, netpath: netpath}
 	)
 
-	if len(in) < 4 {
+	if len(in) < 2 {
 		return nil, fmt.Errorf("pkt is too short")
 	}
 
@@ -100,20 +100,23 @@ func parse_pkt(in []byte, peer *Peer, netpath NetPath) (*pkt_t, error) {
 	}
 
 	// decode the header
-	err = json.NewDecoder(bytes.NewReader(in[2 : hdr_len+2])).Decode(&pkt.hdr)
-	if err != nil {
-		return nil, err
-	}
-
-	// no body
-	if body_len == 0 {
-		return pkt, nil
+	if hdr_len > 0 {
+		err = json.NewDecoder(bytes.NewReader(in[2 : hdr_len+2])).Decode(&pkt.hdr)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		pkt.hdr = pkt_hdr_t{}
 	}
 
 	// copy the body
-	body = make([]byte, body_len)
-	copy(body, in[hdr_len+2:])
-	pkt.body = body
+	if body_len > 0 {
+		body = make([]byte, body_len)
+		copy(body, in[hdr_len+2:])
+		pkt.body = body
+	} else {
+		pkt.body = nil
+	}
 
 	return pkt, nil
 }
