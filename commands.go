@@ -543,6 +543,10 @@ type cmd_line_snd_seek struct {
 }
 
 func (cmd *cmd_line_snd_seek) Exec(sw *Switch) {
+	if sw.terminating {
+		return
+	}
+
 	if cmd.line.state != line_opened {
 		return
 	}
