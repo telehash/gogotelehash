@@ -105,7 +105,7 @@ func (l *line_t) SndOpen(np *net_path) error {
 		np.Demote()
 		pkt.netpath = np
 
-		err = np.Send(l.sw, pkt)
+		err = l.sw.snd_pkt(pkt)
 		if err != nil {
 			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 		} else {

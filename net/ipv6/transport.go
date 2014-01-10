@@ -1,4 +1,4 @@
-package ipv4
+package ipv6
 
 import (
 	th "github.com/telehash/gogotelehash/net"
@@ -10,12 +10,12 @@ type Transport struct {
 }
 
 func Open(addr string) (*Transport, error) {
-	laddr, err := net.ResolveUDPAddr("udp4", addr)
+	laddr, err := net.ResolveUDPAddr("udp6", addr)
 	if err != nil {
 		return nil, err
 	}
 
-	c, err := net.ListenUDP("udp4", laddr)
+	c, err := net.ListenUDP("udp6", laddr)
 	if err != nil {
 		return nil, err
 	}
@@ -52,6 +52,7 @@ func (t *Transport) WriteTo(b []byte, addr th.Addr) (int, error) {
 	if a, ok := addr.(*Addr); ok {
 		naddr.IP = a.IP
 		naddr.Port = a.Port
+		naddr.Zone = a.Zone
 	}
 
 	n, err := t.conn.WriteTo(b, &naddr)

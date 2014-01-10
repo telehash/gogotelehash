@@ -10,8 +10,8 @@ import (
 type Switch struct {
 	AllowRelay    bool
 	reactor       reactor_t
-	net           *net_controller
 	peers         peer_table
+	transports    map[string]net.Transport
 	lines         map[Hashname]*line_t
 	active_lines  map[string]*line_t
 	peer_handler  peer_handler
@@ -195,5 +195,24 @@ func (s *Switch) get_active_line(to Hashname) *line_t {
 func (s *Switch) rcv_pkt(pkt *pkt_t) error {
 	cmd := cmd_rcv_pkt{pkt}
 	s.reactor.Cast(&cmd)
+	return nil
+}
+
+func (s *Switch) snd_pkt(pkt *pkt_t) error {
+	transport := s.transports[pkt.netpath.Network]
+	if transport == nil {
+		return ErrInvalidNetwork
+	}
+
+	data, err := pkt.format_pkt()
+	if err != nil {
+		return err
+	}
+
+	_, err = transport.WriteTo(data, pkt.netpath.Address)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }

@@ -280,7 +280,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 		return
 	}
 
-	err = sender.Send(sw, opkt)
+	err = sw.snd_pkt(opkt)
 	if err != nil {
 		cmd.err = err
 		return

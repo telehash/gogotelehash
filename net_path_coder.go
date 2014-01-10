@@ -6,21 +6,6 @@ import (
 	"reflect"
 )
 
-var (
-	np_name_to_type = map[string]reflect.Type{
-		"ipv4":  reflect.TypeOf(IPv4net_path{}),
-		"ipv6":  reflect.TypeOf(IPv6net_path{}),
-		"relay": reflect.TypeOf(relay_addr{}),
-	}
-	np_type_to_name = func() map[reflect.Type]string {
-		m := map[reflect.Type]string{}
-		for k, v := range np_name_to_type {
-			m[v] = k
-		}
-		return m
-	}()
-)
-
 func (s *Switch) decode_net_path(data []byte) (*net_path, error) {
 	var (
 		typ struct {
