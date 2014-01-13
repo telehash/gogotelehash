@@ -59,7 +59,7 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	go func() {
-		ipkt, err := parse_pkt(opkt.body, nil, &net_path{Network: "relay", Address: &relay_addr{opkt.hdr.C, ZeroHashname}})
+		ipkt, err := parse_pkt(opkt.body, nil, &net_path{Network: "relay", Address: &relay_addr{opkt.hdr.C, ZeroHashname, false}})
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s opkt=%+v", err, opkt)
@@ -110,8 +110,9 @@ func make_relay_addr() net.Addr {
 }
 
 type relay_addr struct {
-	C   string
-	via Hashname
+	C     string
+	via   Hashname
+	use_c bool
 }
 
 func (n *relay_addr) DefaultPriority() int {
@@ -223,15 +224,19 @@ REROUTE:
 }
 
 func (n *relay_addr) MarshalJSON() ([]byte, error) {
-	var (
-		j = struct {
-			Id string `json:"id"`
+	if n.use_c {
+		return json.Marshal(struct {
+			Id string `json:"c"`
 		}{
 			Id: n.C,
-		}
-	)
+		})
+	}
 
-	return json.Marshal(j)
+	return json.Marshal(struct {
+		Id string `json:"id"`
+	}{
+		Id: n.C,
+	})
 }
 
 func (n *relay_addr) UnmarshalJSON(data []byte) error {
@@ -248,6 +253,7 @@ func (n *relay_addr) UnmarshalJSON(data []byte) error {
 	}
 
 	if j.Id == "" && j.C != "" {
+		n.use_c = true
 		j.Id = j.C
 	}
 
