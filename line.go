@@ -46,7 +46,7 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 }
 
 func (l *line_t) open_with_peer() {
-	l.sw.net.send_nat_breaker(l.peer)
+	l.sw.send_nat_breaker(l.peer)
 	l.sw.peer_handler.SendPeer(l.peer)
 }
 
@@ -60,7 +60,7 @@ func (l *line_t) State() line_state {
 
 func (l *line_t) SndOpen(np *net_path) error {
 	var (
-		local_rsa_key = l.sw.key
+		local_rsa_key = l.sw.Key
 		netpaths      []*net_path
 	)
 

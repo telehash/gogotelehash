@@ -2,12 +2,10 @@ package ipv6
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
-	"strconv"
 )
 
 var (
@@ -74,47 +72,7 @@ func (a *Addr) EqualTo(other th.Addr) bool {
 	return false
 }
 
-func (n *Addr) MarshalJSON() ([]byte, error) {
-	var (
-		j = struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
-		}{
-			IP:   n.IP.String(),
-			Port: n.Port,
-		}
-	)
-
-	return json.Marshal(j)
-}
-
-func (n *Addr) UnmarshalJSON(data []byte) error {
-	var (
-		j struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
-		}
-	)
-
-	err := json.Unmarshal(data, &j)
-	if err != nil {
-		return err
-	}
-
-	if j.IP == "" || j.Port == 0 {
-		return ErrInvalidIPv6Address
-	}
-
-	a, err := ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
-	if err != nil {
-		return err
-	}
-
-	*n = *a.(*Addr)
-	return nil
-}
-
-func format_addr(addri net.Addr) (th.Addr, error) {
+func format_addr(addri net.Addr) (*Addr, error) {
 	if addri == nil {
 		return nil, nil
 	}

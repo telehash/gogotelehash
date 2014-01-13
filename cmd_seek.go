@@ -72,7 +72,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		peer, new_peer := h.sw.AddPeer(hashname)
+		peer, new_peer := h.sw.add_peer(hashname)
 		peer.AddVia(via)
 
 		if len(fields) > 1 {
@@ -98,7 +98,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
 	var (
 		wg    sync.WaitGroup
-		last  = h.sw.GetClosestPeers(hashname, n)
+		last  = h.sw.get_closest_peers(hashname, n)
 		cache = map[Hashname]bool{}
 	)
 
@@ -127,7 +127,7 @@ RECURSOR:
 
 		wg.Wait()
 
-		curr := h.sw.GetClosestPeers(hashname, n)
+		curr := h.sw.get_closest_peers(hashname, n)
 		h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last, curr)
 
 		if len(curr) != len(last) {
@@ -164,7 +164,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 		Log.Debug(err)
 	}
 
-	closest := h.sw.GetClosestPeers(seek, 25)
+	closest := h.sw.get_closest_peers(seek, 25)
 	see := make([]string, 0, len(closest))
 
 	for _, peer := range closest {

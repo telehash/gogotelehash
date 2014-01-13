@@ -13,6 +13,8 @@ var (
 	ErrUnknownPeer            = errors.New("telehash: unknown peer")
 	ErrSendOnClosedChannel    = errors.New("telehash: send on closed channel")
 	ErrReceiveOnClosedChannel = errors.New("telehash: receive on closed channel")
+	ErrInvalidNetwork         = errors.New("telehash: invalid network")
+	ErrSwitchAlreadyRunning   = errors.New("telehash: switch is already running")
 
 	errInvalidOpenReq   = errors.New("line: invalid open request")
 	errMissingPublicKey = errors.New("line: missing public key")

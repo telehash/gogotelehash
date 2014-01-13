@@ -81,7 +81,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 	}
 
 	if pkt.hdr.Type == "open" {
-		pub, err := decompose_open_pkt(sw.key, pkt)
+		pub, err := decompose_open_pkt(sw.Key, pkt)
 		if err != nil {
 			sw.log.Errorf("open: error: %s", err)
 			return
@@ -123,6 +123,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 	ipkt.netpath = opkt.netpath
 
 	if ipkt.hdr.C != "" && ipkt.hdr.Type == "relay" {
+		l.log.Debugf("rcv: %+v %q", ipkt.hdr, ipkt.body)
 		l.sw.relay_handler.rcv(ipkt)
 		return nil
 	}
@@ -162,7 +163,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
-	l.log.Noticef("channel[%s:%s](%s -> %s): opened (initiator=false)",
+	l.log.Debugf("channel[%s:%s](%s -> %s): opened (initiator=false)",
 		short_hash(channel.Id()),
 		channel.Type(),
 		l.peer.Hashname().Short(),
@@ -279,6 +280,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 		cmd.err = ErrPeerBroken
 		return
 	}
+	opkt.netpath = sender
 
 	err = sw.snd_pkt(opkt)
 	if err != nil {
@@ -333,7 +335,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 
 	line.channels[channel.Id()] = channel
 
-	line.log.Noticef("channel[%s:%s](%s -> %s): opened (initiator=true)",
+	line.log.Debugf("channel[%s:%s](%s -> %s): opened (initiator=true)",
 		short_hash(channel.Id()),
 		channel.Type(),
 		sw.hashname.Short(),
@@ -650,10 +652,14 @@ func (cmd *cmd_stats_log) Exec(sw *Switch) {
 type cmd_clean struct{}
 
 func (cmd *cmd_clean) Exec(sw *Switch) {
+	if sw.terminating {
+		return
+	}
+
 	for _, l := range sw.lines {
 		for i, c := range l.channels {
 			if c.is_closed() {
-				l.log.Noticef("channel[%s:%s](%s -> %s): closed",
+				l.log.Debugf("channel[%s:%s](%s -> %s): closed",
 					short_hash(c.Id()),
 					c.Type(),
 					sw.hashname.Short(),

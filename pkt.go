@@ -32,7 +32,7 @@ type pkt_hdr_t struct {
 	Seek     string          `json:"seek,omitempty"`
 	See      []string        `json:"see,omitempty"`
 	Peer     string          `json:"peer,omitempty"`
-	Paths    net_paths       `json:"paths,omitempty"`
+	Paths    raw_net_paths   `json:"paths,omitempty"`
 	Priority int             `json:"priority,omitempty"`
 	Custom   json.RawMessage `json:"_,omitempty"`
 }
@@ -105,8 +105,6 @@ func parse_pkt(in []byte, peer *Peer, netpath *net_path) (*pkt_t, error) {
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		pkt.hdr = pkt_hdr_t{}
 	}
 
 	// copy the body

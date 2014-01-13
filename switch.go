@@ -1,59 +1,78 @@
 package telehash
 
 import (
+	"crypto/rand"
 	"crypto/rsa"
+	"fmt"
 	"github.com/fd/go-util/log"
 	"github.com/telehash/gogotelehash/net"
+	"sync"
 	"time"
 )
 
 type Switch struct {
-	AllowRelay    bool
-	reactor       reactor_t
-	peers         peer_table
-	transports    map[string]net.Transport
-	lines         map[Hashname]*line_t
-	active_lines  map[string]*line_t
-	peer_handler  peer_handler
-	seek_handler  seek_handler
-	path_handler  path_handler
-	relay_handler relay_handler
-	stats_timer   *time.Timer
-	clean_timer   *time.Timer
-	addr          string
-	hashname      Hashname
-	key           *rsa.PrivateKey
-	mux           *SwitchMux
-	log           log.Logger
-	terminating   bool
+	DenyRelay  bool
+	Key        *rsa.PrivateKey
+	Handler    Handler
+	Transports []net.Transport
 
+	reactor           reactor_t
+	peers             peer_table
+	transports        map[string]net.Transport
+	lines             map[Hashname]*line_t
+	active_lines      map[string]*line_t
+	peer_handler      peer_handler
+	seek_handler      seek_handler
+	path_handler      path_handler
+	relay_handler     relay_handler
+	stats_timer       *time.Timer
+	clean_timer       *time.Timer
+	mtx               sync.Mutex
+	hashname          Hashname
+	mux               *SwitchMux
+	log               log.Logger
+	terminating       bool
+	running           bool
 	num_open_lines    int32
 	num_running_lines int32
 }
 
-func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, error) {
-	mux := NewSwitchMux()
+func (s *Switch) Start() error {
+	var (
+		err error
+	)
 
-	if handler != nil {
-		mux.HandleFallback(handler)
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
+	if s.running {
+		return ErrSwitchAlreadyRunning
 	}
 
-	hn, err := HashnameFromPublicKey(&key.PublicKey)
-	if err != nil {
-		return nil, err
+	// make random key
+	if s.Key == nil {
+		key, err := rsa.GenerateKey(rand.Reader, 2048)
+		if err != nil {
+			return err
+		}
+		s.Key = key
 	}
 
-	s := &Switch{
-		addr:         addr,
-		key:          key,
-		hashname:     hn,
-		mux:          mux,
-		lines:        make(map[Hashname]*line_t),
-		active_lines: make(map[string]*line_t),
-		log:          Log.Sub(log.DEFAULT, "switch["+addr+":"+hn.Short()+"]"),
-
-		AllowRelay: true,
+	// make local hashname
+	{
+		hn, err := HashnameFromPublicKey(&s.Key.PublicKey)
+		if err != nil {
+			return err
+		}
+		s.hashname = hn
 	}
+
+	s.lines = make(map[Hashname]*line_t)
+	s.active_lines = make(map[string]*line_t)
+	s.transports = make(map[string]net.Transport, len(s.Transports))
+	s.log = Log.Sub(log.DEFAULT, "switch["+s.hashname.Short()+"]")
+	s.mux = NewSwitchMux()
+	s.mux.HandleFallback(s.Handler)
 
 	s.reactor.sw = s
 	s.peers.Init(s.hashname)
@@ -62,54 +81,79 @@ func NewSwitch(addr string, key *rsa.PrivateKey, handler Handler) (*Switch, erro
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
 
-	return s, nil
-}
+	for _, t := range s.Transports {
+		if _, p := s.transports[t.Network()]; p {
+			err = fmt.Errorf("transport %q is already registerd", t.Network())
+			break
+		}
 
-func (s *Switch) Start() error {
+		s.transports[t.Network()] = t
+
+		err = t.Open()
+		if err != nil {
+			break
+		}
+
+		go s.listen(t)
+	}
+	if err != nil {
+		for _, t := range s.Transports {
+			t.Close()
+		}
+		return err
+	}
+
+	s.running = true
 	s.reactor.Run()
 	s.stats_timer = s.reactor.CastAfter(5*time.Second, &cmd_stats_log{})
 	s.clean_timer = s.reactor.CastAfter(2*time.Second, &cmd_clean{})
 
-	net, err := net_controller_open(s)
-	if err != nil {
-		return err
-	}
-	s.net = net
-
 	return nil
 }
 
-func (s *Switch) Listen(net string, t net.Transport) error {
+func (s *Switch) listen(t net.Transport) {
 	var (
-		buf = make([]byte, 1400)
+		buf     = make([]byte, 1500)
+		network = t.Network()
 	)
 
 	for {
 		n, addr, err := t.ReadFrom(buf)
+		if err == net.ErrTransportClosed {
+			return
+		}
 		if err != nil {
-			return err
+			// drop
+			continue
 		}
 
-		pkt, err := parse_pkt(buf[:n], nil, &net_path{Network: net, Address: addr})
+		pkt, err := parse_pkt(buf[:n], nil, &net_path{Network: network, Address: addr})
 		if err != nil {
-			return err
+			// drop
+			continue
 		}
 
 		err = s.rcv_pkt(pkt)
 		if err != nil {
-			return err
+			// drop
+			continue
 		}
 	}
-
-	return nil
 }
 
 func (s *Switch) Stop() error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
 	s.reactor.Cast(&cmd_shutdown{})
-	s.net.close()
 	s.reactor.StopAndWait()
+
+	for _, t := range s.transports {
+		t.Close()
+	}
+
 	stop_timer(s.stats_timer)
 	stop_timer(s.clean_timer)
+	s.running = false
 	return nil
 }
 
@@ -117,20 +161,15 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-func (s *Switch) Seed(addr string, key *rsa.PublicKey) (Hashname, error) {
+func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, error) {
 	hashname, err := HashnameFromPublicKey(key)
 	if err != nil {
 		return ZeroHashname, err
 	}
 
-	netpath, err := ParseIPnet_path(addr)
-	if err != nil {
-		return ZeroHashname, err
-	}
-
-	peer, newpeer := s.AddPeer(hashname)
+	peer, newpeer := s.add_peer(hashname)
 	peer.SetPublicKey(key)
-	peer.add_net_path(netpath)
+	peer.add_net_path(&net_path{Network: net, Address: addr})
 	if newpeer {
 		peer.set_active_paths(peer.net_paths())
 	}
@@ -160,19 +199,19 @@ func (s *Switch) Open(options ChannelOptions) (*Channel, error) {
 	return cmd.channel, cmd.err
 }
 
-func (s *Switch) GetPeer(hashname Hashname) *Peer {
+func (s *Switch) get_peer(hashname Hashname) *Peer {
 	cmd := cmd_peer_get{hashname, nil}
 	s.reactor.Call(&cmd)
 	return cmd.peer
 }
 
-func (s *Switch) GetClosestPeers(hashname Hashname, n int) []*Peer {
+func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
 	cmd := cmd_peer_get_closest{hashname, n, nil}
 	s.reactor.Call(&cmd)
 	return cmd.peers
 }
 
-func (s *Switch) AddPeer(hashname Hashname) (*Peer, bool) {
+func (s *Switch) add_peer(hashname Hashname) (*Peer, bool) {
 	cmd := cmd_peer_add{hashname, nil, false}
 	s.reactor.Call(&cmd)
 	return cmd.peer, cmd.discovered
@@ -199,6 +238,14 @@ func (s *Switch) rcv_pkt(pkt *pkt_t) error {
 }
 
 func (s *Switch) snd_pkt(pkt *pkt_t) error {
+	if pkt.netpath == nil {
+		return ErrInvalidNetwork
+	}
+
+	if pkt.netpath.Network == "relay" {
+		return s.relay_handler.snd_pkt(s, pkt)
+	}
+
 	transport := s.transports[pkt.netpath.Network]
 	if transport == nil {
 		return ErrInvalidNetwork
@@ -215,4 +262,30 @@ func (s *Switch) snd_pkt(pkt *pkt_t) error {
 	}
 
 	return nil
+}
+
+func (s *Switch) send_nat_breaker(peer *Peer) {
+	if peer == nil {
+		return
+	}
+
+	for _, np := range peer.net_paths() {
+		if np.Address.NeedNatHolePunching() {
+			s.snd_pkt(&pkt_t{netpath: np})
+		}
+	}
+}
+
+func (s *Switch) get_network_paths() net_paths {
+	var (
+		paths net_paths
+	)
+
+	for n, t := range s.transports {
+		for _, a := range t.LocalAddresses() {
+			paths = append(paths, &net_path{Network: n, Address: a})
+		}
+	}
+
+	return paths
 }

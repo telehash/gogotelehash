@@ -36,8 +36,7 @@ func (h *relay_handler) PopulateStats(s *SwitchStats) {
 
 func (h *relay_handler) rcv(pkt *pkt_t) {
 	var (
-		err error
-		// c     = pkt.hdr.C
+		err   error
 		to    = pkt.hdr.To
 		to_hn Hashname
 	)
@@ -60,7 +59,7 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	go func() {
-		ipkt, err := parse_pkt(opkt.body, nil, &relay_addr{opkt.hdr.C, ZeroHashname, 0, 0})
+		ipkt, err := parse_pkt(opkt.body, nil, &net_path{Network: "relay", Address: &relay_addr{opkt.hdr.C, ZeroHashname}})
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s opkt=%+v", err, opkt)
@@ -89,7 +88,7 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 	go func() {
 		opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
 		cmd := cmd_snd_pkt{nil, line, opkt, nil}
-		go h.sw.reactor.Call(&cmd)
+		h.sw.reactor.Call(&cmd)
 		if cmd.err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rly, 1)
 			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
@@ -158,9 +157,9 @@ func (n *relay_addr) String() string {
 	return fmt.Sprintf("<relay c=%s via=%s>", n.C, n.via.Short())
 }
 
-func (n *relay_addr) Send(sw *Switch, pkt *pkt_t) error {
+func (h *relay_handler) snd_pkt(sw *Switch, pkt *pkt_t) error {
 	var (
-		h      = &sw.relay_handler
+		n      = pkt.netpath.Address.(*relay_addr)
 		line   *line_t
 		routed bool
 	)
@@ -212,7 +211,7 @@ REROUTE:
 		if cmd.err != nil {
 			n.via = ZeroHashname
 			atomic.AddUint64(&h.num_err_pkt_snd, 1)
-			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
+			h.log.Noticef("error: %s opkt=%+v %q", cmd.err, opkt.hdr, opkt.body)
 			return
 		}
 

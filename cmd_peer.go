@@ -20,22 +20,30 @@ func (h *peer_handler) init(sw *Switch) {
 func (h *peer_handler) SendPeer(to *Peer) {
 	to_hn := to.Hashname()
 
-	h.sw.net.send_nat_breaker(to)
+	h.sw.send_nat_breaker(to)
 
-	paths := net_paths{}
+	var (
+		paths     net_paths
+		raw_paths raw_net_paths
+	)
 
-	if h.sw.AllowRelay {
+	if !h.sw.DenyRelay {
 		relay := to.net_paths().FirstOfType("relay")
 		if relay == nil {
-			c, err := make_hex_rand(16)
-			if err != nil {
-				h.log.Noticef("error: %s", err)
-				return
-			}
-
-			relay = to.add_net_path(&net_path{Network: "relay", Address: &relay_addr{C: c}})
+			to.add_net_path(&net_path{Network: "relay", Address: make_relay_addr()})
 		}
-		paths = append(paths, relay)
+	}
+
+	for _, n := range to.net_paths() {
+		if n.Address.PublishWithPeer() {
+			paths = append(paths, n)
+		}
+	}
+
+	raw_paths, err := h.sw.encode_net_paths(paths)
+	if err != nil {
+		h.log.Noticef("error: %s", err)
+		return
 	}
 
 	for _, via := range to.ViaTable() {
@@ -50,7 +58,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		channel.send_packet(&pkt_t{
 			hdr: pkt_hdr_t{
 				Peer:  to_hn.String(),
-				Paths: paths,
+				Paths: raw_paths,
 				End:   true,
 			},
 		})
@@ -64,7 +72,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	from_peer := h.sw.GetPeer(channel.To())
+	from_peer := h.sw.get_peer(channel.To())
 
 	peer_hashname, err := HashnameFromString(pkt.hdr.Peer)
 	if err != nil {
@@ -84,7 +92,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	to_peer := h.sw.GetPeer(peer_hashname)
+	to_peer := h.sw.get_peer(peer_hashname)
 	if to_peer == nil {
 		return
 	}
@@ -98,7 +106,10 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	paths := pkt.hdr.Paths
 	for _, np := range from_peer.net_paths() {
 		if np.Address.PublishWithConnect() {
-			paths = append(paths, np)
+			raw, err := h.sw.encode_net_path(np)
+			if err == nil {
+				paths = append(paths, raw)
+			}
 		}
 	}
 	h.log.Noticef("received peer-cmd: from=%s to=%s paths=%s", channel.To().Short(), peer_hashname.Short(), paths)
@@ -140,13 +151,19 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 		return
 	}
 
-	peer, newpeer := h.sw.AddPeer(hashname)
+	peer, newpeer := h.sw.add_peer(hashname)
 
 	peer.SetPublicKey(pubkey)
 	peer.AddVia(channel.To())
 	peer.is_down = false
 
-	for _, np := range pkt.hdr.Paths {
+	paths, err := h.sw.decode_net_paths(pkt.hdr.Paths)
+	if err != nil {
+		h.log.Noticef("error: %s", err)
+		return
+	}
+
+	for _, np := range paths {
 		peer.add_net_path(np)
 	}
 

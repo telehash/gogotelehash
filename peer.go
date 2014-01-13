@@ -94,7 +94,7 @@ func (p *Peer) add_net_path(netpath *net_path) *net_path {
 	)
 
 	for _, np := range p.paths {
-		if Equalnet_paths(np, netpath) {
+		if equal_net_paths(np, netpath) {
 			netpath = np
 			found = true
 			break
@@ -106,6 +106,23 @@ func (p *Peer) add_net_path(netpath *net_path) *net_path {
 	}
 
 	return netpath
+}
+
+func (p *Peer) remove_net_path(netpath *net_path) {
+	p.mtx.Lock()
+	defer p.mtx.Unlock()
+
+	var (
+		paths net_paths
+	)
+
+	for _, np := range p.paths {
+		if !equal_net_paths(np, netpath) {
+			paths = append(paths, np)
+		}
+	}
+
+	p.paths = paths
 }
 
 func (p *Peer) update_paths() {

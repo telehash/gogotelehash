@@ -1,29 +1,65 @@
 package ipv4
 
 import (
+	"encoding/json"
 	th "github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
+	"strconv"
 )
 
+const network = "ipv4"
+
 type Transport struct {
+	Addr string
 	conn *net.UDPConn
 }
 
-func Open(addr string) (*Transport, error) {
-	laddr, err := net.ResolveUDPAddr("udp4", addr)
+func (t *Transport) Network() string {
+	return network
+}
+
+func (t *Transport) Open() error {
+	addr, err := net.ResolveUDPAddr("udp4", t.Addr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	c, err := net.ListenUDP("udp4", laddr)
+	c, err := net.ListenUDP("udp4", addr)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	return &Transport{c}, nil
+	t.conn = c
+
+	return nil
+}
+
+func (t *Transport) LocalAddresses() []th.Addr {
+	laddr := t.conn.LocalAddr().(*net.UDPAddr)
+
+	l, err := iputil.LocalAddresses()
+	if err != nil {
+		// err
+		return nil
+	}
+
+	l4 := make([]th.Addr, 0, len(l))
+	for _, a := range l {
+		a4, err := format_addr(a)
+		if err == nil {
+			a4.Port = laddr.Port
+			l4 = append(l4, a4)
+		}
+	}
+
+	return l4
 }
 
 func (t *Transport) Close() error {
+	if t.conn == nil {
+		return nil
+	}
 	return t.conn.Close()
 }
 
@@ -78,4 +114,40 @@ func _net_conn_is_closed_err(err error) bool {
 	default:
 		return s == v.Error()
 	}
+}
+
+func (t *Transport) EncodeAddr(n th.Addr) ([]byte, error) {
+	a := n.(*Addr)
+
+	var (
+		j = struct {
+			IP   string `json:"ip"`
+			Port int    `json:"port"`
+		}{
+			IP:   a.IP.String(),
+			Port: a.Port,
+		}
+	)
+
+	return json.Marshal(j)
+}
+
+func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
+	var (
+		j struct {
+			IP   string `json:"ip"`
+			Port int    `json:"port"`
+		}
+	)
+
+	err := json.Unmarshal(data, &j)
+	if err != nil {
+		return nil, err
+	}
+
+	if j.IP == "" || j.Port == 0 {
+		return nil, ErrInvalidIPv4Address
+	}
+
+	return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
 }

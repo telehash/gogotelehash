@@ -9,6 +9,12 @@ var (
 )
 
 type Transport interface {
+	// Network returns the name of the netwpath type
+	Network() string
+
+	// Open opens the connection
+	Open() error
+
 	// ReadFrom reads a packet from the connection,
 	// copying the payload into b.  It returns the number of
 	// bytes copied into b and the return address that
@@ -24,4 +30,10 @@ type Transport interface {
 
 	// LocalAddresses returns any local addresses.
 	LocalAddresses() []Addr
+
+	// parse a json encoded `path` object.
+	DecodeAddr(data []byte) (Addr, error)
+
+	// format a json encoded `path` object.
+	EncodeAddr(addr Addr) ([]byte, error)
 }

@@ -5,22 +5,6 @@ import (
 	"sync/atomic"
 )
 
-// type net_path interface {
-//   Priority() int
-//   ResetPriority()
-//   Demote()
-//   Break()
-//   Hash() uint32
-
-//   AddressForSeek() (ip string, port int, ok bool)
-//   IncludeInConnect() bool
-
-//   SendNatBreaker() bool
-//   Send(sw *Switch, pkt *pkt_t) error
-//   MarshalJSON() ([]byte, error)
-//   UnmarshalJSON(data []byte) error
-// }
-
 type net_path struct {
 	Network  string
 	Address  net.Addr
@@ -58,7 +42,7 @@ func (n *net_path) ResetPriority() {
 	atomic.StoreInt32(&n.priority, 0)
 }
 
-type net_path_sorter []net_path
+type net_path_sorter net_paths
 
 func (l net_path_sorter) Len() int           { return len(l) }
 func (l net_path_sorter) Less(i, j int) bool { return l[i].Priority() > l[j].Priority() }

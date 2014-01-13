@@ -262,63 +262,6 @@ func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
 	return pkt, nil
 }
 
-// func (c *channel_reliable_t) tick(now time.Time) (ack *pkt_t, miss []*pkt_t) {
-//   var (
-//     err error
-//   )
-
-//   // miss = c._get_missing_packets(now)
-
-//   c._detect_broken(now)
-
-//   return ack, miss
-// }
-
-// func (c *channel_reliable_t) _get_auto_ack() (*pkt_t, error) {
-//   var (
-//     err error
-//     now = time.Now()
-//   )
-
-//   if !c._needs_auto_ack(now) {
-//     return nil, nil
-//   }
-
-//   if c.broken {
-//     return nil, ErrChannelBroken
-//   }
-
-//   pkt := &pkt_t{}
-//   pkt.hdr.C = c.channel.options.Id
-//   pkt.hdr.Ack = c.read_last_seq
-//   pkt.hdr.Miss = c.miss
-
-//   if c.channel.rcv_end {
-//     c.snd_end_ack = true
-//   }
-//   c.rcv_unacked = 0
-//   c.snd_last_ack_at = now
-//   c.snd_last_ack = pkt.hdr.Ack
-
-//   return pkt, nil
-// }
-
-// func (c *channel_reliable_t) _needs_auto_ack(now time.Time) bool {
-//   if c.snd_last_ack_at.IsZero() {
-//     if !c.channel.initiator && c.read_last_seq.IsSet() {
-//       return true
-//     } else {
-//       c.snd_last_ack_at = now
-//     }
-//   }
-
-//   if c.channel.rcv_end && !c.snd_end_ack {
-//     return true
-//   }
-
-//   return
-// }
-
 func (c *channel_reliable_t) _get_missing_packets(now time.Time) []*pkt_t {
 	if c.snd_miss_at.After(now.Add(-1 * time.Second)) {
 		return nil
@@ -345,31 +288,6 @@ func (c *channel_reliable_t) _get_missing_packets(now time.Time) []*pkt_t {
 
 	return buf
 }
-
-// func (c *channel_reliable_t) _detect_broken(now time.Time) {
-//   breaking_point := now.Add(-60 * time.Second)
-
-//   if c.rcv_last_ack_at.IsZero() {
-//     c.rcv_last_ack_at = now
-//   }
-
-//   if c.rcv_last_pkt_at.IsZero() {
-//     c.rcv_last_pkt_at = now
-//   }
-
-//   if c.snd_last_ack_at.IsZero() {
-//     c.snd_last_ack_at = now
-//   }
-
-//   if c.snd_last_pkt_at.IsZero() {
-//     c.snd_last_pkt_at = now
-//   }
-
-//   if c.rcv_last_ack_at.Before(breaking_point) && c.rcv_last_pkt_at.Before(breaking_point) ||
-//     c.snd_last_ack_at.Before(breaking_point) && c.snd_last_pkt_at.Before(breaking_point) {
-//     c.broken = true
-//   }
-// }
 
 func (i *channel_reliable_t) is_closed() bool {
 

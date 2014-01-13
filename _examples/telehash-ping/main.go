@@ -1,18 +1,20 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/ipv4"
+	"github.com/telehash/gogotelehash/net/ipv6"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 )
 
 import (
@@ -21,7 +23,6 @@ import (
 )
 
 func main() {
-
 	if os.Getenv("PROFILE") == "true" {
 		go func() {
 			http.ListenAndServe("localhost:6060", nil)
@@ -37,22 +38,20 @@ func main() {
 		port = "4000"
 	}
 
-	s, err := telehash.NewSwitch("0.0.0.0:"+port, make_key(), telehash.HandlerFunc(pong))
+	s := &telehash.Switch{
+		Handler: telehash.HandlerFunc(pong),
+		Transports: []net.Transport{
+			&ipv4.Transport{Addr: ":" + port},
+			&ipv6.Transport{Addr: ":" + port},
+		},
+	}
+
+	err := s.Start()
 	if err != nil {
 		panic(err)
 	}
 
-	seed_url, err := s.SeedURL()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("seed with: %s\n", seed_url)
-
-	err = s.Start()
-	if err != nil {
-		panic(err)
-	}
+	time.Sleep(100 * time.Millisecond)
 
 	parse_main_seed(s)
 
@@ -63,40 +62,11 @@ func main() {
 		}
 	}()
 
-	for i := 1; i < len(os.Args); i++ {
-		addr, key, err := telehash.ParseSeedURL(os.Args[i])
-		if err != nil {
-			fmt.Printf("invalid seed url: %s\n  %s\n", err, os.Args[i])
-			continue
-		}
-
-		hn, err := s.Seed(addr, key)
-		if err != nil {
-			fmt.Printf("failed to seed: %s\n  %s\n", err, os.Args[i])
-			continue
-		}
-
-		fmt.Printf("connected to %s\n", hn.Short())
-	}
-
-	peers := s.Seek(s.LocalHashname(), 15)
-	for _, peer := range peers {
-		fmt.Printf("discovered: %s\n", peer.Short())
-	}
-
 	c := make(chan os.Signal)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	<-c
 
 	fmt.Println("shutting down...")
-}
-
-func make_key() *rsa.PrivateKey {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		panic(err)
-	}
-	return key
 }
 
 func pong(c *telehash.Channel) {
@@ -222,7 +192,11 @@ func parse_main_seed(s *telehash.Switch) {
 				return
 			}
 
-			addr := fmt.Sprintf("%s:%d", seed.IP, seed.Port)
+			addr, err := ipv4.ResolveAddr(fmt.Sprintf("%s:%d", seed.IP, seed.Port))
+			if err != nil {
+				fmt.Printf("failed to seed: %s\n  %s\n", err, addr)
+				return
+			}
 
 			keyi, err := x509.ParsePKIXPublicKey(pem_block.Bytes)
 			if err != nil {
@@ -240,7 +214,7 @@ func parse_main_seed(s *telehash.Switch) {
 				return
 			}
 
-			hn, err := s.Seed(addr, key)
+			hn, err := s.Seed("ipv4", addr, key)
 
 			if err != nil {
 				fmt.Printf("failed to seed: %s\n  %s\n", err, addr)

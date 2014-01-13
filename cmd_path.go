@@ -31,7 +31,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 		score    int
 	)
 
-	peer = h.sw.GetPeer(to)
+	peer = h.sw.get_peer(to)
 	if peer == nil {
 		return false
 	}
@@ -55,7 +55,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 			if ok {
 				np.ResetPriority()
 			} else {
-				np.Break()
+				peer.remove_net_path(np)
 			}
 		}(np, &wg, i)
 	}
@@ -71,7 +71,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	if score > 0 {
 		for _, np := range relays {
 			if np != nil {
-				np.Demote()
+				peer.remove_net_path(np)
 			}
 		}
 	} else {
@@ -85,7 +85,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 					if ok {
 						np.ResetPriority()
 					} else {
-						np.Break()
+						peer.remove_net_path(np)
 					}
 				}(np, &wg, i)
 			}
@@ -122,15 +122,16 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 		priority = 0
 	}
 
-	paths, err := get_network_paths(h.sw.net.GetPort())
+	paths := h.sw.get_network_paths()
+	raw_paths, err := h.sw.encode_net_paths(paths)
 	if err != nil {
-		paths = nil
+		raw_paths = nil
 	}
 
 	pkt = &pkt_t{
 		hdr: pkt_hdr_t{
 			Priority: priority,
-			Paths:    paths,
+			Paths:    raw_paths,
 		},
 		netpath: netpath,
 	}
@@ -190,7 +191,10 @@ func (h *path_handler) serve_path(channel *Channel) {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
-	for _, np := range pkt.hdr.Paths {
-		pkt.peer.add_net_path(np)
+	paths, err := h.sw.decode_net_paths(pkt.hdr.Paths)
+	if err == nil {
+		for _, np := range paths {
+			pkt.peer.add_net_path(np)
+		}
 	}
 }
