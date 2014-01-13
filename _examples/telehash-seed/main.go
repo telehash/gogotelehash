@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/telehash/gogotelehash"
 	thnet "github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/http"
 	"github.com/telehash/gogotelehash/net/ipv4"
 	"github.com/telehash/gogotelehash/net/ipv6"
 	"io/ioutil"
@@ -38,6 +39,7 @@ func main() {
 		Transports: []thnet.Transport{
 			&ipv4.Transport{Addr: addr},
 			&ipv6.Transport{Addr: addr},
+			&http.Transport{PublicURL: "http://95.85.6.236:42425/", ListenAddr: ":42425"},
 		},
 	}
 

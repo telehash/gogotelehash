@@ -225,9 +225,9 @@ REROUTE:
 func (n *relay_addr) MarshalJSON() ([]byte, error) {
 	var (
 		j = struct {
-			C string `json:"c"`
+			Id string `json:"id"`
 		}{
-			C: n.C,
+			Id: n.C,
 		}
 	)
 
@@ -237,7 +237,8 @@ func (n *relay_addr) MarshalJSON() ([]byte, error) {
 func (n *relay_addr) UnmarshalJSON(data []byte) error {
 	var (
 		j struct {
-			C string `json:"c"`
+			C  string `json:"c"`
+			Id string `json:"id"`
 		}
 	)
 
@@ -246,10 +247,14 @@ func (n *relay_addr) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if j.C == "" {
+	if j.Id == "" && j.C != "" {
+		j.Id = j.C
+	}
+
+	if j.Id == "" {
 		return fmt.Errorf("Invalid relay netpath")
 	}
 
-	n.C = j.C
+	n.C = j.Id
 	return nil
 }
