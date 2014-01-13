@@ -23,8 +23,9 @@ type line_t struct {
 	shr_key *shared_line_key
 	state   line_state
 
-	backlog  backlog_t
-	channels map[string]*Channel
+	backlog   backlog_t
+	channels  map[string]*Channel
+	last_sync time.Time
 
 	idle_timer   *time.Timer
 	broken_timer *time.Timer

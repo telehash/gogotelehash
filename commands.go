@@ -527,7 +527,15 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
 			l = cmd.line
 		)
 
+		if l.last_sync.After(time.Now().Add(-120 * time.Second)) {
+			if sw.path_handler.negotiate_netpath(l.peer.hashname, l.peer.active_path()) {
+				l.path_timer.Reset(line_path_interval)
+				return
+			}
+		}
+
 		if sw.path_handler.Negotiate(l.peer.hashname) {
+			l.last_sync = time.Now()
 			l.path_timer.Reset(line_path_interval)
 			return
 		}
