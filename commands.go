@@ -182,14 +182,13 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 
 func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *net_path) error {
 	var (
-		err error
-		// local_rsa_key  = l.sw.key
+		err            error
 		local_hashname = l.sw.hashname
+		reopen         bool
 	)
 
 	if l.state == line_opened {
-		// reopen line?
-		return nil // drop
+		reopen = true
 	}
 
 	prv := l.prv_key
@@ -199,6 +198,12 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 			return err
 		}
 		prv = l.prv_key
+	}
+	if reopen {
+		err := l.SndOpen(netpath)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = pub.verify(l.pub_key, local_hashname)
@@ -223,12 +228,14 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 	l.state = line_opened
 	stop_timer(l.open_timer)
 	l.open_timer = nil
-	l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
-	l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
-	l.broken_timer.Reset(line_broken_timeout)
-	l.idle_timer.Reset(line_idle_timeout)
-	l.sw.active_lines[l.prv_key.id] = l
-	l.sw.num_open_lines += 1
+	if !reopen {
+		l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
+		l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
+		l.broken_timer.Reset(line_broken_timeout)
+		l.idle_timer.Reset(line_idle_timeout)
+		l.sw.active_lines[l.prv_key.id] = l
+		l.sw.num_open_lines += 1
+	}
 
 	l.log.Debugf("line opened")
 
@@ -356,10 +363,6 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	if peer == nil {
 		// seek
 		return ErrUnknownPeer
-	}
-
-	if peer.is_down {
-		return ErrPeerBroken
 	}
 
 	if !peer.CanOpen() {

@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/googollee/go-socket.io"
+	"github.com/fd/go-socket.io"
 	th "github.com/telehash/gogotelehash/net"
 	"net"
 	"net/http"
@@ -27,6 +27,10 @@ type pkt_t struct {
 	addr th.Addr
 }
 
+type event_t struct {
+	Data string `json:"data"`
+}
+
 func (t *Transport) Network() string {
 	return network
 }
@@ -44,9 +48,15 @@ func (t *Transport) Open() error {
 	t.sessions = make(map[string]*socketio.Session)
 
 	t.sio = socketio.NewSocketIOServer(&t.Config)
-	t.sio.On("connect", t.on_connect)
-	t.sio.On("disconnect", t.on_disconnect)
-	t.sio.On("packet", t.on_packet)
+	if err := t.sio.On("connect", t.on_connect); err != nil {
+		return err
+	}
+	if err := t.sio.On("disconnect", t.on_disconnect); err != nil {
+		return err
+	}
+	if err := t.sio.On("packet", t.on_packet); err != nil {
+		return err
+	}
 
 	listener, err := net.Listen("tcp", t.ListenAddr)
 	if err != nil {
@@ -87,6 +97,7 @@ func (t *Transport) ReadFrom(b []byte) (int, th.Addr, error) {
 func (t *Transport) WriteTo(b []byte, addr th.Addr) (int, error) {
 	var (
 		session *socketio.Session
+		event   event_t
 	)
 
 	if a, ok := addr.(*internal_addr); ok {
@@ -96,7 +107,8 @@ func (t *Transport) WriteTo(b []byte, addr th.Addr) (int, error) {
 		return 0, errors.New("unreachable session")
 	}
 
-	err := session.Of("").Emit("packet", base64.StdEncoding.EncodeToString(b))
+	event.Data = base64.StdEncoding.EncodeToString(b)
+	err := session.Of("").Emit("packet", &event)
 	if err == socketio.NotConnected {
 		return 0, th.ErrTransportClosed
 	}
@@ -163,8 +175,8 @@ func (t *Transport) on_disconnect(ns *socketio.NameSpace) {
 	t.sessions[ns.Session.SessionId] = ns.Session
 }
 
-func (t *Transport) on_packet(ns *socketio.NameSpace, b64 string) {
-	data, err := base64.StdEncoding.DecodeString(b64)
+func (t *Transport) on_packet(ns *socketio.NameSpace, e event_t) {
+	data, err := base64.StdEncoding.DecodeString(e.Data)
 	if err != nil {
 		return
 	}

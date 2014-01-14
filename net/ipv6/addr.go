@@ -3,6 +3,7 @@ package ipv6
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
@@ -50,6 +51,10 @@ func (a *Addr) PublishWithSeek() bool {
 
 func (a *Addr) SeekString() string {
 	return ""
+}
+
+func (a *Addr) String() string {
+	return fmt.Sprintf("%s:%d cat=%s", a.IP, a.Port, a.Category)
 }
 
 func (a *Addr) DefaultPriority() int {

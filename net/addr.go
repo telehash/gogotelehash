@@ -12,4 +12,5 @@ type Addr interface {
 	DefaultPriority() int
 
 	EqualTo(other Addr) bool
+	String() string
 }

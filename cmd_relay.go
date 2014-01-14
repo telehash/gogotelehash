@@ -128,7 +128,7 @@ func (n *relay_addr) PublishWithPeer() bool {
 }
 
 func (n *relay_addr) PublishWithConnect() bool {
-	return true
+	return false
 }
 
 func (n *relay_addr) PublishWithSeek() bool {
@@ -155,7 +155,7 @@ func (n *relay_addr) EqualTo(other net.Addr) bool {
 }
 
 func (n *relay_addr) String() string {
-	return fmt.Sprintf("<relay c=%s via=%s>", n.C, n.via.Short())
+	return fmt.Sprintf("id=%s via=%s", n.C, n.via.Short())
 }
 
 func (h *relay_handler) snd_pkt(sw *Switch, pkt *pkt_t) error {

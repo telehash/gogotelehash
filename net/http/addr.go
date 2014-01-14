@@ -2,6 +2,7 @@ package http
 
 import (
 	"errors"
+	"fmt"
 	th "github.com/telehash/gogotelehash/net"
 )
 
@@ -35,6 +36,10 @@ func (a *Addr) PublishWithSeek() bool {
 
 func (a *Addr) SeekString() string {
 	return ""
+}
+
+func (a *Addr) String() string {
+	return fmt.Sprintf("url=%s", a.URL)
 }
 
 func (a *Addr) DefaultPriority() int {
@@ -78,6 +83,10 @@ func (a *internal_addr) SeekString() string {
 
 func (a *internal_addr) DefaultPriority() int {
 	return 2
+}
+
+func (a *internal_addr) String() string {
+	return fmt.Sprintf("session=%s", a.SessionID)
 }
 
 func (a *internal_addr) EqualTo(other th.Addr) bool {

@@ -13,7 +13,6 @@ type Peer struct {
 	paths        net_paths
 	active_paths net_paths
 	pubkey       *rsa.PublicKey
-	is_down      bool
 	via          map[Hashname]bool
 	mtx          sync.RWMutex
 }
@@ -89,22 +88,13 @@ func (p *Peer) add_net_path(netpath *net_path) *net_path {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
-	var (
-		found = false
-	)
-
 	for _, np := range p.paths {
 		if equal_net_paths(np, netpath) {
-			netpath = np
-			found = true
-			break
+			return np
 		}
 	}
 
-	if !found {
-		p.paths = append(p.paths, netpath)
-	}
-
+	p.paths = append(p.paths, netpath)
 	return netpath
 }
 

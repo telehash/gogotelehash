@@ -1,0 +1,20 @@
+{
+  "manifest_version": 2,
+  "name": "Chrome Telehash Demo",
+  "description": "Demo using native UDP sockets",
+  "version": "2",
+  "minimum_chrome_version": "23",
+  "app": {
+    "background": {
+      "scripts": ["main.js"]
+    }
+  },
+  "permissions": [
+    "storage",
+    "experimental",
+    {"socket": [
+      "udp-bind::*",
+      "udp-send-to::*"
+    ]}
+  ]
+}

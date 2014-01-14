@@ -13,6 +13,16 @@ const (
 	line_seek_interval  = 30 * time.Second
 )
 
+type line_state uint32
+
+const (
+	line_pending line_state = iota
+	line_peering
+	line_opening
+	line_opened
+	line_closed
+)
+
 type line_t struct {
 	sw   *Switch
 	peer *Peer
