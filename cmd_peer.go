@@ -178,7 +178,13 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 		peer.add_net_path(relay)
 	}
 
-	h.log.Noticef("received connect-cmd: peer=%s path=%s paths=%s", peer, peer.active_path(), peer.net_paths())
+	was_open := false
+	if line := h.sw.get_line(hashname); line != nil && line.state == line_opened {
+		was_open = true
+		line.SndOpen(nil)
+	}
+
+	h.log.Noticef("received connect-cmd: peer=%s was-open=%v path=%s paths=%s", peer, was_open, peer.active_path(), peer.net_paths())
 
 	h.sw.path_handler.Negotiate(peer.hashname)
 }

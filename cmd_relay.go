@@ -174,7 +174,8 @@ REROUTE:
 				continue
 			}
 
-			if line.peer.active_path().Network == "relay" {
+			path := line.peer.active_path()
+			if path == nil || path.Network == "relay" {
 				continue
 			}
 

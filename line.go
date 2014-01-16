@@ -113,7 +113,6 @@ func (l *line_t) SndOpen(np *net_path) error {
 	pkt.peer = l.peer
 
 	for _, np := range netpaths {
-		np.Demote()
 		pkt.netpath = np
 
 		err = l.sw.snd_pkt(pkt)
