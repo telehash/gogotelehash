@@ -173,15 +173,20 @@ func (c *Channel) Fatal(err error) error {
 }
 
 func (c *Channel) send_packet(p *pkt_t) error {
-	cmd := cmd_snd_pkt{c, c.line, p, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.err
+	if c == nil {
+		return ErrChannelBroken
+	}
+	cmd := cmd_snd_pkt{c, c.line, p}
+	return c.sw.reactor.Call(&cmd)
 }
 
 func (c *Channel) receive_packet() (*pkt_t, error) {
+	if c == nil {
+		return nil, ErrChannelBroken
+	}
 	cmd := cmd_get_rcv_pkt{c, nil, nil}
-	c.sw.reactor.Call(&cmd)
-	return cmd.pkt, cmd.err
+	err := c.sw.reactor.Call(&cmd)
+	return cmd.pkt, err
 }
 
 func (c *Channel) run_user_handler() {
@@ -344,7 +349,8 @@ type cmd_channel_break struct {
 	channel *Channel
 }
 
-func (cmd *cmd_channel_break) Exec(sw *Switch) {
+func (cmd *cmd_channel_break) Exec(sw *Switch) error {
 	cmd.channel.broken = true
 	cmd.channel.reschedule_all()
+	return nil
 }

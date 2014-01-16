@@ -142,6 +142,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
+	defer channel.Close()
 
 	err = channel.send_packet(pkt)
 	if err != nil {

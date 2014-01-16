@@ -76,7 +76,6 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
 		defer channel.Close()
 
 		for i := 0; i < 100000; i++ {

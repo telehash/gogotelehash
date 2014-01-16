@@ -85,19 +85,17 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 		return // drop
 	}
 
-	go func() {
-		opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
-		cmd := cmd_snd_pkt{nil, line, opkt, nil}
-		h.sw.reactor.Call(&cmd)
-		if cmd.err != nil {
-			atomic.AddUint64(&h.num_err_pkt_rly, 1)
-			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
-			return
-		}
+	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
+	cmd := cmd_snd_pkt{nil, line, opkt}
+	err := cmd.Exec(h.sw)
+	if err != nil {
+		atomic.AddUint64(&h.num_err_pkt_rly, 1)
+		h.log.Noticef("error: %s opkt=%+v", err, opkt)
+		return
+	}
 
-		atomic.AddUint64(&h.num_pkt_rly, 1)
-		h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
-	}()
+	atomic.AddUint64(&h.num_pkt_rly, 1)
+	h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
 }
 
 func make_relay_addr() net.Addr {
@@ -207,20 +205,17 @@ REROUTE:
 	}
 
 	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
-	go func() {
-		cmd := cmd_snd_pkt{nil, line, opkt, nil}
-		h.sw.reactor.Call(&cmd)
-		if cmd.err != nil {
-			n.via = ZeroHashname
-			atomic.AddUint64(&h.num_err_pkt_snd, 1)
-			h.log.Noticef("error: %s opkt=%+v %q", cmd.err, opkt.hdr, opkt.body)
-			return
-		}
+	cmd := cmd_snd_pkt{nil, line, opkt}
+	err = cmd.Exec(h.sw)
+	if err != nil {
+		n.via = ZeroHashname
+		atomic.AddUint64(&h.num_err_pkt_snd, 1)
+		h.log.Noticef("error: %s opkt=%+v %q", err, opkt.hdr, opkt.body)
+		return err
+	}
 
-		atomic.AddUint64(&h.num_pkt_snd, 1)
-		h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
-	}()
-
+	atomic.AddUint64(&h.num_pkt_snd, 1)
+	h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
 	return nil
 }
 

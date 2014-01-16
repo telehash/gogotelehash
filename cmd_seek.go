@@ -35,6 +35,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	if err != nil {
 		return err
 	}
+	defer channel.Close()
 
 	err = channel.send_packet(pkt)
 	if err != nil {

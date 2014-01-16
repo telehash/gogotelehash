@@ -9,8 +9,9 @@ type cmd_peer_get struct {
 	peer     *Peer
 }
 
-func (cmd *cmd_peer_get) Exec(sw *Switch) {
+func (cmd *cmd_peer_get) Exec(sw *Switch) error {
 	cmd.peer = sw.peers.get_peer(cmd.hashname)
+	return nil
 }
 
 type cmd_peer_add struct {
@@ -19,12 +20,14 @@ type cmd_peer_add struct {
 	discovered bool
 }
 
-func (cmd *cmd_peer_add) Exec(sw *Switch) {
+func (cmd *cmd_peer_add) Exec(sw *Switch) error {
 	cmd.peer, cmd.discovered = sw.peers.add_peer(sw, cmd.hashname)
 
 	if cmd.discovered {
 		sw.log.Noticef("discovered: %s (add_peer)", cmd.peer)
 	}
+
+	return nil
 }
 
 type cmd_peer_get_closest struct {
@@ -33,8 +36,9 @@ type cmd_peer_get_closest struct {
 	peers    []*Peer
 }
 
-func (cmd *cmd_peer_get_closest) Exec(sw *Switch) {
+func (cmd *cmd_peer_get_closest) Exec(sw *Switch) error {
 	cmd.peers = sw.peers.find_closest_peers(cmd.hashname, cmd.n)
+	return nil
 }
 
 type cmd_line_get struct {
@@ -42,14 +46,15 @@ type cmd_line_get struct {
 	line     *line_t
 }
 
-func (cmd *cmd_line_get) Exec(sw *Switch) {
+func (cmd *cmd_line_get) Exec(sw *Switch) error {
 	cmd.line = sw.lines[cmd.hashname]
+	return nil
 }
 
 type cmd_shutdown struct {
 }
 
-func (cmd *cmd_shutdown) Exec(sw *Switch) {
+func (cmd *cmd_shutdown) Exec(sw *Switch) error {
 	sw.terminating = true
 
 	sw.log.Noticef("shutdown lines=%d", len(sw.lines))
@@ -57,13 +62,15 @@ func (cmd *cmd_shutdown) Exec(sw *Switch) {
 	for _, line := range sw.lines {
 		sw.reactor.CastAfter(10*time.Second, &cmd_line_close_broken{line})
 	}
+
+	return nil
 }
 
 type cmd_rcv_pkt struct {
 	pkt *pkt_t
 }
 
-func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
+func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 	var (
 		pkt = cmd.pkt
 	)
@@ -73,18 +80,18 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 
 		if line == nil {
 			sw.log.Errorf("line: error: %s", errUnknownLine)
-			return
+			return nil
 		}
 
 		cmd.rcv_line_pkt(line, pkt)
-		return
+		return nil
 	}
 
 	if pkt.hdr.Type == "open" {
 		pub, err := decompose_open_pkt(sw.Key, pkt)
 		if err != nil {
 			sw.log.Errorf("open: error: %s", err)
-			return
+			return nil
 		}
 
 		peer, newpeer := sw.peers.add_peer(sw, pub.hashname)
@@ -103,11 +110,11 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) {
 		}
 
 		cmd.rcv_open_pkt(line, pub, pkt.netpath)
-		return
+		return nil
 	}
 
 	// drop
-	return
+	return nil
 }
 
 func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
@@ -159,7 +166,12 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 		return err
 	}
 
+	if l.channels[channel.Id()] != nil {
+		return errChannelAlreadyExists
+	}
+
 	l.channels[channel.Id()] = channel
+	l.sw.num_channels++
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
@@ -247,10 +259,9 @@ type cmd_snd_pkt struct {
 	channel *Channel
 	line    *line_t
 	pkt     *pkt_t
-	err     error
 }
 
-func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
+func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
 	var (
 		channel = cmd.channel
 		line    = cmd.line
@@ -262,12 +273,11 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 	if channel != nil {
 		if !channel.can_snd_pkt() {
 			sw.reactor.Defer(&channel.snd_backlog)
-			return
+			return nil
 		}
 		err = channel.will_send_packet(ipkt)
 		if err != nil {
-			cmd.err = err
-			return
+			return err
 		}
 	}
 
@@ -275,8 +285,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 
 	opkt, err = line.shr_key.enc(ipkt)
 	if err != nil {
-		cmd.err = err
-		return
+		return err
 	}
 
 	sender := opkt.netpath
@@ -284,15 +293,13 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 		sender = line.peer.active_path()
 	}
 	if sender == nil {
-		cmd.err = ErrPeerBroken
-		return
+		return ErrPeerBroken
 	}
 	opkt.netpath = sender
 
 	err = sw.snd_pkt(opkt)
 	if err != nil {
-		cmd.err = err
-		return
+		return err
 	}
 
 	if channel != nil {
@@ -301,15 +308,15 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) {
 	}
 
 	line.log.Debugf("snd pkt: hdr=%+v", opkt.hdr)
+	return nil
 }
 
 type cmd_channel_open struct {
 	options ChannelOptions
 	channel *Channel
-	err     error
 }
 
-func (cmd *cmd_channel_open) Exec(sw *Switch) {
+func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 	var (
 		line    *line_t
 		channel *Channel
@@ -317,30 +324,29 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 	)
 
 	if sw.terminating {
-		cmd.err = errNoOpenLine
-		return
+		return errNoOpenLine
 	}
 
 	line = sw.lines[cmd.options.To]
 	if line == nil {
-		err = cmd.open_line(sw)
-		if err != nil {
-			cmd.err = err
-		}
-		return
+		return cmd.open_line(sw)
 	}
 	if line.state != line_opened {
 		sw.reactor.Defer(&line.backlog)
-		return
+		return nil
 	}
 
 	channel, err = make_channel(sw, line, true, cmd.options)
 	if err != nil {
-		cmd.err = err
-		return
+		return err
+	}
+
+	if line.channels[channel.Id()] != nil {
+		return errChannelAlreadyExists
 	}
 
 	line.channels[channel.Id()] = channel
+	sw.num_channels++
 
 	line.log.Debugf("channel[%s:%s](%s -> %s): opened (initiator=true)",
 		short_hash(channel.Id()),
@@ -349,6 +355,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) {
 		line.peer.Hashname().Short())
 
 	cmd.channel = channel
+	return nil
 }
 
 func (cmd *cmd_channel_open) open_line(sw *Switch) error {
@@ -408,13 +415,15 @@ type cmd_line_close_idle struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
+func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
 		c.reschedule()
 	}
+
+	cmd.line.backlog.CancelAll(ErrChannelBroken)
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -438,19 +447,23 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) {
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
 		"idle")
+
+	return nil
 }
 
 type cmd_line_close_broken struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
+func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
 		c.reschedule()
 	}
+
+	cmd.line.backlog.CancelAll(ErrChannelBroken)
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -474,19 +487,23 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) {
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
 		"broken")
+
+	return nil
 }
 
 type cmd_line_close_down struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_down) Exec(sw *Switch) {
+func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
 		c.reschedule()
 	}
+
+	cmd.line.backlog.CancelAll(ErrChannelBroken)
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -510,19 +527,21 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) {
 	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
 		cmd.line.peer.String(),
 		"peer down")
+
+	return nil
 }
 
 type cmd_line_snd_path struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
+func (cmd *cmd_line_snd_path) Exec(sw *Switch) error {
 	if sw.terminating {
-		return
+		return nil
 	}
 
 	if cmd.line.state != line_opened {
-		return
+		return nil
 	}
 
 	go func() {
@@ -535,6 +554,7 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
 				l.path_timer.Reset(line_path_interval)
 				return
 			}
+			// else do full negotioation
 		}
 
 		if sw.path_handler.Negotiate(l.peer.hashname) {
@@ -543,27 +563,26 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) {
 			return
 		}
 
-		func() {
-			defer func() { recover() }()
-			sw.reactor.Cast(&cmd_line_close_broken{l})
-			l.log.Noticef("path failed (breaking the line)")
-		}()
+		sw.reactor.Cast(&cmd_line_close_broken{l})
+		l.log.Noticef("path failed (breaking the line)")
 	}()
+
+	return nil
 }
 
 type cmd_line_snd_seek struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_snd_seek) Exec(sw *Switch) {
-	if cmd.line.state != line_opened {
-		return
-	}
-
+func (cmd *cmd_line_snd_seek) Exec(sw *Switch) error {
 	go func() {
 		var (
 			l = cmd.line
 		)
+
+		if l.state != line_opened {
+			return
+		}
 
 		err := sw.seek_handler.Seek(l.peer.Hashname(), sw.hashname)
 		if err == nil {
@@ -572,6 +591,8 @@ func (cmd *cmd_line_snd_seek) Exec(sw *Switch) {
 		}
 		l.log.Noticef("seeking failed: err=%s", err)
 	}()
+
+	return nil
 }
 
 type cmd_get_rcv_pkt struct {
@@ -580,23 +601,25 @@ type cmd_get_rcv_pkt struct {
 	err     error
 }
 
-func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) {
+func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) error {
 	var (
 		channel = cmd.channel
 	)
 
 	if !channel.can_pop_rcv_pkt() {
 		sw.reactor.Defer(&channel.rcv_backlog)
-		return
+		return nil
 	}
 
 	pkt, err := channel.pop_rcv_pkt()
 	cmd.pkt = pkt
-	cmd.err = err
 
 	if err == nil && pkt == nil {
 		sw.reactor.Defer(&channel.rcv_backlog)
+		return nil
 	}
+
+	return err
 }
 
 type cmd_channel_set_rcv_deadline struct {
@@ -604,7 +627,7 @@ type cmd_channel_set_rcv_deadline struct {
 	deadline time.Time
 }
 
-func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) {
+func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) error {
 	var (
 		channel  = cmd.channel
 		deadline = cmd.deadline
@@ -638,33 +661,37 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) {
 		}
 
 	}
+
+	return nil
 }
 
 type cmd_channel_deadline_reached struct {
 	channel *Channel
 }
 
-func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) {
+func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) error {
 	var (
 		channel = cmd.channel
 	)
 
 	channel.rcv_deadline_reached = true
 	channel.reschedule()
+	return nil
 }
 
 type cmd_stats_log struct{}
 
-func (cmd *cmd_stats_log) Exec(sw *Switch) {
+func (cmd *cmd_stats_log) Exec(sw *Switch) error {
 	sw.log.Noticef("stats: %s", sw.Stats())
 	sw.reactor.CastAfter(5*time.Second, cmd)
+	return nil
 }
 
 type cmd_clean struct{}
 
-func (cmd *cmd_clean) Exec(sw *Switch) {
+func (cmd *cmd_clean) Exec(sw *Switch) error {
 	if sw.terminating {
-		return
+		return nil
 	}
 
 	for _, l := range sw.lines {
@@ -676,11 +703,13 @@ func (cmd *cmd_clean) Exec(sw *Switch) {
 					sw.hashname.Short(),
 					l.peer.Hashname().Short())
 				delete(l.channels, i)
+				sw.num_channels--
 			}
 		}
 	}
 
 	sw.reactor.CastAfter(2*time.Second, cmd)
+	return nil
 }
 
 func stop_timer(t *time.Timer) {

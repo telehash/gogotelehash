@@ -47,21 +47,25 @@ func (h *peer_handler) SendPeer(to *Peer) {
 	}
 
 	for _, via := range to.ViaTable() {
-		h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
+		func() {
+			h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
 
-		options := ChannelOptions{To: via, Type: "peer", Reliablility: UnreliableChannel}
-		channel, err := h.sw.Open(options)
-		if err != nil {
-			continue
-		}
+			options := ChannelOptions{To: via, Type: "peer", Reliablility: UnreliableChannel}
+			channel, err := h.sw.Open(options)
+			if err != nil {
+				return
+			}
+			defer channel.Close()
 
-		channel.send_packet(&pkt_t{
-			hdr: pkt_hdr_t{
-				Peer:  to_hn.String(),
-				Paths: raw_paths,
-				End:   true,
-			},
-		})
+			channel.send_packet(&pkt_t{
+				hdr: pkt_hdr_t{
+					Peer:  to_hn.String(),
+					Paths: raw_paths,
+					End:   true,
+				},
+			})
+		}()
+
 	}
 }
 
@@ -119,6 +123,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	if err != nil {
 		h.log.Noticef("peer:connect err=%s", err)
 	}
+	defer channel.Close()
 
 	err = channel.send_packet(&pkt_t{
 		hdr: pkt_hdr_t{
@@ -179,7 +184,7 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 	}
 
 	was_open := false
-	if line := h.sw.get_line(hashname); line != nil && line.state == line_opened {
+	if line := h.sw.get_line(hashname); line != nil {
 		was_open = true
 		line.SndOpen(nil)
 	}

@@ -35,6 +35,7 @@ type Switch struct {
 	running           bool
 	num_open_lines    int32
 	num_running_lines int32
+	num_channels      int32
 }
 
 func (s *Switch) Start() error {
@@ -194,9 +195,9 @@ func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
 }
 
 func (s *Switch) Open(options ChannelOptions) (*Channel, error) {
-	cmd := cmd_channel_open{options, nil, nil}
-	s.reactor.Call(&cmd)
-	return cmd.channel, cmd.err
+	cmd := cmd_channel_open{options, nil}
+	err := s.reactor.Call(&cmd)
+	return cmd.channel, err
 }
 
 func (s *Switch) get_peer(hashname Hashname) *Peer {
