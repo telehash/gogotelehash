@@ -183,3 +183,11 @@ func (t *Transport) on_packet(ns *socketio.NameSpace, e event_t) {
 
 	t.rcv <- pkt_t{data, &internal_addr{ns.Session.SessionId}}
 }
+
+func (t *Transport) FormatSeekAddress(addr th.Addr) string {
+	return ""
+}
+
+func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
+	return nil, false
+}

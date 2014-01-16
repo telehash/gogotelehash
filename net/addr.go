@@ -1,8 +1,6 @@
 package net
 
 type Addr interface {
-	SeekString() string
-
 	PublishWithSeek() bool
 	PublishWithPath() bool
 	PublishWithPeer() bool

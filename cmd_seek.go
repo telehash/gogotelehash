@@ -76,14 +76,10 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		peer.AddVia(via)
 
 		if len(fields) > 1 {
-			// netpath, err := ParseIPnet_path(net.JoinHostPort(fields[1], fields[2]))
-			// if err != nil {
-			//   h.log.Debugf("error: %s", "invalid address")
-			// } else {
-			//   if new_peer {
-			//     peer.add_net_path(netpath)
-			//   }
-			// }
+			np := h.parse_address(fields[1:])
+			if np != nil {
+				peer.add_net_path(np)
+			}
 		}
 
 		if new_peer {
@@ -92,6 +88,16 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		}
 	}
 
+	return nil
+}
+
+func (h *seek_handler) parse_address(fields []string) *net_path {
+	for _, t := range h.sw.Transports {
+		addr, ok := t.ParseSeekAddress(fields)
+		if ok && addr != nil {
+			return &net_path{Network: t.Network(), Address: addr}
+		}
+	}
 	return nil
 }
 
@@ -183,7 +189,12 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 	FOR_NETPATHS:
 		for _, np := range peer.net_paths() {
 			if np.Address.PublishWithSeek() {
-				s := np.Address.SeekString()
+				t := h.sw.transports[np.Network]
+				if t == nil {
+					continue
+				}
+
+				s := t.FormatSeekAddress(np.Address)
 				if s != "" {
 					added = true
 					see = append(see, fmt.Sprintf("%s,%s", peer.Hashname(), s))

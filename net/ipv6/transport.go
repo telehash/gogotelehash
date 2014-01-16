@@ -152,3 +152,11 @@ func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
 
 	return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
 }
+
+func (t *Transport) FormatSeekAddress(addr th.Addr) string {
+	return ""
+}
+
+func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
+	return nil, false
+}

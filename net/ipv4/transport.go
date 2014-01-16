@@ -2,6 +2,7 @@ package ipv4
 
 import (
 	"encoding/json"
+	"fmt"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
@@ -150,4 +151,24 @@ func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
 	}
 
 	return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
+}
+
+func (t *Transport) FormatSeekAddress(addr th.Addr) string {
+	if a, ok := addr.(*Addr); ok && a != nil {
+		return fmt.Sprintf("%s,%d", a.IP, a.Port)
+	}
+	return ""
+}
+
+func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
+	if len(fields) != 2 {
+		return nil, false
+	}
+
+	addr, err := ResolveAddr(net.JoinHostPort(fields[0], fields[1]))
+	if err != nil {
+		return nil, false
+	}
+
+	return addr, true
 }

@@ -49,10 +49,6 @@ func (a *Addr) PublishWithSeek() bool {
 	return false
 }
 
-func (a *Addr) SeekString() string {
-	return ""
-}
-
 func (a *Addr) String() string {
 	return fmt.Sprintf("%s:%d cat=%s", a.IP, a.Port, a.Category)
 }

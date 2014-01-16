@@ -48,10 +48,6 @@ func (a *Addr) PublishWithSeek() bool {
 	return a.Category == iputil.CategoryWAN
 }
 
-func (a *Addr) SeekString() string {
-	return fmt.Sprintf("%s,%d", a.IP, a.Port)
-}
-
 func (a *Addr) String() string {
 	return fmt.Sprintf("%s:%d cat=%s", a.IP, a.Port, a.Category)
 }
