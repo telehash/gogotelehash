@@ -350,17 +350,35 @@ type cmd_channel_snd_miss struct {
 
 func (cmd *cmd_channel_snd_miss) Exec(sw *Switch) error {
 	var (
-		channel = cmd.channel
-		imp     = cmd.imp
-		snd_buf []*pkt_t
+		channel   = cmd.channel
+		imp       = cmd.imp
+		snd_buf   []*pkt_t
+		last_miss = -1
 	)
 
 	imp.miss_timer = nil
 
+	if len(imp.snd_buf) == 0 {
+		return nil
+	}
+
 	snd_buf = make([]*pkt_t, len(imp.snd_buf))
 	copy(snd_buf, imp.snd_buf)
 
-	for _, pkt := range snd_buf {
+	if imp.rcv_last_ack.IsSet() {
+		for i, pkt := range snd_buf {
+			if pkt.hdr.Seq >= imp.rcv_last_ack {
+				break
+			}
+
+			last_miss = i
+			cmd := cmd_snd_pkt{nil, channel.line, pkt}
+			cmd.Exec(sw) // do we care about err?
+		}
+	}
+
+	if idx := len(snd_buf) - 1; last_miss < idx {
+		pkt := snd_buf[idx]
 		cmd := cmd_snd_pkt{nil, channel.line, pkt}
 		cmd.Exec(sw) // do we care about err?
 	}

@@ -29,6 +29,10 @@ func (c *channel_unreliable_t) can_snd_pkt() bool {
 		return true
 	}
 
+	if c.line.State() == line_pathing && c.channel.Type() == "path" {
+		return true
+	}
+
 	if c.line.State() != line_opened {
 		return false
 	}

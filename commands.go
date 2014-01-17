@@ -106,7 +106,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 			line = &line_t{}
 			line.Init(sw, peer)
 			sw.lines[peer.Hashname()] = line
-			sw.num_running_lines += 1
+			sw.num_running_lines = int32(len(sw.lines))
 		}
 
 		cmd.rcv_open_pkt(line, pub, pkt.netpath)
@@ -237,17 +237,46 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 	l.pub_key = pub
 	l.shr_key = shr
 
+	if reopen {
+		// done
+		l.backlog.RescheduleAll(&l.sw.reactor)
+		return nil
+	}
+
+	l.sw.active_lines[l.prv_key.id] = l
+	l.sw.num_open_lines = int32(len(l.sw.active_lines))
+	l.state = line_pathing
+	l.log.Debugf("line pathing %s -> %s", local_hashname.Short(), l.peer.hashname.Short())
+
+	go func() {
+		if l.sw.path_handler.Negotiate(l.peer.hashname) {
+			l.sw.reactor.Cast(&cmd_line_opened{l})
+		} else {
+			l.sw.reactor.Cast(&cmd_line_close_broken{l})
+		}
+	}()
+
+	return nil
+}
+
+type cmd_line_opened struct {
+	line *line_t
+}
+
+func (cmd *cmd_line_opened) Exec(sw *Switch) error {
+	var (
+		l = cmd.line
+	)
+
 	l.state = line_opened
+
 	stop_timer(l.open_timer)
 	l.open_timer = nil
-	if !reopen {
-		l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
-		l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
-		l.broken_timer.Reset(line_broken_timeout)
-		l.idle_timer.Reset(line_idle_timeout)
-		l.sw.active_lines[l.prv_key.id] = l
-		l.sw.num_open_lines += 1
-	}
+
+	l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
+	l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
+	l.broken_timer.Reset(line_broken_timeout)
+	l.idle_timer.Reset(line_idle_timeout)
 
 	l.log.Debugf("line opened")
 
@@ -331,9 +360,11 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 	if line == nil {
 		return cmd.open_line(sw)
 	}
-	if line.state != line_opened {
-		sw.reactor.Defer(&line.backlog)
-		return nil
+	if !(line.state == line_pathing && cmd.options.Type == "path") {
+		if line.state != line_opened {
+			sw.reactor.Defer(&line.backlog)
+			return nil
+		}
 	}
 
 	channel, err = make_channel(sw, line, true, cmd.options)
@@ -384,7 +415,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	}
 
 	sw.lines[cmd.options.To] = line
-	sw.num_running_lines += 1
+	sw.num_running_lines = int32(len(sw.lines))
 
 	sw.reactor.Defer(&line.backlog)
 	return nil
@@ -435,14 +466,14 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
-			sw.num_open_lines -= 1
 			delete(sw.active_lines, cmd.line.prv_key.id)
+			sw.num_open_lines = int32(len(sw.active_lines))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
-			sw.num_running_lines -= 1
 			delete(sw.lines, cmd.line.peer.hashname)
+			sw.num_running_lines = int32(len(sw.lines))
 		}
 	}
 
@@ -477,14 +508,14 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
-			sw.num_open_lines -= 1
 			delete(sw.active_lines, cmd.line.prv_key.id)
+			sw.num_open_lines = int32(len(sw.active_lines))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
-			sw.num_running_lines -= 1
 			delete(sw.lines, cmd.line.peer.hashname)
+			sw.num_running_lines = int32(len(sw.lines))
 		}
 	}
 
@@ -519,14 +550,14 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
-			sw.num_open_lines -= 1
 			delete(sw.active_lines, cmd.line.prv_key.id)
+			sw.num_open_lines = int32(len(sw.active_lines))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
-			sw.num_running_lines -= 1
 			delete(sw.lines, cmd.line.peer.hashname)
+			sw.num_running_lines = int32(len(sw.lines))
 		}
 	}
 

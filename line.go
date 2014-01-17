@@ -19,6 +19,7 @@ const (
 	line_pending line_state = iota
 	line_peering
 	line_opening
+	line_pathing
 	line_opened
 	line_closed
 )
