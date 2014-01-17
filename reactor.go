@@ -1,16 +1,23 @@
 package telehash
 
 import (
+	"errors"
 	"sync"
 	"time"
 )
 
+var (
+	errReactorClosed = errors.New("reactor: is closed")
+)
+
 type reactor_t struct {
-	wg          sync.WaitGroup
-	sw          *Switch
-	defered     bool
-	current_cmd *cmd
-	commands    chan *cmd
+	wg               sync.WaitGroup
+	sw               *Switch
+	defered          bool
+	current_cmd      *cmd
+	shutdown         chan bool
+	enqueue_commands chan *cmd
+	run_commands     chan *cmd
 }
 
 type cmd struct {
@@ -26,30 +33,33 @@ type backlog_t []*cmd
 
 func (b *backlog_t) RescheduleAll(r *reactor_t) {
 	l := *b
-	*b = nil
-
-	go func() {
+	if len(l) > 0 {
+		*b = nil
 		for _, cmd := range l {
-			r.push(cmd)
+			err := r.push(cmd)
+			if err != nil {
+				cmd.cancel(err)
+			}
 		}
-	}()
+	}
 }
 
 func (b *backlog_t) RescheduleOne(r *reactor_t) {
 	l := *b
+	if len(l) > 0 {
+		// get first command
+		cmd := l[0]
 
-	if len(l) == 0 {
-		return
+		// remove from backlog
+		copy(l, l[1:])
+		l = l[:len(l)-1]
+		*b = l
+
+		err := r.push(cmd)
+		if err != nil {
+			cmd.cancel(err)
+		}
 	}
-
-	cmd := l[0]
-	copy(l, l[1:])
-	l = l[:len(l)-1]
-	*b = l
-
-	go func() {
-		r.push(cmd)
-	}()
 }
 
 func (b *backlog_t) CancelAll(err error) {
@@ -57,30 +67,88 @@ func (b *backlog_t) CancelAll(err error) {
 	*b = nil
 
 	for _, cmd := range l {
-		func() {
-			defer func() { recover() }()
-			cmd.reply <- err
-			close(cmd.reply)
-		}()
+		cmd.cancel(err)
+	}
+}
+
+func (c *cmd) cancel(err error) {
+	defer func() { recover() }()
+	if c.reply != nil {
+		c.reply <- err
+		close(c.reply)
 	}
 }
 
 func (r *reactor_t) Run() {
-	r.commands = make(chan *cmd)
+	r.enqueue_commands = make(chan *cmd)
+	r.run_commands = make(chan *cmd)
+	r.shutdown = make(chan bool)
+
 	r.wg.Add(1)
-	go r.run()
+	go r.run_controller()
+
+	r.wg.Add(1)
+	go r.run_worker()
 }
 
-func (r *reactor_t) run() {
+func (r *reactor_t) run_controller() {
 	defer r.wg.Done()
 
-	for cmd := range r.commands {
+	var (
+		backlog      []*cmd
+		run_commands chan *cmd
+		next_cmd     *cmd
+	)
+
+	for {
+		if len(backlog) > 0 {
+			run_commands = r.run_commands
+			next_cmd = backlog[0]
+		} else {
+			run_commands = nil
+		}
+
+		select {
+
+		case <-r.shutdown:
+			close(r.enqueue_commands)
+			close(r.run_commands)
+			close(r.shutdown)
+
+			for _, cmd := range backlog {
+				cmd.cancel(errReactorClosed)
+			}
+
+			return
+
+		case cmd := <-r.enqueue_commands:
+			backlog = append(backlog, cmd)
+
+		case run_commands <- next_cmd:
+			copy(backlog, backlog[1:])
+			backlog = backlog[:len(backlog)-1]
+
+		}
+	}
+}
+
+func (r *reactor_t) run_worker() {
+	defer r.wg.Done()
+
+	for cmd := range r.run_commands {
 		r.exec(cmd)
 	}
 }
 
-func (r *reactor_t) Stop() {
-	close(r.commands)
+func (r *reactor_t) Stop() (err error) {
+	defer func(err_ptr *error) {
+		if r := recover(); r != nil {
+			*err_ptr = errReactorClosed
+		}
+	}(&err)
+
+	r.shutdown <- true
+	return
 }
 
 func (r *reactor_t) Wait() {
@@ -99,8 +167,7 @@ func (r *reactor_t) exec(c *cmd) {
 
 	defer func() {
 		if c.reply != nil && !r.defered {
-			c.reply <- err
-			close(c.reply)
+			c.cancel(err)
 		}
 	}()
 
@@ -120,7 +187,12 @@ func (r *reactor_t) Call(e execer) error {
 
 func (r *reactor_t) CallAsync(e execer) <-chan error {
 	c := cmd{e, make(chan error, 1)}
-	r.push(&c)
+
+	err := r.push(&c)
+	if err != nil {
+		c.cancel(err)
+	}
+
 	return c.reply
 }
 
@@ -128,9 +200,15 @@ func (r *reactor_t) Cast(e execer) {
 	r.push(&cmd{e, nil})
 }
 
-func (r *reactor_t) push(c *cmd) {
-	defer func() { recover() }()
-	r.commands <- c
+func (r *reactor_t) push(c *cmd) (err error) {
+	defer func(err_ptr *error) {
+		if r := recover(); r != nil {
+			*err_ptr = errReactorClosed
+		}
+	}(&err)
+
+	r.enqueue_commands <- c
+	return
 }
 
 func (r *reactor_t) CastAfter(d time.Duration, e execer) *time.Timer {

@@ -250,10 +250,10 @@ func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
 	}
 
 	if c.rcv_unacked > 30 {
-		go c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
+		c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
 	} else if c.snd_last_ack_at.IsZero() {
 		if !c.channel.initiator && c.read_last_seq.IsSet() {
-			go c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
+			c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
 		} else {
 			c.snd_last_ack_at = time.Now()
 		}

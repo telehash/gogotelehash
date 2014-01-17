@@ -420,10 +420,12 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
-		c.reschedule()
+		c.rcv_backlog.CancelAll(ErrChannelBroken)
+		c.snd_backlog.CancelAll(ErrChannelBroken)
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
+	sw.num_channels -= int32(len(cmd.line.channels))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -460,10 +462,12 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
-		c.reschedule()
+		c.rcv_backlog.CancelAll(ErrChannelBroken)
+		c.snd_backlog.CancelAll(ErrChannelBroken)
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
+	sw.num_channels -= int32(len(cmd.line.channels))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -500,10 +504,12 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 
 	for _, c := range cmd.line.channels {
 		c.mark_as_broken()
-		c.reschedule()
+		c.rcv_backlog.CancelAll(ErrChannelBroken)
+		c.snd_backlog.CancelAll(ErrChannelBroken)
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
+	sw.num_channels -= int32(len(cmd.line.channels))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -576,13 +582,13 @@ type cmd_line_snd_seek struct {
 
 func (cmd *cmd_line_snd_seek) Exec(sw *Switch) error {
 	go func() {
-		if sw.terminating {
-			return
-		}
-
 		var (
 			l = cmd.line
 		)
+
+		if sw.terminating {
+			return
+		}
 
 		if l.state != line_opened {
 			return
