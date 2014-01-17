@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
@@ -9,6 +8,9 @@ import (
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/ipv4"
+	"github.com/telehash/gogotelehash/net/ipv6"
 	"io/ioutil"
 	"os"
 	"os/signal"
@@ -53,23 +55,17 @@ func run(c *cli.Context) {
 		port = 45454
 	}
 
-	if key_file == "" {
-		key, err = rsa.GenerateKey(rand.Reader, 2048)
-		if err != nil {
-			fmt.Printf("error: failed to generate a random key\n  %s\n", err)
-			os.Exit(2)
-		}
-	} else {
+	if key_file != "" {
 		key = read_private_key(key_file)
 	}
 
-	sw, err = telehash.NewSwitch(fmt.Sprintf("0.0.0.0:%d", port), key, nil)
-	if err != nil {
-		fmt.Printf("error: failed start switch\n  %s\n", err)
-		os.Exit(2)
+	sw = &telehash.Switch{
+		Key: key,
+		Transports: []net.Transport{
+			&ipv4.Transport{Addr: fmt.Sprintf("0.0.0.0:%d", port)},
+			&ipv6.Transport{Addr: fmt.Sprintf("0.0.0.0:%d", port)},
+		},
 	}
-
-	sw.AllowRelay = false
 
 	err = sw.Start()
 	if err != nil {
@@ -83,7 +79,7 @@ func run(c *cli.Context) {
 	go func() {
 		if seed_file != "" {
 			for _, e := range read_seed_file(seed_file) {
-				hn, err := sw.Seed(e.addr, e.pubkey)
+				hn, err := sw.Seed("ipv4", e.addr, e.pubkey)
 				if err != nil {
 					fmt.Printf("error: failed to seed switch with %s\n  %s\n", hn.Short(), err)
 					continue
@@ -121,7 +117,7 @@ type SeedEntry struct {
 	IP     string `json:"ip"`
 	Port   int    `json:"port"`
 	Pubkey string `json:"pubkey"`
-	addr   string
+	addr   net.Addr
 	pubkey *rsa.PublicKey
 }
 
@@ -143,8 +139,13 @@ func read_seed_file(fn string) []*SeedEntry {
 	}
 
 	for _, e := range list {
-		e.addr = fmt.Sprintf("%s:%d", e.IP, e.Port)
+		addr, err := ipv4.ResolveAddr(fmt.Sprintf("%s:%d", e.IP, e.Port))
+		if err != nil {
+			fmt.Printf("failed to seed: %s\n  %s\n", err, addr)
+			os.Exit(4)
+		}
 
+		e.addr = addr
 		pem_block, _ := pem.Decode([]byte(e.Pubkey))
 
 		if pem_block.Type != "PUBLIC KEY" {

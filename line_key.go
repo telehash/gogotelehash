@@ -250,10 +250,8 @@ func (pub *public_line_key) verify(other *public_line_key, self Hashname) error 
 		return errors.New("hashname mismatch")
 	}
 
-	if other != nil {
-		if !pub.at.After(other.at) {
-			return errors.New("stale public line half")
-		}
+	if other != nil && other.at.After(pub.at) {
+		return errors.New("stale public line half")
 	}
 
 	return nil

@@ -3,25 +3,9 @@ package telehash
 import (
 	"encoding/json"
 	"fmt"
-	"reflect"
 )
 
-var (
-	np_name_to_type = map[string]reflect.Type{
-		"ipv4":  reflect.TypeOf(IPv4NetPath{}),
-		"ipv6":  reflect.TypeOf(IPv6NetPath{}),
-		"relay": reflect.TypeOf(relay_net_path{}),
-	}
-	np_type_to_name = func() map[reflect.Type]string {
-		m := map[reflect.Type]string{}
-		for k, v := range np_name_to_type {
-			m[v] = k
-		}
-		return m
-	}()
-)
-
-func DecodeNetPath(data []byte) (NetPath, error) {
+func (s *Switch) decode_net_path(data []byte) (*net_path, error) {
 	var (
 		typ struct {
 			Type string `json:"type"`
@@ -33,43 +17,60 @@ func DecodeNetPath(data []byte) (NetPath, error) {
 		return nil, err
 	}
 
-	t, ok := np_name_to_type[typ.Type]
+	if typ.Type == "relay" {
+		addr := &relay_addr{}
+		err := json.Unmarshal(data, &addr)
+		if err != nil {
+			return nil, err
+		}
+
+		return &net_path{Network: typ.Type, Address: addr}, nil
+	}
+
+	t, ok := s.transports[typ.Type]
 	if !ok {
 		return nil, fmt.Errorf("Unknown type %q", typ.Type)
 	}
 
-	np := reflect.New(t).Interface().(NetPath)
-
-	err = json.Unmarshal(data, &np)
+	addr, err := t.DecodeAddr(data)
 	if err != nil {
 		return nil, err
 	}
 
-	return np, nil
+	return &net_path{Network: typ.Type, Address: addr}, nil
 }
 
-func EncodeNetPath(n NetPath) ([]byte, error) {
-	t := reflect.TypeOf(n)
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
+func (s *Switch) encode_net_path(n *net_path) ([]byte, error) {
+	var (
+		data []byte
+		err  error
+	)
+
+	if n.Network == "relay" {
+		data, err = json.Marshal(n.Address)
+		if err != nil {
+			return nil, err
+		}
+
+	} else {
+		t, ok := s.transports[n.Network]
+		if !ok {
+			return nil, fmt.Errorf("Unknown type %q", n.Network)
+		}
+
+		data, err = t.EncodeAddr(n.Address)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	name, ok := np_type_to_name[t]
-	if !ok {
-		return nil, fmt.Errorf("Unknown type %T", n)
-	}
-
-	data, err := json.Marshal(n)
-	if err != nil {
-		return nil, err
-	}
-
-	data2 := make([]byte, len(data)+len(name)+10)
+	len_type := len(n.Network)
+	data2 := make([]byte, len(data)+len_type+10)
 	data2[0] = data[0]
 	copy(data2[1:], "\"type\":\"")
-	copy(data2[9:], name)
-	copy(data2[len(name)+9:], "\",")
-	copy(data2[len(name)+11:], data[1:])
+	copy(data2[9:], n.Network)
+	copy(data2[len_type+9:], "\",")
+	copy(data2[len_type+11:], data[1:])
 
 	return data2, nil
 }

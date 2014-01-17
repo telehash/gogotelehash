@@ -9,20 +9,20 @@ type reactor_t struct {
 	wg          sync.WaitGroup
 	sw          *Switch
 	defered     bool
-	current_cmd cmd
-	commands    chan cmd
+	current_cmd *cmd
+	commands    chan *cmd
 }
 
 type cmd struct {
 	execer execer
-	reply  chan bool
+	reply  chan error
 }
 
 type execer interface {
-	Exec(sw *Switch)
+	Exec(sw *Switch) error
 }
 
-type backlog_t []cmd
+type backlog_t []*cmd
 
 func (b *backlog_t) RescheduleAll(r *reactor_t) {
 	l := *b
@@ -52,8 +52,21 @@ func (b *backlog_t) RescheduleOne(r *reactor_t) {
 	}()
 }
 
+func (b *backlog_t) CancelAll(err error) {
+	l := *b
+	*b = nil
+
+	for _, cmd := range l {
+		func() {
+			defer func() { recover() }()
+			cmd.reply <- err
+			close(cmd.reply)
+		}()
+	}
+}
+
 func (r *reactor_t) Run() {
-	r.commands = make(chan cmd)
+	r.commands = make(chan *cmd)
 	r.wg.Add(1)
 	go r.run()
 }
@@ -79,16 +92,21 @@ func (r *reactor_t) StopAndWait() {
 	r.Wait()
 }
 
-func (r *reactor_t) exec(c cmd) {
+func (r *reactor_t) exec(c *cmd) {
+	var (
+		err error
+	)
+
 	defer func() {
 		if c.reply != nil && !r.defered {
-			c.reply <- true
+			c.reply <- err
+			close(c.reply)
 		}
 	}()
 
 	r.current_cmd = c
 	r.defered = false
-	c.execer.Exec(r.sw)
+	err = c.execer.Exec(r.sw)
 }
 
 func (r *reactor_t) Defer(b *backlog_t) {
@@ -96,23 +114,21 @@ func (r *reactor_t) Defer(b *backlog_t) {
 	*b = append(*b, r.current_cmd)
 }
 
-func (r *reactor_t) Call(e execer) {
-	c := cmd{e, make(chan bool)}
-	r.push(c)
-	<-c.reply
+func (r *reactor_t) Call(e execer) error {
+	return <-r.CallAsync(e)
 }
 
-func (r *reactor_t) CallAsync(e execer) <-chan bool {
-	c := cmd{e, make(chan bool, 1)}
-	r.push(c)
+func (r *reactor_t) CallAsync(e execer) <-chan error {
+	c := cmd{e, make(chan error, 1)}
+	r.push(&c)
 	return c.reply
 }
 
 func (r *reactor_t) Cast(e execer) {
-	r.push(cmd{e, nil})
+	r.push(&cmd{e, nil})
 }
 
-func (r *reactor_t) push(c cmd) {
+func (r *reactor_t) push(c *cmd) {
 	defer func() { recover() }()
 	r.commands <- c
 }

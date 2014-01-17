@@ -1,0 +1,195 @@
+<link rel="import" href="../bower_components/polymer/polymer.html">
+
+<script src="../scripts/vendor/thjs/includes/forge.min.js"></script>
+<script src="../scripts/vendor/thjs/includes/jsbn.js"></script>
+<script src="../scripts/vendor/thjs/includes/jsbn2.js"></script>
+<script src="../scripts/vendor/thjs/includes/ec.js"></script>
+<script src="../scripts/vendor/thjs/includes/sec.js"></script>
+<script src="../scripts/vendor/thjs/includes/prng4.js"></script>
+<script src="../scripts/vendor/thjs/includes/rng.js"></script>
+<script src="../scripts/vendor/thjs/thjs.js"></script>
+<script src="../scripts/vendor/thjs/thforge.js"></script>
+<script src="../scripts/vendor/thjs/thweb.js"></script>
+<script src="../scripts/vendor/thjs/seeds.js"></script>
+<script src="../scripts/vendor/thjs/fieldtest/socket.io.js"></script>
+
+<script>
+  thforge.forge(forge);
+  var debug = function(){console.log.apply(console,arguments)};
+  // var debug = function(){};
+
+  thjs.debug(debug);
+
+</script>
+
+<polymer-element name="th-switch"  attributes="">
+  <template>
+    <style>
+      :host { display: block; }
+    </style>
+    <span>Hello {{ nickname }} {{ hashname }}</span>
+
+
+    <ul>
+      <template repeat="{{ line in lines }}">
+        <li>
+          <th-line line="{{ line }}"></th-line>
+        </li>
+      </template>
+    </ul>
+  </template>
+  <script>
+  (function(){
+    var me;
+
+    function getId(callback) {
+      if(localStorage.nick) {
+        var ret = {nick:localStorage.nick, public:localStorage.pubkey, private:localStorage.prikey};
+        debug("returning key",ret);
+        ret.seeds = seeds;
+        return callback(ret);
+      }
+
+      // generate/save one nicely
+      window.alert("generating private local id, this only happens once and should be less than 30 seconds");
+      thforge.genkey(function(err, keys){
+        if(err) return window.alert("error: "+err);
+        localStorage.pubkey = keys.public;
+        localStorage.prikey = keys.private;
+        localStorage.nick = window.prompt("enter a nickname");
+        getId(callback);
+      });
+    }
+
+    Polymer('th-switch', {
+      nickname: "",
+      hashname: "",
+      lines:    [],
+
+      //applyAuthorStyles: true,
+      //resetStyleInheritance: true,
+
+      // element is fully prepared
+      ready: function(){ },
+      // instance of the element is created
+      created: function() { },
+      // instance was inserted into the document
+      enteredView: function() {
+        var _this = this;
+
+        getId(function(id){
+          _this.nickname = id.nick;
+
+          var sockets = {};
+
+          debug("STARTING");
+
+          me = thjs.hashname(id, function(path, msg, to) {
+
+            if(path.type == "webrtc" && me.paths.webrtc) {
+              debug("sending webrtc", to.hashname, msg.length());
+              if(!sockets[path.id]) sockets[path.id] = thweb.rtc(me,{to:to.hashname,id:path.id});
+              sockets[path.id].send(msg.bytes());
+              return;
+            }
+
+            if(path.type == "http") {
+              debug("sending http", to.hashname, msg.length());
+              if(!sockets[path.http]){
+                sockets[path.http] = io.connect(path.http);
+                sockets[path.http].on("packet", function(packet){
+                  me.receive(forge.util.decode64(packet.data), path);
+                });
+              }
+              sockets[path.http].emit("packet", {data: forge.util.encode64(msg.bytes())});
+              return;
+            }
+
+            debug("dropping ",path.type);
+          });
+
+          _this.hashname = me.hashname;
+
+          // enable webrtc if possible
+          thweb.rtcAdd(me,sockets);
+
+          debug("switch created",me);
+
+          id.seeds.forEach(me.addSeed, me);
+
+          me.online(function(err){
+            if(err){
+              debug("ERROR:", err);
+              return;
+            }
+
+            setInterval(function(){
+
+              var lines = [];
+              Object.keys(me.lines).forEach(function(line){
+                var hn = me.lines[line];
+                lines.push({ alive: hn.alive, hashname: hn.hashname, paths: hn.paths });
+              });
+              _this.lines = lines;
+
+            }, 1000);
+          });
+        });
+      },
+      // instance was removed from the document
+      leftView: function() { },
+    });
+
+  })();
+  </script>
+</polymer-element>
+
+
+<polymer-element name="th-line"  attributes="line">
+  <template>
+    <style>
+      :host { display: block; }
+    </style>
+
+    {{ line.hashname }} <template if="{{ line.alive }}">(alive)</template>
+
+    <ul>
+      <template repeat="{{ path in paths }}">
+        <li>{{ path }}</li>
+      </template>
+    </ul>
+  </template>
+  <script>
+  (function(){
+
+    Polymer('th-line', {
+      line: null,
+      paths: null,
+
+      //applyAuthorStyles: true,
+      //resetStyleInheritance: true,
+
+      // element is fully prepared
+      ready: function(){ },
+      // instance of the element is created
+      created: function() { },
+      // instance was inserted into the document
+      enteredView: function() {},
+      // instance was removed from the document
+      leftView: function() { },
+
+      lineChanged: function(){
+        var paths = [];
+        if (this.line) {
+          this.line.paths.forEach(function(p){
+            paths.push(JSON.stringify(p));
+          });
+        }
+        this.paths = paths;
+      }
+    });
+
+  })();
+  </script>
+</polymer-element>
+

@@ -1,20 +1,34 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/ipv4"
+	"github.com/telehash/gogotelehash/net/ipv6"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
+)
+
+import (
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
+	if os.Getenv("PROFILE") == "true" {
+		go func() {
+			http.ListenAndServe("localhost:6060", nil)
+		}()
+	}
+
 	defer fmt.Println("BYE!")
 
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)
@@ -24,22 +38,20 @@ func main() {
 		port = "4000"
 	}
 
-	s, err := telehash.NewSwitch("0.0.0.0:"+port, make_key(), telehash.HandlerFunc(pong))
+	s := &telehash.Switch{
+		Handler: telehash.HandlerFunc(pong),
+		Transports: []net.Transport{
+			&ipv4.Transport{Addr: ":" + port},
+			&ipv6.Transport{Addr: ":" + port},
+		},
+	}
+
+	err := s.Start()
 	if err != nil {
 		panic(err)
 	}
 
-	seed_url, err := s.SeedURL()
-	if err != nil {
-		panic(err)
-	}
-
-	fmt.Printf("seed with: %s\n", seed_url)
-
-	err = s.Start()
-	if err != nil {
-		panic(err)
-	}
+	time.Sleep(100 * time.Millisecond)
 
 	parse_main_seed(s)
 
@@ -50,40 +62,11 @@ func main() {
 		}
 	}()
 
-	for i := 1; i < len(os.Args); i++ {
-		addr, key, err := telehash.ParseSeedURL(os.Args[i])
-		if err != nil {
-			fmt.Printf("invalid seed url: %s\n  %s\n", err, os.Args[i])
-			continue
-		}
-
-		hn, err := s.Seed(addr, key)
-		if err != nil {
-			fmt.Printf("failed to seed: %s\n  %s\n", err, os.Args[i])
-			continue
-		}
-
-		fmt.Printf("connected to %s\n", hn.Short())
-	}
-
-	peers := s.Seek(s.LocalHashname(), 15)
-	for _, peer := range peers {
-		fmt.Printf("discovered: %s\n", peer.Short())
-	}
-
 	c := make(chan os.Signal)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
 	<-c
 
 	fmt.Println("shutting down...")
-}
-
-func make_key() *rsa.PrivateKey {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		panic(err)
-	}
-	return key
 }
 
 func pong(c *telehash.Channel) {
@@ -144,7 +127,7 @@ const seed = `
 },
   {
     "IP": "95.85.6.236",
-    "Port": 45454,
+    "Port": 42424,
     "Hashname": "f3a2d1ff11f67069feac11bc562c32549e30135f56a9a9c6575499d6a7c72915",
     "Pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvjmrFMFDApND2uOujSSN\nH9E1p8L65Doc4W8km61FPVtgtsGS/+1NLpFlIDo3c8FhvgVs+I2nPHd9WwvsXa5k\ngSzwSyBMUTFkIQGBlUbfo9vjdMm85iQt48r2JgKke15IyOsbsnzQYlIQ4s5h7ShF\nydt1JZyrbQgC5AxL5rD/vx9mTrd2k5oWiFnG8O1K6HVqrIJnZYc5Ts0hN+7nWHn+\ntuTCZEdtkx7LMqHnw6L4ylSjm7lBHAsIx1FCY+fRQYR+GGSvsBAYxrfsVoJUReuE\nLuuj/5oxeboon9C/CsNB6uI6tC8u1OjYHWG0xpY0bBaPOp5948XIUTXAokhH9fjd\ntQIDAQAB\n-----END PUBLIC KEY-----\n"
   }
@@ -166,7 +149,7 @@ const seed = `
 // [
 //   {
 //     "IP": "87.236.178.46",
-//     "Port": 45454,
+//     "Port": 42424,
 //     "Hashname": "c32973bcdc0144040163b54aa3d1d5245bd302e400e10df0077c50104afaa274",
 //     "Pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIDANBgkqhkiG9w0BAQEFAAOCAQ0AMIIBCAKCAQEAwKqaofyr3E4kw1MZXGhc\nVG4Pk6Qm9xLQ4MlRgcaccqU9mqQlEFwokqhuksUa2/Cq22kiZpbx6bIts9RVZHyb\nME8Q6g0Af/+vVgmiQuF7F6It3d1HI3tQriXQSFf7JzanYHE4vzq2G1mE0sxfJE7Y\nO/UFCUt8v/w9m6Bogb4K7LZmFk1BVfkqxM+G7rS5j667JfTptXeYJjbZVdyej4K5\npTiGvCfqU+OFLxwR6uVdcoHrkuxwO89NX+ha2jgorTwPOt/LTQDHpqRtbnP5UXRa\n38d8OTqAT86LVWHi84+wPdcpA+9ZVSCYCIX6ThQCVWU+ltnKlE2Dl7AqQFSTXsbn\nuwIBIw==\n-----END PUBLIC KEY-----\n"
 //   }
@@ -177,7 +160,7 @@ const seed = `
 // [
 //   {
 //     "IP": "95.85.6.236",
-//     "Port": 45454,
+//     "Port": 42424,
 //     "Hashname": "f3a2d1ff11f67069feac11bc562c32549e30135f56a9a9c6575499d6a7c72915",
 //     "Pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvjmrFMFDApND2uOujSSN\nH9E1p8L65Doc4W8km61FPVtgtsGS/+1NLpFlIDo3c8FhvgVs+I2nPHd9WwvsXa5k\ngSzwSyBMUTFkIQGBlUbfo9vjdMm85iQt48r2JgKke15IyOsbsnzQYlIQ4s5h7ShF\nydt1JZyrbQgC5AxL5rD/vx9mTrd2k5oWiFnG8O1K6HVqrIJnZYc5Ts0hN+7nWHn+\ntuTCZEdtkx7LMqHnw6L4ylSjm7lBHAsIx1FCY+fRQYR+GGSvsBAYxrfsVoJUReuE\nLuuj/5oxeboon9C/CsNB6uI6tC8u1OjYHWG0xpY0bBaPOp5948XIUTXAokhH9fjd\ntQIDAQAB\n-----END PUBLIC KEY-----\n"
 //   }
@@ -209,7 +192,11 @@ func parse_main_seed(s *telehash.Switch) {
 				return
 			}
 
-			addr := fmt.Sprintf("%s:%d", seed.IP, seed.Port)
+			addr, err := ipv4.ResolveAddr(fmt.Sprintf("%s:%d", seed.IP, seed.Port))
+			if err != nil {
+				fmt.Printf("failed to seed: %s\n  %s\n", err, addr)
+				return
+			}
 
 			keyi, err := x509.ParsePKIXPublicKey(pem_block.Bytes)
 			if err != nil {
@@ -227,7 +214,7 @@ func parse_main_seed(s *telehash.Switch) {
 				return
 			}
 
-			hn, err := s.Seed(addr, key)
+			hn, err := s.Seed("ipv4", addr, key)
 
 			if err != nil {
 				fmt.Printf("failed to seed: %s\n  %s\n", err, addr)

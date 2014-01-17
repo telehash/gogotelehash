@@ -2,17 +2,14 @@ package telehash
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 )
 
 type SwitchStats struct {
-	KnownPeers int
-
-	// net
-	NumSendPackets          uint64
-	NumSendPacketErrors     uint64
-	NumReceivedPackets      uint64
-	NumReceivedPacketErrors uint64
+	KnownPeers    int
+	NumGoRoutines int
+	NumChannels   int
 
 	// lines
 	NumRunningLines int
@@ -32,10 +29,11 @@ func (s *Switch) Stats() SwitchStats {
 		stats SwitchStats
 	)
 
+	stats.NumGoRoutines = runtime.NumGoroutine()
+	stats.NumChannels = int(atomic.LoadInt32(&s.num_channels))
 	stats.KnownPeers = int(atomic.LoadUint32(&s.peers.num_peers))
 	stats.NumOpenLines += int(atomic.LoadInt32(&s.num_open_lines))
 	stats.NumRunningLines += int(atomic.LoadInt32(&s.num_running_lines))
-	s.net.PopulateStats(&stats)
 	s.relay_handler.PopulateStats(&stats)
 
 	return stats
@@ -43,12 +41,10 @@ func (s *Switch) Stats() SwitchStats {
 
 func (s SwitchStats) String() string {
 	return fmt.Sprintf(
-		"(peers: known=%d) (net: snd=%d/%d rcv=%d/%d) (lines: running=%d open=%d) (relay: snd=%d/%d rcv=%d/%d relay=%d/%d)",
+		"(rt: goroutines=%d) (peers: known=%d) (channels: open=%d) (lines: running=%d open=%d) (relay: snd=%d/%d rcv=%d/%d relay=%d/%d)",
+		s.NumGoRoutines,
 		s.KnownPeers,
-		s.NumSendPackets,
-		s.NumSendPacketErrors,
-		s.NumReceivedPackets,
-		s.NumReceivedPacketErrors,
+		s.NumChannels,
 		s.NumRunningLines,
 		s.NumOpenLines,
 		s.RelayNumSendPackets,

@@ -24,38 +24,38 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	var (
 		wg       sync.WaitGroup
 		peer     *Peer
-		netpaths NetPaths
-		active   NetPaths
-		relays   NetPaths
+		netpaths net_paths
+		active   net_paths
+		relays   net_paths
 		results  []bool
 		score    int
 	)
 
-	peer = h.sw.GetPeer(to)
+	peer = h.sw.get_peer(to)
 	if peer == nil {
 		return false
 	}
 
-	netpaths = peer.NetPaths()
-	active = make(NetPaths, 0, len(netpaths))
+	netpaths = peer.net_paths()
+	active = make(net_paths, 0, len(netpaths))
 	results = make([]bool, len(netpaths))
-	relays = make(NetPaths, len(netpaths))
+	relays = make(net_paths, len(netpaths))
 
 	for i, np := range netpaths {
-		if _, ok := np.(*relay_net_path); ok {
+		if np.Network == "relay" {
 			relays[i] = np
 			continue
 		}
 
 		wg.Add(1)
-		go func(np NetPath, wg *sync.WaitGroup, i int) {
+		go func(np *net_path, wg *sync.WaitGroup, i int) {
 			defer wg.Done()
 			ok := h.negotiate_netpath(to, np)
 			results[i] = ok
 			if ok {
 				np.ResetPriority()
 			} else {
-				np.Break()
+				peer.remove_net_path(np)
 			}
 		}(np, &wg, i)
 	}
@@ -71,21 +71,21 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	if score > 0 {
 		for _, np := range relays {
 			if np != nil {
-				np.Demote()
+				peer.remove_net_path(np)
 			}
 		}
 	} else {
 		for i, np := range relays {
 			if np != nil {
 				wg.Add(1)
-				go func(np NetPath, wg *sync.WaitGroup, i int) {
+				go func(np *net_path, wg *sync.WaitGroup, i int) {
 					defer wg.Done()
 					ok := h.negotiate_netpath(to, np)
 					results[i] = ok
 					if ok {
 						np.ResetPriority()
 					} else {
-						np.Break()
+						peer.remove_net_path(np)
 					}
 				}(np, &wg, i)
 			}
@@ -107,7 +107,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	return score > 0
 }
 
-func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
+func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 	var (
 		priority int
 		pkt      *pkt_t
@@ -122,15 +122,16 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 		priority = 0
 	}
 
-	paths, err := get_network_paths(h.sw.net.GetPort())
+	paths := h.sw.get_network_paths()
+	raw_paths, err := h.sw.encode_net_paths(paths)
 	if err != nil {
-		paths = nil
+		raw_paths = nil
 	}
 
 	pkt = &pkt_t{
 		hdr: pkt_hdr_t{
 			Priority: priority,
-			Paths:    paths,
+			Paths:    raw_paths,
 		},
 		netpath: netpath,
 	}
@@ -141,6 +142,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath NetPath) bool {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
+	defer channel.Close()
 
 	err = channel.send_packet(pkt)
 	if err != nil {
@@ -190,7 +192,10 @@ func (h *path_handler) serve_path(channel *Channel) {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
-	for _, np := range pkt.hdr.Paths {
-		pkt.peer.AddNetPath(np)
+	paths, err := h.sw.decode_net_paths(pkt.hdr.Paths)
+	if err == nil {
+		for _, np := range paths {
+			pkt.peer.add_net_path(np)
+		}
 	}
 }

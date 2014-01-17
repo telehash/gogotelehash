@@ -7,6 +7,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/telehash/gogotelehash"
+	thnet "github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/http"
+	"github.com/telehash/gogotelehash/net/ipv4"
+	"github.com/telehash/gogotelehash/net/ipv6"
 	"io/ioutil"
 	"net"
 	"os"
@@ -23,19 +27,23 @@ func main() {
 
 	addr := os.Getenv("ADDR")
 	if addr == "" {
-		addr = "0.0.0.0:4000"
+		addr = ":4000"
 	}
 
 	key := load_private_key()
 
 	fmt.Printf("Seed list:\n%s\n", make_seed_list(addr, &key.PublicKey))
 
-	s, err := telehash.NewSwitch(addr, key, nil)
-	if err != nil {
-		panic(err)
+	s := &telehash.Switch{
+		Key: key,
+		Transports: []thnet.Transport{
+			&ipv4.Transport{Addr: addr},
+			&ipv6.Transport{Addr: addr},
+			&http.Transport{PublicURL: "http://95.85.6.236:42425/", ListenAddr: ":42425"},
+		},
 	}
 
-	err = s.Start()
+	err := s.Start()
 	if err != nil {
 		panic(err)
 	}

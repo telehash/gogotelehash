@@ -13,6 +13,16 @@ const (
 	line_seek_interval  = 30 * time.Second
 )
 
+type line_state uint32
+
+const (
+	line_pending line_state = iota
+	line_peering
+	line_opening
+	line_opened
+	line_closed
+)
+
 type line_t struct {
 	sw   *Switch
 	peer *Peer
@@ -23,8 +33,9 @@ type line_t struct {
 	shr_key *shared_line_key
 	state   line_state
 
-	backlog  backlog_t
-	channels map[string]*Channel
+	backlog   backlog_t
+	channels  map[string]*Channel
+	last_sync time.Time
 
 	idle_timer   *time.Timer
 	broken_timer *time.Timer
@@ -46,7 +57,7 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 }
 
 func (l *line_t) open_with_peer() {
-	l.sw.net.send_nat_breaker(l.peer)
+	l.sw.send_nat_breaker(l.peer)
 	l.sw.peer_handler.SendPeer(l.peer)
 }
 
@@ -58,16 +69,16 @@ func (l *line_t) State() line_state {
 	return line_state(atomic.LoadUint32((*uint32)(&l.state)))
 }
 
-func (l *line_t) SndOpen(np NetPath) error {
+func (l *line_t) SndOpen(np *net_path) error {
 	var (
-		local_rsa_key = l.sw.key
-		netpaths      []NetPath
+		local_rsa_key = l.sw.Key
+		netpaths      []*net_path
 	)
 
 	if np == nil {
-		netpaths = l.peer.NetPaths()
+		netpaths = l.peer.net_paths()
 	} else {
-		netpaths = []NetPath{np}
+		netpaths = []*net_path{np}
 	}
 
 	if l.peer.Hashname().IsZero() {
@@ -102,10 +113,9 @@ func (l *line_t) SndOpen(np NetPath) error {
 	pkt.peer = l.peer
 
 	for _, np := range netpaths {
-		np.Demote()
 		pkt.netpath = np
 
-		err = np.Send(l.sw, pkt)
+		err = l.sw.snd_pkt(pkt)
 		if err != nil {
 			l.log.Debugf("snd open to=%s err=%s", l.peer, err)
 		} else {

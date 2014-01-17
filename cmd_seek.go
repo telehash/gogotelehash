@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/fd/go-util/log"
-	"net"
 	"strings"
 	"sync"
 	"time"
@@ -36,6 +35,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	if err != nil {
 		return err
 	}
+	defer channel.Close()
 
 	err = channel.send_packet(pkt)
 	if err != nil {
@@ -73,22 +73,18 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 			continue
 		}
 
-		peer, new_peer := h.sw.AddPeer(hashname)
+		peer, new_peer := h.sw.add_peer(hashname)
 		peer.AddVia(via)
 
-		if len(fields) == 3 {
-			netpath, err := ParseIPNetPath(net.JoinHostPort(fields[1], fields[2]))
-			if err != nil {
-				h.log.Debugf("error: %s", "invalid address")
-			} else {
-				if new_peer {
-					peer.AddNetPath(netpath)
-				}
+		if len(fields) > 1 {
+			np := h.parse_address(fields[1:])
+			if np != nil {
+				peer.add_net_path(np)
 			}
 		}
 
 		if new_peer {
-			peer.set_active_paths(peer.NetPaths())
+			peer.set_active_paths(peer.net_paths())
 			go h.Seek(peer.hashname, h.sw.hashname)
 		}
 	}
@@ -96,10 +92,20 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	return nil
 }
 
+func (h *seek_handler) parse_address(fields []string) *net_path {
+	for _, t := range h.sw.Transports {
+		addr, ok := t.ParseSeekAddress(fields)
+		if ok && addr != nil {
+			return &net_path{Network: t.Network(), Address: addr}
+		}
+	}
+	return nil
+}
+
 func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
 	var (
 		wg    sync.WaitGroup
-		last  = h.sw.GetClosestPeers(hashname, n)
+		last  = h.sw.get_closest_peers(hashname, n)
 		cache = map[Hashname]bool{}
 	)
 
@@ -128,7 +134,7 @@ RECURSOR:
 
 		wg.Wait()
 
-		curr := h.sw.GetClosestPeers(hashname, n)
+		curr := h.sw.get_closest_peers(hashname, n)
 		h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last, curr)
 
 		if len(curr) != len(last) {
@@ -165,7 +171,7 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 		Log.Debug(err)
 	}
 
-	closest := h.sw.GetClosestPeers(seek, 25)
+	closest := h.sw.get_closest_peers(seek, 25)
 	see := make([]string, 0, len(closest))
 
 	for _, peer := range closest {
@@ -180,13 +186,21 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 			continue
 		}
 
-		h.log.Debugf("netpaths for %s: %+v", peer, peer.NetPaths())
+		h.log.Debugf("netpaths for %s: %+v", peer, peer.net_paths())
 	FOR_NETPATHS:
-		for _, np := range peer.NetPaths() {
-			if ip, port, ok := np.AddressForSeek(); ok {
-				added = true
-				see = append(see, fmt.Sprintf("%s,%s,%d", peer.Hashname(), ip, port))
-				break FOR_NETPATHS
+		for _, np := range peer.net_paths() {
+			if np.Address.PublishWithSeek() {
+				t := h.sw.transports[np.Network]
+				if t == nil {
+					continue
+				}
+
+				s := t.FormatSeekAddress(np.Address)
+				if s != "" {
+					added = true
+					see = append(see, fmt.Sprintf("%s,%s", peer.Hashname(), s))
+					break FOR_NETPATHS
+				}
 			}
 		}
 

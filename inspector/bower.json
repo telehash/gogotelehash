@@ -1,0 +1,10 @@
+{
+  "name": "inspector",
+  "version": "0.0.0",
+  "dependencies": {
+    "sass-bootstrap": "~3.0.0",
+    "platform":       "Polymer/platform#0.1.2",
+    "polymer":        "Polymer/polymer#0.1.2"
+  },
+  "devDependencies": {}
+}

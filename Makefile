@@ -17,9 +17,9 @@ test-profile: build
 	rm gogotelehash.test cpu.prof
 
 seed-deploy:
-	make examples
+	# make examples
 	GOOS=linux make examples
-	aws s3 cp --acl=public-read --region=us-east-1 $(GOPATH)/bin/linux_amd64/telehash-ping s3://lalala-assets/telehash-ping
+	# aws s3 cp --acl=public-read --region=us-east-1 $(GOPATH)/bin/linux_amd64/telehash-ping s3://lalala-assets/telehash-ping
 	aws s3 cp --acl=public-read --region=us-east-1 $(GOPATH)/bin/linux_amd64/telehash-seed s3://lalala-assets/telehash-seed
 	ssh root@95.85.6.236 make
 

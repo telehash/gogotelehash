@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/fd/go-util/log"
-	"hash/fnv"
+	"github.com/telehash/gogotelehash/net"
 	"sync/atomic"
 )
 
@@ -36,8 +36,7 @@ func (h *relay_handler) PopulateStats(s *SwitchStats) {
 
 func (h *relay_handler) rcv(pkt *pkt_t) {
 	var (
-		err error
-		// c     = pkt.hdr.C
+		err   error
 		to    = pkt.hdr.To
 		to_hn Hashname
 	)
@@ -60,7 +59,7 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	go func() {
-		ipkt, err := parse_pkt(opkt.body, nil, &relay_net_path{opkt.hdr.C, ZeroHashname, 0, 0})
+		ipkt, err := parse_pkt(opkt.body, nil, &net_path{Network: "relay", Address: &relay_addr{opkt.hdr.C, ZeroHashname, false}})
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s opkt=%+v", err, opkt)
@@ -86,82 +85,80 @@ func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
 		return // drop
 	}
 
-	go func() {
-		opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
-		cmd := cmd_snd_pkt{nil, line, opkt, nil}
-		go h.sw.reactor.Call(&cmd)
-		if cmd.err != nil {
-			atomic.AddUint64(&h.num_err_pkt_rly, 1)
-			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
-			return
-		}
+	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
+	cmd := cmd_snd_pkt{nil, line, opkt}
+	err := cmd.Exec(h.sw)
+	if err != nil {
+		atomic.AddUint64(&h.num_err_pkt_rly, 1)
+		h.log.Noticef("error: %s opkt=%+v", err, opkt)
+		return
+	}
 
-		atomic.AddUint64(&h.num_pkt_rly, 1)
-		h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
-	}()
+	atomic.AddUint64(&h.num_pkt_rly, 1)
+	h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
 }
 
-func make_relay_net_path() NetPath {
+func make_relay_addr() net.Addr {
 	c, err := make_hex_rand(16)
 	if err != nil {
 		return nil
 	}
 
-	return &relay_net_path{C: c}
+	return &relay_addr{C: c}
 }
 
-type relay_net_path struct {
-	C              string
-	via            Hashname
-	hash           uint32
-	priority_delta net_path_priority
+type relay_addr struct {
+	C     string
+	via   Hashname
+	use_c bool
 }
 
-func (n *relay_net_path) Priority() int {
-	return 0 + n.priority_delta.Get()
+func (n *relay_addr) DefaultPriority() int {
+	return 0
 }
 
-func (n *relay_net_path) Demote() {
-	n.priority_delta.Add(-1)
+func (n *relay_addr) PublishWithPath() bool {
+	return false
 }
 
-func (n *relay_net_path) Break() {
-	n.priority_delta.Add(-3 - n.Priority())
+func (n *relay_addr) PublishWithPeer() bool {
+	return true
 }
 
-func (n *relay_net_path) ResetPriority() {
-	n.priority_delta.Reset()
+func (n *relay_addr) PublishWithConnect() bool {
+	return false
 }
 
-func (n *relay_net_path) Hash() uint32 {
-	if n.hash == 0 {
-		h := fnv.New32()
-		fmt.Fprintln(h, "relay")
-		fmt.Fprintln(h, n.C)
-		n.hash = h.Sum32()
+func (n *relay_addr) PublishWithSeek() bool {
+	return false
+}
+
+func (n *relay_addr) NeedNatHolePunching() bool {
+	return false
+}
+
+func (r *relay_addr) SeekString() string {
+	return ""
+}
+
+func (n *relay_addr) SendNatBreaker() bool {
+	return false
+}
+
+func (n *relay_addr) EqualTo(other net.Addr) bool {
+	if o, ok := other.(*relay_addr); ok {
+		return o.C == n.C
 	}
-	return n.hash
-}
-
-func (n *relay_net_path) AddressForSeek() (ip string, port int, ok bool) {
-	return "", 0, false
-}
-
-func (n *relay_net_path) IncludeInConnect() bool {
 	return false
 }
 
-func (n *relay_net_path) SendNatBreaker() bool {
-	return false
+func (n *relay_addr) String() string {
+	return fmt.Sprintf("id=%s via=%s", n.C, n.via.Short())
 }
 
-func (n *relay_net_path) String() string {
-	return fmt.Sprintf("<relay c=%s via=%s>", n.C, n.via.Short())
-}
-
-func (n *relay_net_path) Send(sw *Switch, pkt *pkt_t) error {
+func (h *relay_handler) snd_pkt(sw *Switch, pkt *pkt_t) error {
 	var (
-		h      = &sw.relay_handler
+		n      = pkt.netpath.Address.(*relay_addr)
 		line   *line_t
 		routed bool
 	)
@@ -175,7 +172,8 @@ REROUTE:
 				continue
 			}
 
-			if _, is_relay := line.peer.ActivePath().(*relay_net_path); is_relay {
+			path := line.peer.active_path()
+			if path == nil || path.Network == "relay" {
 				continue
 			}
 
@@ -207,39 +205,41 @@ REROUTE:
 	}
 
 	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
-	go func() {
-		cmd := cmd_snd_pkt{nil, line, opkt, nil}
-		h.sw.reactor.Call(&cmd)
-		if cmd.err != nil {
-			n.via = ZeroHashname
-			atomic.AddUint64(&h.num_err_pkt_snd, 1)
-			h.log.Noticef("error: %s opkt=%+v", cmd.err, opkt)
-			return
-		}
+	cmd := cmd_snd_pkt{nil, line, opkt}
+	err = cmd.Exec(h.sw)
+	if err != nil {
+		n.via = ZeroHashname
+		atomic.AddUint64(&h.num_err_pkt_snd, 1)
+		h.log.Noticef("error: %s opkt=%+v %q", err, opkt.hdr, opkt.body)
+		return err
+	}
 
-		atomic.AddUint64(&h.num_pkt_snd, 1)
-		h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
-	}()
-
+	atomic.AddUint64(&h.num_pkt_snd, 1)
+	h.log.Debugf("snd-self: %+v %q", opkt.hdr, opkt.body)
 	return nil
 }
 
-func (n *relay_net_path) MarshalJSON() ([]byte, error) {
-	var (
-		j = struct {
-			C string `json:"c"`
+func (n *relay_addr) MarshalJSON() ([]byte, error) {
+	if n.use_c {
+		return json.Marshal(struct {
+			Id string `json:"c"`
 		}{
-			C: n.C,
-		}
-	)
+			Id: n.C,
+		})
+	}
 
-	return json.Marshal(j)
+	return json.Marshal(struct {
+		Id string `json:"id"`
+	}{
+		Id: n.C,
+	})
 }
 
-func (n *relay_net_path) UnmarshalJSON(data []byte) error {
+func (n *relay_addr) UnmarshalJSON(data []byte) error {
 	var (
 		j struct {
-			C string `json:"c"`
+			C  string `json:"c"`
+			Id string `json:"id"`
 		}
 	)
 
@@ -248,10 +248,15 @@ func (n *relay_net_path) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	if j.C == "" {
+	if j.Id == "" && j.C != "" {
+		n.use_c = true
+		j.Id = j.C
+	}
+
+	if j.Id == "" {
 		return fmt.Errorf("Invalid relay netpath")
 	}
 
-	n.C = j.C
+	n.C = j.Id
 	return nil
 }

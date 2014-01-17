@@ -113,32 +113,6 @@ func (c *channel_stateless_t) pop_rcv_pkt() (*pkt_t, error) {
 	return pkt, nil
 }
 
-// func (c *channel_stateless_t) tick(now time.Time) (ack *pkt_t, miss []*pkt_t) {
-//   var (
-//     err error
-//   )
-
-//   c._detect_broken(now)
-
-//   return nil, nil
-// }
-
-// func (c *channel_stateless_t) _detect_broken(now time.Time) {
-//   breaking_point := now.Add(-60 * time.Second)
-
-//   if c.rcv_last_pkt_at.IsZero() {
-//     c.rcv_last_pkt_at = now
-//   }
-
-//   if c.snd_last_pkt_at.IsZero() {
-//     c.snd_last_pkt_at = now
-//   }
-
-//   if c.rcv_last_pkt_at.Before(breaking_point) || c.snd_last_pkt_at.Before(breaking_point) {
-//     c.broken = true
-//   }
-// }
-
 func (i *channel_stateless_t) is_closed() bool {
 
 	if i.channel.snd_end || i.channel.rcv_end {

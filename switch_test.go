@@ -4,7 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
-	// "github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/net/ipv4"
 	"io"
 	"runtime"
 	"testing"
@@ -49,20 +50,11 @@ func TestOpen(t *testing.T) {
 
 	var (
 		key_a = make_key()
-		a     = make_switch("0.0.0.0:4000", key_a, nil)
+		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, nil))
 
 		key_b = make_key()
-		b     = make_switch("0.0.0.0:4001", key_b, greetings)
+		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, greetings))
 	)
-
-	err := a.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = b.Start()
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	defer a.Stop()
 	defer b.Stop()
@@ -70,7 +62,12 @@ func TestOpen(t *testing.T) {
 	go func() {
 		defer func() { done <- true }()
 
-		hashname, err := a.Seed("127.0.0.1:4001", &key_b.PublicKey)
+		addr, err := ipv4.ResolveAddr("127.0.0.1:4001")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		hashname, err := a.Seed("ipv4", addr, &key_b.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -79,7 +76,6 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-
 		defer channel.Close()
 
 		for i := 0; i < 100000; i++ {
@@ -101,41 +97,46 @@ func TestSeek(t *testing.T) {
 
 	var (
 		key_a = make_key()
-		a     = make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong))
+		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong)))
 
 		key_b = make_key()
-		b     = make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong))
+		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong)))
 
 		key_c = make_key()
-		c     = make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong))
+		c     = must_start_switch(make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong)))
 	)
 
-	a.Start()
-	b.Start()
-	c.Start()
 	defer a.Stop()
 	defer b.Stop()
 	defer c.Stop()
 
 	go func() {
-		_, err := b.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = b.Seed("ipv4", addr, &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
-		time.Sleep(200 * time.Millisecond)
 		Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 	}()
 
 	go func() {
-		_, err := c.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = c.Seed("ipv4", addr, &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		// Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
-		time.Sleep(100 * time.Millisecond)
 		Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 	}()
 
@@ -149,27 +150,29 @@ func TestRelay(t *testing.T) {
 
 	var (
 		key_a = make_key()
-		a     = make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong))
+		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong)))
 
 		key_b = make_key()
-		b     = make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong))
+		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong)))
 
 		key_c = make_key()
-		c     = make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong))
+		c     = must_start_switch(make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong)))
 	)
 
-	a.Start()
-	b.Start()
-	c.Start()
 	defer a.Stop()
 	defer b.Stop()
 	defer c.Stop()
 
-	b.net.deny_from_net("127.0.0.1:4002")
-	c.net.deny_from_net("127.0.0.1:4001")
+	// b.net.deny_from_net("127.0.0.1:4002")
+	// c.net.deny_from_net("127.0.0.1:4001")
 
 	go func() {
-		_, err := b.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = b.Seed("ipv4", addr, &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +183,12 @@ func TestRelay(t *testing.T) {
 	}()
 
 	go func() {
-		_, err := c.Seed("127.0.0.1:4000", &key_a.PublicKey)
+		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = c.Seed("ipv4", addr, &key_a.PublicKey)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,7 +210,17 @@ func make_key() *rsa.PrivateKey {
 }
 
 func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
-	s, err := NewSwitch(addr, key, h)
+	return &Switch{
+		Key:     key,
+		Handler: h,
+		Transports: []net.Transport{
+			&ipv4.Transport{Addr: addr},
+		},
+	}
+}
+
+func must_start_switch(s *Switch) *Switch {
+	err := s.Start()
 	if err != nil {
 		panic(err)
 	}

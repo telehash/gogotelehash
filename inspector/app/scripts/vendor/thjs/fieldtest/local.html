@@ -1,0 +1,82 @@
+<html>
+<head>
+	<script src="../includes/forge.min.js"></script>
+	<script src="../includes/jsbn.js"></script>
+	<script src="../includes/jsbn2.js"></script>
+	<script src="../includes/ec.js"></script>
+	<script src="../includes/sec.js"></script>
+	<script src="../includes/prng4.js"></script>
+	<script src="../includes/rng.js"></script>
+	<script src="../thforge.js"></script>
+</head>
+<body>
+	<h1>hi</h1>
+	<form>
+		<input size="100"><br>
+		<input size="50"><input size="50"><br>
+		<textarea cols="100" rows="20"></textarea><br>
+		<textarea cols="100" rows="20"></textarea><input type="button" value="go" onclick="otest()">
+	</form>
+	<script>
+thforge.forge(forge);
+var rsa = forge.pki.rsa;
+var pki = forge.pki;
+var asn1 = forge.asn1;
+
+var seed = {
+  "ip": "208.68.164.253",
+  "port": 42424,
+  "pubkey": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VX\nqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90Vof\nsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9\npLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo\n4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr\n7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzj\nXwIDAQAB\n-----END PUBLIC KEY-----\n"
+};
+seed.public = pki.publicKeyFromPem(seed.pubkey);
+seed.hashname = thforge.der2hn(thforge.key2der(seed.public));
+
+function getId(callback)
+{
+	if(localStorage.pubkey)
+	{
+		var ret = {public:pki.publicKeyFromPem(localStorage.pubkey), private:pki.privateKeyFromPem(localStorage.prikey)}
+    ret.der = asn1.toDer(pki.publicKeyToAsn1(ret.public)).bytes();
+		console.log("returning key",ret);
+		return callback(ret);
+	}
+
+	// generate/save one nicely
+	console.log("generating 2048 rsa keypair");
+	var state = rsa.createKeyPairGenerationState(2048, 0x10001);
+	var steps = 0;
+	var step = function() {
+	  // run for 100 ms
+	  if(!rsa.stepKeyPairGenerationState(state, 100)) {
+		console.log("step",steps++);
+	    setTimeout(step, 1);
+	  } else {
+		localStorage.pubkey = pki.publicKeyToPem(state.keys.publicKey);
+		localStorage.prikey = pki.privateKeyToPem(state.keys.privateKey);
+		getId(callback);
+	  }
+	};
+	setTimeout(step);	
+}
+
+
+getId(function(id){
+	document.forms[0][0].value = thforge.der2hn(thforge.key2der(id.public));
+	var open = thforge.openize(id, seed);
+	document.forms[0][3].value = forge.util.bytesToHex(open.bytes());
+})
+
+
+function otest()
+{
+	var packet = forge.util.hexToBytes(document.forms[0][4].value);
+	getId(function(id){
+		var opened = thforge.deopenize(id, pdecode(packet));
+		var secret = thforge.ecdh(seed.ecc.private, opened.ecc);
+		console.log("secret",secret);
+	});
+}
+
+	</script>
+</body>
+</html>
