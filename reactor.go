@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"errors"
+	"github.com/rcrowley/go-metrics"
 	"sync"
 	"time"
 )
@@ -18,11 +19,13 @@ type reactor_t struct {
 	shutdown         chan bool
 	enqueue_commands chan *cmd
 	run_commands     chan *cmd
+	met_queue_depth  metrics.Counter
 }
 
 type cmd struct {
-	execer execer
-	reply  chan error
+	execer  execer
+	reply   chan error
+	created time.Time
 }
 
 type execer interface {
@@ -83,6 +86,7 @@ func (r *reactor_t) Run() {
 	r.enqueue_commands = make(chan *cmd)
 	r.run_commands = make(chan *cmd)
 	r.shutdown = make(chan bool)
+	r.met_queue_depth = metrics.NewRegisteredCounter("reactor.queue.depth", r.sw.met)
 
 	r.wg.Add(1)
 	go r.run_controller()
@@ -135,8 +139,22 @@ func (r *reactor_t) run_controller() {
 func (r *reactor_t) run_worker() {
 	defer r.wg.Done()
 
+	var (
+		exec_timer     = metrics.NewRegisteredTimer("reactor.exec.duration", r.sw.met)
+		latencey_timer = metrics.NewRegisteredTimer("reactor.exec.latency", r.sw.met)
+		defer_counter  = metrics.NewRegisteredCounter("reactor.defer.count", r.sw.met)
+	)
+
 	for cmd := range r.run_commands {
-		r.exec(cmd)
+		exec_timer.Time(func() {
+			r.exec(cmd)
+		})
+		if !r.defered {
+			r.met_queue_depth.Dec(1)
+			latencey_timer.UpdateSince(cmd.created)
+		} else {
+			defer_counter.Inc(1)
+		}
 	}
 }
 
@@ -186,18 +204,23 @@ func (r *reactor_t) Call(e execer) error {
 }
 
 func (r *reactor_t) CallAsync(e execer) <-chan error {
-	c := cmd{e, make(chan error, 1)}
+	c := cmd{e, make(chan error, 1), time.Now()}
 
 	err := r.push(&c)
 	if err != nil {
 		c.cancel(err)
+	} else {
+		r.met_queue_depth.Inc(1)
 	}
 
 	return c.reply
 }
 
 func (r *reactor_t) Cast(e execer) {
-	r.push(&cmd{e, nil})
+	err := r.push(&cmd{e, nil, time.Now()})
+	if err == nil {
+		r.met_queue_depth.Inc(1)
+	}
 }
 
 func (r *reactor_t) push(c *cmd) (err error) {

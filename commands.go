@@ -106,7 +106,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 			line = &line_t{}
 			line.Init(sw, peer)
 			sw.lines[peer.Hashname()] = line
-			sw.num_running_lines = int32(len(sw.lines))
+			sw.met_running_lines.Update(int64(len(sw.lines)))
 		}
 
 		cmd.rcv_open_pkt(line, pub, pkt.netpath)
@@ -171,7 +171,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 	}
 
 	l.channels[channel.Id()] = channel
-	l.sw.num_channels++
+	l.sw.met_channels.Inc(1)
 
 	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
 
@@ -244,7 +244,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 	}
 
 	l.sw.active_lines[l.prv_key.id] = l
-	l.sw.num_open_lines = int32(len(l.sw.active_lines))
+	l.sw.met_open_lines.Update(int64(len(l.sw.active_lines)))
 	l.state = line_pathing
 	l.log.Debugf("line pathing %s -> %s", local_hashname.Short(), l.peer.hashname.Short())
 
@@ -377,7 +377,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 	}
 
 	line.channels[channel.Id()] = channel
-	sw.num_channels++
+	sw.met_channels.Inc(1)
 
 	line.log.Debugf("channel[%s:%s](%s -> %s): opened (initiator=true)",
 		short_hash(channel.Id()),
@@ -415,7 +415,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	}
 
 	sw.lines[cmd.options.To] = line
-	sw.num_running_lines = int32(len(sw.lines))
+	sw.met_running_lines.Update(int64(len(sw.lines)))
 
 	sw.reactor.Defer(&line.backlog)
 	return nil
@@ -456,7 +456,7 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
-	sw.num_channels -= int32(len(cmd.line.channels))
+	sw.met_channels.Dec(int64(len(cmd.line.channels)))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -467,13 +467,13 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
 			delete(sw.active_lines, cmd.line.prv_key.id)
-			sw.num_open_lines = int32(len(sw.active_lines))
+			sw.met_open_lines.Update(int64(len(sw.active_lines)))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
 			delete(sw.lines, cmd.line.peer.hashname)
-			sw.num_running_lines = int32(len(sw.lines))
+			sw.met_running_lines.Update(int64(len(sw.lines)))
 		}
 	}
 
@@ -498,7 +498,7 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
-	sw.num_channels -= int32(len(cmd.line.channels))
+	sw.met_channels.Dec(int64(len(cmd.line.channels)))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -509,13 +509,13 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
 			delete(sw.active_lines, cmd.line.prv_key.id)
-			sw.num_open_lines = int32(len(sw.active_lines))
+			sw.met_open_lines.Update(int64(len(sw.active_lines)))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
 			delete(sw.lines, cmd.line.peer.hashname)
-			sw.num_running_lines = int32(len(sw.lines))
+			sw.met_running_lines.Update(int64(len(sw.lines)))
 		}
 	}
 
@@ -540,7 +540,7 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 	}
 
 	cmd.line.backlog.CancelAll(ErrChannelBroken)
-	sw.num_channels -= int32(len(cmd.line.channels))
+	sw.met_channels.Dec(int64(len(cmd.line.channels)))
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
@@ -551,13 +551,13 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
 			delete(sw.active_lines, cmd.line.prv_key.id)
-			sw.num_open_lines = int32(len(sw.active_lines))
+			sw.met_open_lines.Update(int64(len(sw.active_lines)))
 		}
 	}
 	if cmd.line.peer != nil {
 		if _, p := sw.lines[cmd.line.peer.hashname]; p {
 			delete(sw.lines, cmd.line.peer.hashname)
-			sw.num_running_lines = int32(len(sw.lines))
+			sw.met_running_lines.Update(int64(len(sw.lines)))
 		}
 	}
 
@@ -744,7 +744,7 @@ func (cmd *cmd_clean) Exec(sw *Switch) error {
 					sw.hashname.Short(),
 					l.peer.Hashname().Short())
 				delete(l.channels, i)
-				sw.num_channels--
+				sw.met_channels.Dec(1)
 			}
 		}
 	}

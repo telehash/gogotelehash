@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"github.com/fd/go-util/log"
+	"github.com/rcrowley/go-metrics"
 	"github.com/telehash/gogotelehash/net"
 	"sync"
 	"time"
@@ -16,26 +17,28 @@ type Switch struct {
 	Handler    Handler
 	Transports []net.Transport
 
-	reactor           reactor_t
-	peers             peer_table
-	transports        map[string]net.Transport
-	lines             map[Hashname]*line_t
-	active_lines      map[string]*line_t
-	peer_handler      peer_handler
-	seek_handler      seek_handler
-	path_handler      path_handler
-	relay_handler     relay_handler
-	stats_timer       *time.Timer
-	clean_timer       *time.Timer
-	mtx               sync.Mutex
-	hashname          Hashname
-	mux               *SwitchMux
-	log               log.Logger
-	terminating       bool
-	running           bool
-	num_open_lines    int32
-	num_running_lines int32
-	num_channels      int32
+	reactor       reactor_t
+	peers         peer_table
+	transports    map[string]net.Transport
+	lines         map[Hashname]*line_t
+	active_lines  map[string]*line_t
+	peer_handler  peer_handler
+	seek_handler  seek_handler
+	path_handler  path_handler
+	relay_handler relay_handler
+	stats_timer   *time.Timer
+	clean_timer   *time.Timer
+	mtx           sync.Mutex
+	hashname      Hashname
+	mux           *SwitchMux
+	log           log.Logger
+	terminating   bool
+	running       bool
+
+	met_open_lines    metrics.Gauge
+	met_running_lines metrics.Gauge
+	met_channels      metrics.Counter
+	met               metrics.Registry
 }
 
 func (s *Switch) Start() error {
@@ -67,6 +70,11 @@ func (s *Switch) Start() error {
 		}
 		s.hashname = hn
 	}
+
+	s.met = metrics.NewRegistry()
+	s.met_channels = metrics.NewRegisteredCounter("channels.num", s.met)
+	s.met_open_lines = metrics.NewRegisteredGauge("lines.num.open", s.met)
+	s.met_running_lines = metrics.NewRegisteredGauge("lines.num.running", s.met)
 
 	s.lines = make(map[Hashname]*line_t)
 	s.active_lines = make(map[string]*line_t)
