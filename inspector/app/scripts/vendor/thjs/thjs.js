@@ -352,7 +352,7 @@ function meshPing(self)
           var sug = self.whois(address);
           if(!sug) return;
           sug.via(to, address);
-          if(sug === self || sug.bucket) return; // already bucketized
+          if(sug.bucket) return; // already bucketized
           // if their bucket has capacity, ping them
           sug.bucket = dhash(self.hashname, hn.hashname);
           if(self.capacity[sug.bucket] === undefined) self.capacity[sug.bucket] = 3; // safe default for a new bucket
@@ -409,7 +409,6 @@ function addSeed(arg) {
   var der = local.key2der(arg.pubkey);
   var seed = self.whois(local.der2hn(der));
   if(!seed) return warn("invalid seed info",arg);
-  if(seed === self) return; // can't add ourselves as a seed
   seed.der = der;
   if(arg.ip)
   {
@@ -597,8 +596,8 @@ function whois(hashname)
   hashname = hashname.split(",")[0]; // convenience if an address is passed in
   if(!isHEX(hashname, 64)) { warn("whois called without a valid hashname", hashname); return false; }
 
-  // so we can check === self
-  if(hashname === self.hashname) return self;
+  // never return ourselves
+  if(hashname === self.hashname) return false;
 
   var hn = self.all[hashname];
 	if(hn) return hn;
@@ -974,6 +973,7 @@ function seek(hn, callback)
 {
   var self = this;
   if(typeof hn == "string") hn = self.whois(hn);
+  if(!hn) return callback("invalid hashname");
 
   var did = {};
   var doing = {};
@@ -1009,7 +1009,6 @@ function seek(hn, callback)
   // track callback(s);
   if(!hn.seeking) hn.seeking = [];
   hn.seeking.push(callback);
-  if(hn === self) return done(); // always a success heh  
   if(hn.seeking.length > 1) return;
 
   // main loop, multiples of these running at the same time
@@ -1035,8 +1034,7 @@ function seek(hn, callback)
     to.seek(hn.hashname, function(err, see){
       see.forEach(function(item){
         var sug = self.whois(item);
-        if(sug === self) return; // happens
-        if(!sug) return warn("bad see",item,to.hashname);
+        if(!sug) return;
         sug.via(to, item);
         queue.push(sug.hashname);
       });
@@ -1623,7 +1621,6 @@ function inLanSeed(self, packet)
   var der = local.der2der(packet.body);
   var to = self.whois(local.der2hn(der));
   if(!to) return warn("invalid lan request from",packet.sender);
-  if(to === self) return;
   to.der = der;
   to.local = true;
   debug("local seed open",to.hashname,JSON.stringify(packet.sender));
