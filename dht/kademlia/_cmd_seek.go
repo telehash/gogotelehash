@@ -31,7 +31,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	}
 
 	options := ChannelOptions{To: via, Type: "seek", Reliablility: UnreliableChannel}
-	channel, err := h.sw.Open(options)
+	channel, err := h.sw.open_channel(options)
 	if err != nil {
 		return err
 	}

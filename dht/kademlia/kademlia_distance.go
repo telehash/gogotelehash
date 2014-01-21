@@ -1,4 +1,4 @@
-package telehash
+package kademlia
 
 import (
 	"bytes"

@@ -26,6 +26,11 @@ func make_peer(sw *Switch, hashname Hashname) *Peer {
 	return peer
 }
 
+func (p *Peer) Open(options ChannelOptions) (*Channel, error) {
+	options.To = p.hashname
+	return p.sw.open_channel(options)
+}
+
 func (p *Peer) String() string {
 	return fmt.Sprintf("<peer:%s>", p.hashname.Short())
 }
@@ -153,7 +158,7 @@ func (p *Peer) set_active_paths(paths net_paths) {
 	p.update_paths()
 }
 
-func (p *Peer) CanOpen() bool {
+func (p *Peer) can_open() bool {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 

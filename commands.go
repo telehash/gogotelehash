@@ -10,36 +10,41 @@ type cmd_peer_get struct {
 }
 
 func (cmd *cmd_peer_get) Exec(sw *Switch) error {
-	cmd.peer = sw.peers.get_peer(cmd.hashname)
-	return nil
-}
-
-type cmd_peer_add struct {
-	hashname   Hashname
-	peer       *Peer
-	discovered bool
-}
-
-func (cmd *cmd_peer_add) Exec(sw *Switch) error {
-	cmd.peer, cmd.discovered = sw.peers.add_peer(sw, cmd.hashname)
-
-	if cmd.discovered {
-		sw.log.Noticef("discovered: %s (add_peer)", cmd.peer)
+	for _, dht := range sw.dhts {
+		cmd.peer = dht.GetPeer(cmd.hashname)
+		if cmd.peer != nil {
+			break
+		}
 	}
-
 	return nil
 }
 
-type cmd_peer_get_closest struct {
-	hashname Hashname
-	n        int
-	peers    []*Peer
-}
+// type cmd_peer_add struct {
+//   hashname   Hashname
+//   peer       *Peer
+//   discovered bool
+// }
 
-func (cmd *cmd_peer_get_closest) Exec(sw *Switch) error {
-	cmd.peers = sw.peers.find_closest_peers(cmd.hashname, cmd.n)
-	return nil
-}
+// func (cmd *cmd_peer_add) Exec(sw *Switch) error {
+//   cmd.peer, cmd.discovered = sw.peers.add_peer(sw, cmd.hashname)
+
+//   if cmd.discovered {
+//     sw.log.Noticef("discovered: %s (add_peer)", cmd.peer)
+//   }
+
+//   return nil
+// }
+
+// type cmd_peer_get_closest struct {
+//   hashname Hashname
+//   n        int
+//   peers    []*Peer
+// }
+
+// func (cmd *cmd_peer_get_closest) Exec(sw *Switch) error {
+//   cmd.peers = sw.peers.find_closest_peers(cmd.hashname, cmd.n)
+//   return nil
+// }
 
 type cmd_line_get struct {
 	hashname Hashname
@@ -94,10 +99,11 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 			return nil
 		}
 
-		peer, newpeer := sw.peers.add_peer(sw, pub.hashname)
+		peer := sw.get_peer_internal(pub.hashname, true)
+		had_net_paths := len(peer.net_paths()) == 0
 		peer.add_net_path(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
-		if newpeer {
+		if !had_net_paths {
 			peer.set_active_paths(peer.net_paths())
 		}
 
@@ -274,7 +280,6 @@ func (cmd *cmd_line_opened) Exec(sw *Switch) error {
 	l.open_timer = nil
 
 	l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
-	l.seek_timer = l.sw.reactor.CastAfter(line_seek_interval, &cmd_line_snd_seek{l})
 	l.broken_timer.Reset(line_broken_timeout)
 	l.idle_timer.Reset(line_idle_timeout)
 
@@ -396,14 +401,14 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		err  error
 	)
 
-	peer = sw.peers.get_peer(cmd.options.To)
+	peer = sw.get_peer_internal(cmd.options.To, false)
 
 	if peer == nil {
 		// seek
 		return ErrUnknownPeer
 	}
 
-	if !peer.CanOpen() {
+	if !peer.can_open() {
 		return ErrPeerBroken
 	}
 
@@ -462,7 +467,6 @@ func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
-	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -504,7 +508,6 @@ func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
-	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -546,7 +549,6 @@ func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
 	stop_timer(cmd.line.broken_timer)
 	stop_timer(cmd.line.idle_timer)
 	stop_timer(cmd.line.path_timer)
-	stop_timer(cmd.line.seek_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -602,35 +604,6 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) error {
 
 		sw.reactor.Cast(&cmd_line_close_broken{l})
 		l.log.Noticef("path failed (breaking the line)")
-	}()
-
-	return nil
-}
-
-type cmd_line_snd_seek struct {
-	line *line_t
-}
-
-func (cmd *cmd_line_snd_seek) Exec(sw *Switch) error {
-	go func() {
-		var (
-			l = cmd.line
-		)
-
-		if sw.terminating {
-			return
-		}
-
-		if l.state != line_opened {
-			return
-		}
-
-		err := sw.seek_handler.Seek(l.peer.Hashname(), sw.hashname)
-		if err == nil {
-			l.seek_timer.Reset(line_seek_interval)
-			return
-		}
-		l.log.Noticef("seeking failed: err=%s", err)
 	}()
 
 	return nil

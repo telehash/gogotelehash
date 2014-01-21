@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/rcrowley/go-metrics"
 	"runtime"
-	"sync/atomic"
 	"time"
 )
 
@@ -39,7 +38,6 @@ func (s *Switch) Stats() SwitchStats {
 
 	stats.NumGoRoutines = runtime.NumGoroutine()
 	stats.NumChannels = int(s.met_channels.Count())
-	stats.KnownPeers = int(atomic.LoadUint32(&s.peers.num_peers))
 	stats.NumOpenLines = int(s.met_open_lines.Value())
 	stats.NumRunningLines = int(s.met_running_lines.Value())
 	s.relay_handler.PopulateStats(&stats)

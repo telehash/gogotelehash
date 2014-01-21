@@ -1,17 +1,21 @@
-package telehash
+package kademlia
+
+import (
+	"github.com/telehash/gogotelehash"
+)
 
 type peer_table struct {
-	local_hashname Hashname
+	local_hashname telehash.Hashname
 	num_peers      uint32
-	buckets        [][]*Peer
+	buckets        [][]*telehash.Peer
 }
 
-func (c *peer_table) Init(local_hashname Hashname) {
+func (c *peer_table) Init(local_hashname telehash.Hashname) {
 	c.local_hashname = local_hashname
-	c.buckets = make([][]*Peer, 32*8)
+	c.buckets = make([][]*telehash.Peer, 32*8)
 }
 
-func (c *peer_table) add_peer(sw *Switch, hashname Hashname) (peer *Peer, discovered bool) {
+func (c *peer_table) add_peer(sw *Switch, hashname telehash.Hashname) (peer *telehash.Peer, discovered bool) {
 	peer = c.get_peer(hashname)
 
 	if peer == nil {
@@ -34,7 +38,7 @@ func (c *peer_table) add_peer(sw *Switch, hashname Hashname) (peer *Peer, discov
 	return peer, discovered
 }
 
-func (c *peer_table) remove_peer(peer *Peer) {
+func (c *peer_table) remove_peer(peer *telehash.Peer) {
 	var (
 		bucket_idx = kad_bucket_for(c.local_hashname, peer.Hashname())
 		bucket     = c.buckets[bucket_idx]
@@ -61,7 +65,7 @@ func (c *peer_table) remove_peer(peer *Peer) {
 	c.num_peers--
 }
 
-func (c *peer_table) get_peer(hashname Hashname) *Peer {
+func (c *peer_table) get_peer(hashname telehash.Hashname) *telehash.Peer {
 	bucket_index := kad_bucket_for(c.local_hashname, hashname)
 
 	if bucket_index < 0 {
@@ -79,7 +83,7 @@ func (c *peer_table) get_peer(hashname Hashname) *Peer {
 	return nil
 }
 
-func (c *peer_table) find_closest_peers(t Hashname, n int) []*Peer {
+func (c *peer_table) find_closest_peers(t telehash.Hashname, n int) []*telehash.Peer {
 	bucket_index := kad_bucket_for(c.local_hashname, t)
 	delta := 0
 

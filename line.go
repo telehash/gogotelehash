@@ -10,7 +10,6 @@ const (
 	line_idle_timeout   = 55 * time.Second
 	line_broken_timeout = 60 * time.Second
 	line_path_interval  = 10 * time.Second
-	line_seek_interval  = 30 * time.Second
 )
 
 type line_state uint32
@@ -42,7 +41,6 @@ type line_t struct {
 	broken_timer *time.Timer
 	open_timer   *time.Timer
 	path_timer   *time.Timer
-	seek_timer   *time.Timer
 }
 
 func (l *line_t) Init(sw *Switch, peer *Peer) {

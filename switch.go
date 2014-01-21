@@ -18,12 +18,10 @@ type Switch struct {
 	Transports []net.Transport
 
 	reactor       reactor_t
-	peers         peer_table
 	transports    map[string]net.Transport
 	lines         map[Hashname]*line_t
 	active_lines  map[string]*line_t
 	peer_handler  peer_handler
-	seek_handler  seek_handler
 	path_handler  path_handler
 	relay_handler relay_handler
 	stats_timer   *time.Timer
@@ -84,9 +82,7 @@ func (s *Switch) Start() error {
 	s.mux.HandleFallback(s.Handler)
 
 	s.reactor.sw = s
-	s.peers.Init(s.hashname)
 	s.peer_handler.init(s)
-	s.seek_handler.init(s)
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
 
@@ -170,39 +166,39 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, error) {
-	hashname, err := HashnameFromPublicKey(key)
-	if err != nil {
-		return ZeroHashname, err
-	}
+// func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, error) {
+//   hashname, err := HashnameFromPublicKey(key)
+//   if err != nil {
+//     return ZeroHashname, err
+//   }
 
-	peer, newpeer := s.add_peer(hashname)
-	peer.SetPublicKey(key)
-	peer.add_net_path(&net_path{Network: net, Address: addr})
-	if newpeer {
-		peer.set_active_paths(peer.net_paths())
-	}
+//   peer, newpeer := s.add_peer(hashname)
+//   peer.SetPublicKey(key)
+//   peer.add_net_path(&net_path{Network: net, Address: addr})
+//   if newpeer {
+//     peer.set_active_paths(peer.net_paths())
+//   }
 
-	err = s.seek_handler.Seek(hashname, s.hashname)
-	if err != nil {
-		return hashname, err
-	}
+//   err = s.seek_handler.Seek(hashname, s.hashname)
+//   if err != nil {
+//     return hashname, err
+//   }
 
-	return hashname, nil
-}
+//   return hashname, nil
+// }
 
-func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
-	peers := s.seek_handler.RecusiveSeek(hashname, n)
-	hashnames := make([]Hashname, len(peers))
+// func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
+//   peers := s.seek_handler.RecusiveSeek(hashname, n)
+//   hashnames := make([]Hashname, len(peers))
 
-	for i, peer := range peers {
-		hashnames[i] = peer.Hashname()
-	}
+//   for i, peer := range peers {
+//     hashnames[i] = peer.Hashname()
+//   }
 
-	return hashnames
-}
+//   return hashnames
+// }
 
-func (s *Switch) Open(options ChannelOptions) (*Channel, error) {
+func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {
 	cmd := cmd_channel_open{options, nil}
 	err := s.reactor.Call(&cmd)
 	return cmd.channel, err
@@ -214,17 +210,17 @@ func (s *Switch) get_peer(hashname Hashname) *Peer {
 	return cmd.peer
 }
 
-func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
-	cmd := cmd_peer_get_closest{hashname, n, nil}
-	s.reactor.Call(&cmd)
-	return cmd.peers
-}
+// func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
+//   cmd := cmd_peer_get_closest{hashname, n, nil}
+//   s.reactor.Call(&cmd)
+//   return cmd.peers
+// }
 
-func (s *Switch) add_peer(hashname Hashname) (*Peer, bool) {
-	cmd := cmd_peer_add{hashname, nil, false}
-	s.reactor.Call(&cmd)
-	return cmd.peer, cmd.discovered
-}
+// func (s *Switch) add_peer(hashname Hashname) (*Peer, bool) {
+//   cmd := cmd_peer_add{hashname, nil, false}
+//   s.reactor.Call(&cmd)
+//   return cmd.peer, cmd.discovered
+// }
 
 func (s *Switch) get_line(to Hashname) *line_t {
 	cmd := cmd_line_get{to, nil}
