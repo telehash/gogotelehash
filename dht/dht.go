@@ -2,17 +2,13 @@ package dht
 
 import (
 	"crypto/rsa"
-	"errors"
 	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/net"
 )
 
-var (
-	ErrPeerNotFound = errors.New("dht: peer not found")
-)
-
-// DHTs must als implement telehash.Component
 type DHT interface {
+	telehash.Component
+
 	// seed the dht
 	Seed(net string, addr net.Addr, key *rsa.PublicKey) (telehash.Hashname, error)
 
@@ -21,4 +17,7 @@ type DHT interface {
 
 	// find the n closest peers
 	SeekMany(hashname telehash.Hashname, n int) ([]*telehash.Peer, error)
+
+	// Get a peer without touching the network
+	GetPeer(hashname telehash.Hashname) *telehash.Peer
 }

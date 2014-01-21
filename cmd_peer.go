@@ -76,7 +76,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	from_peer := h.sw.get_peer(channel.To())
+	from_peer := h.sw.get_peer(channel.To(), false)
 
 	peer_hashname, err := HashnameFromString(pkt.hdr.Peer)
 	if err != nil {
@@ -96,7 +96,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	to_peer := h.sw.get_peer(peer_hashname)
+	to_peer := h.sw.get_peer(peer_hashname, false)
 	if to_peer == nil {
 		return
 	}

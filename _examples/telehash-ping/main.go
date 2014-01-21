@@ -7,7 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"github.com/telehash/gogotelehash"
-	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/dht/kademlia"
 	"github.com/telehash/gogotelehash/net/ipv4"
 	"github.com/telehash/gogotelehash/net/ipv6"
 	"os"
@@ -40,9 +40,10 @@ func main() {
 
 	s := &telehash.Switch{
 		Handler: telehash.HandlerFunc(pong),
-		Transports: []net.Transport{
+		Components: []telehash.Component{
 			&ipv4.Transport{Addr: ":" + port},
 			&ipv6.Transport{Addr: ":" + port},
+			&kademlia.DHT{},
 		},
 	}
 

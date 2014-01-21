@@ -6,6 +6,7 @@ import (
 
 type cmd_peer_get struct {
 	hashname Hashname
+	make_new bool
 	peer     *Peer
 }
 
@@ -13,8 +14,11 @@ func (cmd *cmd_peer_get) Exec(sw *Switch) error {
 	for _, dht := range sw.dhts {
 		cmd.peer = dht.GetPeer(cmd.hashname)
 		if cmd.peer != nil {
-			break
+			return nil
 		}
+	}
+	if cmd.make_new {
+		cmd.peer = make_peer(sw, cmd.hashname)
 	}
 	return nil
 }
@@ -77,7 +81,8 @@ type cmd_rcv_pkt struct {
 
 func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 	var (
-		pkt = cmd.pkt
+		pkt  = cmd.pkt
+		peer *Peer
 	)
 
 	if pkt.hdr.Type == "line" {
@@ -99,7 +104,12 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 			return nil
 		}
 
-		peer := sw.get_peer_internal(pub.hashname, true)
+		{ // get the peer
+			cmd := cmd_peer_get{pub.hashname, true, nil}
+			cmd.Exec(sw)
+			peer = cmd.peer
+		}
+
 		had_net_paths := len(peer.net_paths()) == 0
 		peer.add_net_path(pkt.netpath)
 		peer.SetPublicKey(pub.rsa_pubkey)
@@ -401,7 +411,11 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		err  error
 	)
 
-	peer = sw.get_peer_internal(cmd.options.To, false)
+	{ // get the peer
+		cmd := cmd_peer_get{cmd.options.To, false, nil}
+		cmd.Exec(sw)
+		peer = cmd.peer
+	}
 
 	if peer == nil {
 		// seek

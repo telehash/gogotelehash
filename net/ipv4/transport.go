@@ -3,6 +3,7 @@ package ipv4
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
@@ -20,7 +21,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Open() error {
+func (t *Transport) Start(sw *telehash.Switch) error {
 	addr, err := net.ResolveUDPAddr("udp4", t.Addr)
 	if err != nil {
 		return err
@@ -57,7 +58,7 @@ func (t *Transport) LocalAddresses() []th.Addr {
 	return l4
 }
 
-func (t *Transport) Close() error {
+func (t *Transport) Stop() error {
 	if t.conn == nil {
 		return nil
 	}

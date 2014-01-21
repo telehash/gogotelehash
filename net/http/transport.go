@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/fd/go-socket.io"
+	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"net"
 	"net/http"
@@ -35,7 +36,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Open() error {
+func (t *Transport) Start(sw *telehash.Switch) error {
 
 	if t.Config.HeartbeatTimeout == 0 {
 		t.Config.HeartbeatTimeout = 2
@@ -73,7 +74,7 @@ func (t *Transport) Open() error {
 	return nil
 }
 
-func (t *Transport) Close() error {
+func (t *Transport) Stop() error {
 	if t.listener == nil {
 		return nil
 	}

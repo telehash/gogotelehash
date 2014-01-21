@@ -15,7 +15,7 @@ func (c *peer_table) Init(local_hashname telehash.Hashname) {
 	c.buckets = make([][]*telehash.Peer, 32*8)
 }
 
-func (c *peer_table) add_peer(sw *Switch, hashname telehash.Hashname) (peer *telehash.Peer, discovered bool) {
+func (c *peer_table) add_peer(sw *telehash.Switch, hashname telehash.Hashname) (peer *telehash.Peer, discovered bool) {
 	peer = c.get_peer(hashname)
 
 	if peer == nil {
@@ -92,7 +92,7 @@ func (c *peer_table) find_closest_peers(t telehash.Hashname, n int) []*telehash.
 	}
 
 	var (
-		peers = make([]*Peer, 0, 10)
+		peers = make([]*telehash.Peer, 0, 10)
 	)
 
 	for len(peers) < n {

@@ -12,13 +12,18 @@ import (
 )
 
 type Switch struct {
-	DenyRelay  bool
-	Key        *rsa.PrivateKey
-	Handler    Handler
-	Transports []net.Transport
+	DenyRelay bool
+	Key       *rsa.PrivateKey
+	Handler   Handler
+	// Transports []net.Transport
+
+	Components     []Component
+	components     []Component
+	transports     []net.Transport
+	transports_map map[string]net.Transport
+	dhts           []privDHT
 
 	reactor       reactor_t
-	transports    map[string]net.Transport
 	lines         map[Hashname]*line_t
 	active_lines  map[string]*line_t
 	peer_handler  peer_handler
@@ -76,7 +81,7 @@ func (s *Switch) Start() error {
 
 	s.lines = make(map[Hashname]*line_t)
 	s.active_lines = make(map[string]*line_t)
-	s.transports = make(map[string]net.Transport, len(s.Transports))
+	s.transports_map = make(map[string]net.Transport, len(s.Components))
 	s.log = Log.Sub(log.DEFAULT, "switch["+s.hashname.Short()+"]")
 	s.mux = NewSwitchMux()
 	s.mux.HandleFallback(s.Handler)
@@ -86,26 +91,40 @@ func (s *Switch) Start() error {
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
 
-	for _, t := range s.Transports {
-		if _, p := s.transports[t.Network()]; p {
-			err = fmt.Errorf("transport %q is already registerd", t.Network())
-			break
+	for _, c := range s.Components {
+		s.components = append(s.components, c)
+
+		switch v := c.(type) {
+
+		case net.Transport:
+			if _, p := s.transports_map[v.Network()]; p {
+				return fmt.Errorf("transport %q is already registerd", v.Network())
+			}
+
+			s.transports = append(s.transports, v)
+			s.transports_map[v.Network()] = v
+
+		case privDHT:
+			s.dhts = append(s.dhts, v)
+
 		}
+	}
 
-		s.transports[t.Network()] = t
-
-		err = t.Open()
+	for _, c := range s.components {
+		err = c.Start(s)
 		if err != nil {
 			break
 		}
-
-		go s.listen(t)
 	}
 	if err != nil {
-		for _, t := range s.Transports {
-			t.Close()
+		for _, c := range s.components {
+			c.Stop()
 		}
 		return err
+	}
+
+	for _, t := range s.transports {
+		go s.listen(t)
 	}
 
 	s.running = true
@@ -152,8 +171,8 @@ func (s *Switch) Stop() error {
 	s.reactor.Cast(&cmd_shutdown{})
 	s.reactor.StopAndWait()
 
-	for _, t := range s.transports {
-		t.Close()
+	for _, c := range s.components {
+		c.Stop()
 	}
 
 	stop_timer(s.stats_timer)
@@ -204,8 +223,8 @@ func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {
 	return cmd.channel, err
 }
 
-func (s *Switch) get_peer(hashname Hashname) *Peer {
-	cmd := cmd_peer_get{hashname, nil}
+func (s *Switch) get_peer(hashname Hashname, make_new bool) *Peer {
+	cmd := cmd_peer_get{hashname, make_new, nil}
 	s.reactor.Call(&cmd)
 	return cmd.peer
 }
@@ -251,7 +270,7 @@ func (s *Switch) snd_pkt(pkt *pkt_t) error {
 		return s.relay_handler.snd_pkt(s, pkt)
 	}
 
-	transport := s.transports[pkt.netpath.Network]
+	transport := s.transports_map[pkt.netpath.Network]
 	if transport == nil {
 		return ErrInvalidNetwork
 	}
@@ -286,7 +305,7 @@ func (s *Switch) get_network_paths() net_paths {
 		paths net_paths
 	)
 
-	for n, t := range s.transports {
+	for n, t := range s.transports_map {
 		for _, a := range t.LocalAddresses() {
 			paths = append(paths, &net_path{Network: n, Address: a})
 		}

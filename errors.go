@@ -10,11 +10,13 @@ var (
 	ErrTimeout                = errors.New("telehash: timeout")
 	ErrChannelBroken          = errors.New("telehash: broken channel")
 	ErrPeerBroken             = errors.New("telehash: broken peer")
-	ErrUnknownPeer            = errors.New("telehash: unknown peer")
 	ErrSendOnClosedChannel    = errors.New("telehash: send on closed channel")
 	ErrReceiveOnClosedChannel = errors.New("telehash: receive on closed channel")
 	ErrInvalidNetwork         = errors.New("telehash: invalid network")
 	ErrSwitchAlreadyRunning   = errors.New("telehash: switch is already running")
+
+	ErrUnknownPeer  = errors.New("telehash: unknown peer")
+	ErrPeerNotFound = errors.New("dht: peer not found")
 
 	errInvalidOpenReq       = errors.New("line: invalid open request")
 	errMissingPublicKey     = errors.New("line: missing public key")

@@ -2,6 +2,7 @@ package ipv6
 
 import (
 	"encoding/json"
+	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
@@ -19,7 +20,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Open() error {
+func (t *Transport) Start(sw *telehash.Switch) error {
 	addr, err := net.ResolveUDPAddr("udp6", t.Addr)
 	if err != nil {
 		return err
@@ -35,7 +36,7 @@ func (t *Transport) Open() error {
 	return nil
 }
 
-func (t *Transport) Close() error {
+func (t *Transport) Stop() error {
 	if t.conn == nil {
 		return nil
 	}

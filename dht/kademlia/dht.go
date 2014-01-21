@@ -3,7 +3,6 @@ package kademlia
 import (
 	"crypto/rsa"
 	"github.com/telehash/gogotelehash"
-	"github.com/telehash/gogotelehash/dht"
 	"github.com/telehash/gogotelehash/net"
 	"time"
 )
@@ -34,12 +33,12 @@ func (d *DHT) Seek(hashname telehash.Hashname) (*telehash.Peer, error) {
 	}
 
 	if len(peers) == 0 {
-		return nil, dht.ErrPeerNotFound
+		return nil, telehash.ErrPeerNotFound
 	}
 
 	peer := peers[0]
 	if peer.Hashname() != hashname {
-		return nil, dht.ErrPeerNotFound
+		return nil, telehash.ErrPeerNotFound
 	}
 
 	return peer, nil
@@ -72,7 +71,7 @@ func (d *DHT) cmd_seek(hashname telehash.Hashname, via *telehash.Peer) []*teleha
 
 	defer channel.Close()
 
-	channel.SetReceiveDeadline(10 * time.Seconds)
+	channel.SetReceiveDeadline(time.Now().Add(10 * time.Second))
 
 	_, err = channel.SendPacket(&header, nil)
 	if err != nil {

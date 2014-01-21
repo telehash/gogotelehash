@@ -27,7 +27,7 @@ func (s *Switch) decode_net_path(data []byte) (*net_path, error) {
 		return &net_path{Network: typ.Type, Address: addr}, nil
 	}
 
-	t, ok := s.transports[typ.Type]
+	t, ok := s.transports_map[typ.Type]
 	if !ok {
 		return nil, fmt.Errorf("Unknown type %q", typ.Type)
 	}
@@ -53,7 +53,7 @@ func (s *Switch) encode_net_path(n *net_path) ([]byte, error) {
 		}
 
 	} else {
-		t, ok := s.transports[n.Network]
+		t, ok := s.transports_map[n.Network]
 		if !ok {
 			return nil, fmt.Errorf("Unknown type %q", n.Network)
 		}
