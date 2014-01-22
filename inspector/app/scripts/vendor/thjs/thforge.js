@@ -186,8 +186,8 @@ function deopenize(id, open)
 	cipher.finish();
 	var md = forge.md.sha256.create()
 	md.update(open.body);
-	var verify = rsapub.verify(md.digest().bytes(), cipher.output.bytes());
-//	console.log("verify", verify);
+	var verify = false;
+  try{ verify = rsapub.verify(md.digest().bytes(), cipher.output.bytes()); }catch(E){}
 	return {ecc:ecpub, rsa:key2der(rsapub), js:inner.js, verify:verify};
 }
 

@@ -2,7 +2,7 @@
 	"name": "thjs",
   "description": "An implementation of telehash in pure javascript that works in the browser.",
   "homepage": "https://github.com/telehash/thjs",
-	"version": "0.0.41",
+	"version": "0.0.42",
   "keywords": [
     "telehash",
     "crypto",
