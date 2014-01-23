@@ -627,7 +627,7 @@ func (cmd *cmd_line_snd_seek) Exec(sw *Switch) error {
 			return
 		}
 
-		err := sw.seek_handler.Seek(l.peer.Hashname(), sw.hashname)
+		_, err := sw.seek_handler.Seek(l.peer.Hashname(), sw.hashname)
 		if err == nil {
 			l.seek_timer.Reset(line_seek_interval)
 			return

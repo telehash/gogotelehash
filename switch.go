@@ -185,7 +185,7 @@ func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, 
 		peer.set_active_paths(peer.net_paths())
 	}
 
-	err = s.seek_handler.Seek(hashname, s.hashname)
+	_, err = s.seek_handler.Seek(hashname, s.hashname)
 	if err != nil {
 		return hashname, err
 	}
@@ -193,15 +193,12 @@ func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, 
 	return hashname, nil
 }
 
-func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
-	peers := s.seek_handler.RecusiveSeek(hashname, n)
-	hashnames := make([]Hashname, len(peers))
-
-	for i, peer := range peers {
-		hashnames[i] = peer.Hashname()
+func (s *Switch) Seek(hashname Hashname) Hashname {
+	peer := s.seek_handler.RecusiveSeek(hashname)
+	if peer == nil {
+		return ZeroHashname
 	}
-
-	return hashnames
+	return peer.Hashname()
 }
 
 func (s *Switch) Open(options ChannelOptions) (*Channel, error) {

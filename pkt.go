@@ -84,13 +84,16 @@ func encode_packet(pkt *pkt_t) ([]byte, error) {
 		header_data = header_data[:offset]
 	}
 
-	data := encode_raw_packet(header_data, pkt.body)
+	data, err := encode_raw_packet(header_data, pkt.body)
 	buffer_pool_release(header_data)
+	if err != nil {
+		return nil, err
+	}
 
 	return data, nil
 }
 
-func encode_raw_packet(hdr, body []byte) []byte {
+func encode_raw_packet(hdr, body []byte) ([]byte, error) {
 	var (
 		len_hdr  = len(hdr)
 		len_body = len(body)
@@ -106,10 +109,10 @@ func encode_raw_packet(hdr, body []byte) []byte {
 	}
 
 	if 2+len_hdr+len_body > cap(buf) {
-		Log.Errorf("TRIED TO ENCODE TO LARGE PACKET: len(%d)\n%s\n%x", 2+len_hdr+len_body, hdr, body)
+		return nil, errInvalidPkt
 	}
 
-	return buf[0 : 2+len_hdr+len_body]
+	return buf[0 : 2+len_hdr+len_body], nil
 }
 
 func decode_packet(data []byte) (*pkt_t, error) {

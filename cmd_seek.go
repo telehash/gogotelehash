@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"github.com/fd/go-util/log"
 	"strings"
-	"sync"
+	// "sync"
 	"time"
 )
 
@@ -28,7 +28,7 @@ func (h *seek_handler) init(sw *Switch) {
 	sw.mux.HandleFunc("seek", h.serve_seek)
 }
 
-func (h *seek_handler) Seek(via, seek Hashname) error {
+func (h *seek_handler) Seek(via, seek Hashname) ([]*Peer, error) {
 	var (
 		req_header seek_header
 		res_header seek_header
@@ -41,24 +41,26 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	options := ChannelOptions{To: via, Type: "seek", Reliablility: UnreliableChannel}
 	channel, err := h.sw.Open(options)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer channel.Close()
 
 	_, err = channel.SendPacket(&req_header, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	channel.SetReceiveDeadline(time.Now().Add(15 * time.Second))
+	channel.SetReceiveDeadline(time.Now().Add(5 * time.Second))
 
 	_, err = channel.ReceivePacket(&res_header, nil)
 	if err != nil {
 		Log.Debugf("failed to send seek to %s (error: %s)", via.Short(), err)
-		return err
+		return nil, err
 	}
 
 	h.log.Debugf("rcv seek: see=%+v", res_header.See)
+
+	peers := make([]*Peer, 0, len(res_header.See))
 
 	for _, rec := range res_header.See {
 		fields := strings.Split(rec, ",")
@@ -82,6 +84,8 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		peer, new_peer := h.sw.add_peer(hashname)
 		peer.AddVia(via)
 
+		peers = append(peers, peer)
+
 		if len(fields) > 1 {
 			np := h.parse_address(fields[1:])
 			if np != nil {
@@ -95,7 +99,7 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 		}
 	}
 
-	return nil
+	return peers, nil
 }
 
 func (h *seek_handler) parse_address(fields []string) *net_path {
@@ -108,63 +112,126 @@ func (h *seek_handler) parse_address(fields []string) *net_path {
 	return nil
 }
 
-func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
-	var (
-		wg    sync.WaitGroup
-		last  = h.sw.get_closest_peers(hashname, n)
-		cache = map[Hashname]bool{}
-	)
+// func (h *seek_handler) RecusiveSeek(hashname Hashname, n int) []*Peer {
+//   var (
+//     wg    sync.WaitGroup
+//     last  = h.sw.get_closest_peers(hashname, n)
+//     cache = map[Hashname]bool{}
+//   )
 
-	tag := time.Now().UnixNano()
+//   tag := time.Now().UnixNano()
 
-	h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last)
+//   h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last)
 
-RECURSOR:
-	for {
+// RECURSOR:
+//   for {
 
-		h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last)
-		for _, via := range last {
-			if cache[via.Hashname()] {
-				continue
-			}
+//     h.log.Debugf("%d => %s seek(%s):\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last)
+//     for _, via := range last {
+//       if cache[via.Hashname()] {
+//         continue
+//       }
 
-			cache[via.Hashname()] = true
+//       cache[via.Hashname()] = true
 
-			if via.Hashname() == hashname {
-				continue
-			}
+//       if via.Hashname() == hashname {
+//         continue
+//       }
 
-			wg.Add(1)
-			go h.send_seek_cmd(via.Hashname(), hashname, &wg)
+//       wg.Add(1)
+//       go h.send_seek_cmd(via.Hashname(), hashname, &wg)
+//     }
+
+//     wg.Wait()
+
+//     curr := h.sw.get_closest_peers(hashname, n)
+//     h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last, curr)
+
+//     if len(curr) != len(last) {
+//       last = curr
+//       continue RECURSOR
+//     }
+
+//     for i, a := range last {
+//       if a != curr[i] {
+//         last = curr
+//         continue RECURSOR
+//       }
+//     }
+
+//     break
+//   }
+
+//   return last
+// }
+
+func (h *seek_handler) RecusiveSeek(target Hashname) *Peer {
+	// try local first
+	peers := h.sw.get_closest_peers(target, 15)
+	for _, peer := range peers {
+		if peer.Hashname() == target {
+			return peer
 		}
-
-		wg.Wait()
-
-		curr := h.sw.get_closest_peers(hashname, n)
-		h.log.Debugf("%d => %s seek(%s):\n  %+v\n  %+v", tag, h.sw.hashname.Short(), hashname.Short(), last, curr)
-
-		if len(curr) != len(last) {
-			last = curr
-			continue RECURSOR
-		}
-
-		for i, a := range last {
-			if a != curr[i] {
-				last = curr
-				continue RECURSOR
-			}
-		}
-
-		break
 	}
 
-	return last
+	var (
+		in      = make(chan Hashname, len(peers))
+		out     = make(chan *Peer)
+		skip    = map[Hashname]bool{}
+		pending int
+	)
+
+	defer close(in)
+	defer close(out)
+
+	for i := 0; i < 5; i++ {
+		go h.do_seek(target, in, out)
+	}
+
+	for _, peer := range peers {
+		via := peer.Hashname()
+		skip[via] = true
+		pending++
+		in <- via
+	}
+
+	for peer := range out {
+		if peer == nil {
+			pending--
+			if pending == 0 {
+				break
+			}
+		}
+
+		via := peer.Hashname()
+		if via == target {
+			return peer
+		} else if !skip[via] {
+			skip[via] = true
+			pending++
+			in <- via
+		}
+	}
+
+	return nil
 }
 
-func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
-	defer wg.Done()
-	h.Seek(via, seek)
+func (h *seek_handler) do_seek(target Hashname, in <-chan Hashname, out chan<- *Peer) {
+	defer func() { recover() }()
+
+	for via := range in {
+		peers, _ := h.Seek(via, target)
+		for _, peer := range peers {
+			out <- peer
+		}
+		out <- nil
+	}
 }
+
+// func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
+//   defer wg.Done()
+//   h.Seek(via, seek)
+// }
 
 func (h *seek_handler) serve_seek(channel *Channel) {
 	var (
