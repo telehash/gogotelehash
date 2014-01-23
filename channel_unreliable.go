@@ -49,7 +49,7 @@ func (c *channel_unreliable_t) will_send_packet(pkt *pkt_t) error {
 	if !c.snd_first_pkt {
 		c.snd_first_pkt = true
 		if c.channel.initiator {
-			pkt.hdr.Type = c.channel.options.Type
+			pkt.priv_hdr.Type = c.channel.options.Type
 		}
 	}
 
@@ -67,13 +67,13 @@ func (c *channel_unreliable_t) push_rcv_pkt(pkt *pkt_t) error {
 		err error
 	)
 
-	if pkt.hdr.Ack.IsSet() {
+	if pkt.priv_hdr.Ack.IsSet() {
 		// should not have ack
 		err = errInvalidPkt
 		goto EXIT
 	}
 
-	if pkt.hdr.Seq.IsSet() {
+	if pkt.priv_hdr.Seq.IsSet() {
 		// should not have seq
 		err = errInvalidPkt
 		goto EXIT

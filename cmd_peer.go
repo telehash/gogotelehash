@@ -9,6 +9,18 @@ type peer_handler struct {
 	log log.Logger
 }
 
+type peer_header struct {
+	Peer  string        `json:"peer,omitempty"`
+	Paths raw_net_paths `json:"paths,omitempty"`
+}
+
+type connect_header struct {
+	Paths raw_net_paths `json:"paths,omitempty"`
+}
+
+func (p *peer_header) End() bool    { return true }
+func (p *connect_header) End() bool { return true }
+
 func (h *peer_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "peer-handler")
@@ -46,6 +58,11 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		return
 	}
 
+	header := peer_header{
+		Peer:  to_hn.String(),
+		Paths: raw_paths,
+	}
+
 	for _, via := range to.ViaTable() {
 		func() {
 			h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
@@ -57,28 +74,32 @@ func (h *peer_handler) SendPeer(to *Peer) {
 			}
 			defer channel.Close()
 
-			channel.send_packet(&pkt_t{
-				hdr: pkt_hdr_t{
-					Peer:  to_hn.String(),
-					Paths: raw_paths,
-					End:   true,
-				},
-			})
+			channel.SendPacket(&header, nil)
 		}()
 
 	}
 }
 
 func (h *peer_handler) serve_peer(channel *Channel) {
-	pkt, err := channel.receive_packet()
+	var (
+		req_header    peer_header
+		con_header    connect_header
+		from_peer     *Peer
+		to_peer       *Peer
+		peer_hashname Hashname
+		pubkey        []byte
+		err           error
+	)
+
+	_, err = channel.ReceivePacket(&req_header, nil)
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return
 	}
 
-	from_peer := h.sw.get_peer(channel.To())
+	from_peer = channel.Peer()
 
-	peer_hashname, err := HashnameFromString(pkt.hdr.Peer)
+	peer_hashname, err = HashnameFromString(req_header.Peer)
 	if err != nil {
 		h.log.Debug(err)
 		return
@@ -96,18 +117,18 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	to_peer := h.sw.get_peer(peer_hashname)
+	to_peer = h.sw.get_peer(peer_hashname)
 	if to_peer == nil {
 		return
 	}
 
-	pubkey, err := enc_DER_RSA(from_peer.PublicKey())
+	pubkey, err = enc_DER_RSA(from_peer.PublicKey())
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return
 	}
 
-	paths := pkt.hdr.Paths
+	paths := req_header.Paths
 	for _, np := range from_peer.net_paths() {
 		if np.Address.PublishWithConnect() {
 			raw, err := h.sw.encode_net_path(np)
@@ -125,26 +146,29 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	}
 	defer channel.Close()
 
-	err = channel.send_packet(&pkt_t{
-		hdr: pkt_hdr_t{
-			Paths: paths,
-			End:   true,
-		},
-		body: pubkey,
-	})
+	con_header.Paths = paths
+
+	_, err = channel.SendPacket(&con_header, pubkey)
 	if err != nil {
 		h.log.Noticef("peer:connect err=%s", err)
 	}
 }
 
 func (h *peer_handler) serve_connect(channel *Channel) {
-	pkt, err := channel.receive_packet()
+	var (
+		req_header connect_header
+		req_body   = buffer_pool_acquire()
+	)
+
+	defer buffer_pool_release(req_body)
+
+	n, err := channel.ReceivePacket(&req_header, req_body)
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return
 	}
 
-	pubkey, err := dec_DER_RSA(pkt.body)
+	pubkey, err := dec_DER_RSA(req_body[:n])
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return
@@ -161,7 +185,7 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 	peer.SetPublicKey(pubkey)
 	peer.AddVia(channel.To())
 
-	paths, err := h.sw.decode_net_paths(pkt.hdr.Paths)
+	paths, err := h.sw.decode_net_paths(req_header.Paths)
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return

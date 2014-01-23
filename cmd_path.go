@@ -13,6 +13,17 @@ type path_handler struct {
 	log log.Logger
 }
 
+type path_header struct {
+	Paths    raw_net_paths `json:"paths,omitempty"`
+	Priority int           `json:"priority,omitempty"`
+	netpath  *net_path
+	end      bool
+}
+
+func (hdr *path_header) End() bool                { return hdr.end }
+func (hdr *path_header) get_net_path() *net_path  { return hdr.netpath }
+func (hdr *path_header) set_net_path(n *net_path) { hdr.netpath = n }
+
 func (h *path_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "path-handler")
@@ -110,7 +121,6 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 	var (
 		priority int
-		pkt      *pkt_t
 		channel  *Channel
 		err      error
 		latency  time.Duration
@@ -128,12 +138,10 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 		raw_paths = nil
 	}
 
-	pkt = &pkt_t{
-		hdr: pkt_hdr_t{
-			Priority: priority,
-			Paths:    raw_paths,
-		},
-		netpath: netpath,
+	header := path_header{
+		Paths:    raw_paths,
+		Priority: priority,
+		netpath:  netpath,
 	}
 
 	options := ChannelOptions{To: to, Type: "path", Reliablility: UnreliableChannel}
@@ -144,7 +152,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 	}
 	defer channel.Close()
 
-	err = channel.send_packet(pkt)
+	_, err = channel.SendPacket(&header, nil)
 	if err != nil {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
@@ -152,14 +160,14 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 
 	channel.SetReceiveDeadline(now.Add(_PATH_DEADLINE))
 
-	pkt, err = channel.receive_packet()
+	_, err = channel.ReceivePacket(&header, nil)
 	if err != nil {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
 		return false
 	}
 
-	if priority > pkt.hdr.Priority {
-		priority = pkt.hdr.Priority
+	if priority > header.Priority {
+		priority = header.Priority
 		// TODO adjust priority
 	}
 
@@ -171,31 +179,36 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 }
 
 func (h *path_handler) serve_path(channel *Channel) {
-	pkt, err := channel.receive_packet()
+	var (
+		req_header path_header
+		res_header path_header
+	)
+
+	_, err := channel.ReceivePacket(&req_header, nil)
 	if err != nil {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
-	priority := pkt.netpath.Priority()
-	if pkt.hdr.Priority < priority {
-		priority = pkt.hdr.Priority
+	priority := req_header.netpath.Priority()
+	if req_header.Priority < priority {
+		priority = req_header.Priority
 	}
 
-	err = channel.send_packet(&pkt_t{
-		hdr: pkt_hdr_t{
-			End:      true,
-			Priority: priority,
-		},
-		netpath: pkt.netpath,
-	})
+	res_header = path_header{
+		end:      true,
+		netpath:  req_header.netpath,
+		Priority: priority,
+	}
+
+	_, err = channel.SendPacket(&res_header, nil)
 	if err != nil {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
-	paths, err := h.sw.decode_net_paths(pkt.hdr.Paths)
+	paths, err := h.sw.decode_net_paths(req_header.Paths)
 	if err == nil {
 		for _, np := range paths {
-			pkt.peer.add_net_path(np)
+			channel.Peer().add_net_path(np)
 		}
 	}
 }

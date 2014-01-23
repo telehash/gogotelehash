@@ -39,7 +39,7 @@ func (c *channel_stateless_t) will_send_packet(pkt *pkt_t) error {
 		return ErrPeerBroken
 	}
 
-	pkt.hdr.Type = c.channel.options.Type
+	pkt.priv_hdr.Type = c.channel.options.Type
 
 	return nil
 }
@@ -55,13 +55,13 @@ func (c *channel_stateless_t) push_rcv_pkt(pkt *pkt_t) error {
 		err error
 	)
 
-	if pkt.hdr.Ack.IsSet() {
+	if pkt.priv_hdr.Ack.IsSet() {
 		// should not have ack
 		err = errInvalidPkt
 		goto EXIT
 	}
 
-	if pkt.hdr.Seq.IsSet() {
+	if pkt.priv_hdr.Seq.IsSet() {
 		// should not have seq
 		err = errInvalidPkt
 		goto EXIT

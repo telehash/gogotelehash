@@ -128,11 +128,13 @@ func (s *Switch) listen(t net.Transport) {
 			continue
 		}
 
-		pkt, err := parse_pkt(buf[:n], nil, &net_path{Network: network, Address: addr})
+		pkt, err := decode_packet(buf[:n])
 		if err != nil {
 			// drop
+			packet_pool_release(pkt)
 			continue
 		}
+		pkt.netpath = &net_path{Network: network, Address: addr}
 
 		err = s.rcv_pkt(pkt)
 		if err != nil {
@@ -252,7 +254,8 @@ func (s *Switch) snd_pkt(pkt *pkt_t) error {
 		return ErrInvalidNetwork
 	}
 
-	data, err := pkt.format_pkt()
+	data, err := encode_packet(pkt)
+	defer buffer_pool_release(data)
 	if err != nil {
 		return err
 	}

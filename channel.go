@@ -99,6 +99,10 @@ func (c *Channel) To() Hashname {
 	return c.options.To
 }
 
+func (c *Channel) Peer() *Peer {
+	return c.line.peer
+}
+
 func (c *Channel) Id() string {
 	return c.options.Id
 }
@@ -111,18 +115,28 @@ func (c *Channel) Reliablility() Reliablility {
 	return c.options.Reliablility
 }
 
-func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
-	pkt := &pkt_t{}
+func (c *Channel) SendPacket(hdr interface{}, body []byte) (int, error) {
+	pkt := packet_pool_acquire()
 
 	if hdr != nil {
-		custom, err := json.Marshal(hdr)
-		if err != nil {
-			return 0, err
+		pkt.hdr_value = hdr
+
+		if special, ok := hdr.(ChannelErrHeader); ok {
+			pkt.priv_hdr.Err = special.Err()
 		}
-		pkt.hdr.Custom = json.RawMessage(custom)
+
+		if special, ok := hdr.(ChannelEndHeader); ok {
+			pkt.priv_hdr.End = special.End()
+		}
+
+		if special, ok := hdr.(channelNetPathHeader); ok {
+			pkt.netpath = special.get_net_path()
+		}
 	}
 
-	pkt.body = body
+	if body != nil {
+		pkt.body = body
+	}
 
 	err := c.send_packet(pkt)
 	if err != nil {
@@ -132,8 +146,13 @@ func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
 	return len(body), nil
 }
 
-func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
+func (c *Channel) ReceivePacket(hdr interface{}, body []byte) (int, error) {
+	var (
+		n int
+	)
+
 	pkt, err := c.receive_packet()
+	defer packet_pool_release(pkt)
 	if err != nil {
 		return 0, err
 	}
@@ -146,14 +165,34 @@ func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
 		n = len(pkt.body)
 	}
 
-	if len(pkt.hdr.Custom) > 0 {
-		err = json.Unmarshal([]byte(pkt.hdr.Custom), hdr)
+	if hdr != nil {
+		err = json.Unmarshal(pkt.hdr, hdr)
 		if err != nil {
 			return 0, err
+		}
+
+		if special, ok := hdr.(channelNetPathHeader); ok {
+			special.set_net_path(pkt.netpath)
 		}
 	}
 
 	return n, nil
+}
+
+func (c *Channel) Send(hdr interface{}, body []byte) (int, error) {
+	if hdr != nil {
+		hdr = &pkt_hdr_app{Custom: hdr}
+	}
+
+	return c.SendPacket(hdr, body)
+}
+
+func (c *Channel) Receive(hdr interface{}, body []byte) (n int, err error) {
+	if hdr != nil {
+		hdr = &pkt_hdr_app{Custom: hdr}
+	}
+
+	return c.ReceivePacket(hdr, body)
 }
 
 func (c *Channel) Write(b []byte) (n int, err error) {
@@ -165,18 +204,23 @@ func (c *Channel) Read(b []byte) (n int, err error) {
 }
 
 func (c *Channel) Close() error {
-	return c.send_packet(&pkt_t{hdr: pkt_hdr_t{End: true}})
+	_, err := c.SendPacket(&channel_basic_end_header{}, nil)
+	if err != nil && err != ErrSendOnClosedChannel {
+		panic(err)
+	}
+	return err
 }
 
 func (c *Channel) Fatal(err error) error {
-	return c.send_packet(&pkt_t{hdr: pkt_hdr_t{End: true, Err: err.Error()}})
+	_, err = c.SendPacket(&channel_basic_err_header{err.Error()}, nil)
+	return err
 }
 
 func (c *Channel) send_packet(p *pkt_t) error {
 	if c == nil {
 		return ErrChannelBroken
 	}
-	cmd := cmd_snd_pkt{c, c.line, p}
+	cmd := cmd_snd_pkt{c, c.line, p, false}
 	return c.sw.reactor.Call(&cmd)
 }
 
@@ -245,7 +289,7 @@ func (c *Channel) pop_rcv_pkt() (*pkt_t, error) {
 		return pkt, err
 	}
 
-	if pkt.hdr.End {
+	if pkt.priv_hdr.End {
 		c.read_end = true
 	}
 
@@ -256,14 +300,15 @@ func (c *Channel) push_rcv_pkt(pkt *pkt_t) error {
 	err := c.imp.push_rcv_pkt(pkt)
 
 	// mark the end pkt
-	if pkt.hdr.End {
+	if pkt.priv_hdr.End {
 		c.rcv_end = true
-		if pkt.hdr.Err != "" {
-			c.rcv_err = pkt.hdr.Err
-		}
+	}
+	if pkt.priv_hdr.Err != "" {
+		c.rcv_end = true
+		c.rcv_err = pkt.priv_hdr.Err
 	}
 
-	c.log.Debugf("rcv pkt: hdr=%+v", pkt.hdr)
+	// c.log.Debugf("rcv pkt: hdr=%+v", pkt.hdr)
 
 	if err == nil {
 		if c.broken_timer == nil {
@@ -290,13 +335,13 @@ func (c *Channel) will_send_packet(pkt *pkt_t) error {
 		return ErrSendOnClosedChannel
 	}
 
-	pkt.hdr.C = c.options.Id
+	pkt.priv_hdr.C = c.options.Id
 
 	return c.imp.will_send_packet(pkt)
 }
 
 func (c *Channel) did_send_packet(pkt *pkt_t) {
-	if pkt.hdr.End {
+	if pkt.priv_hdr.End {
 		c.snd_end = true
 	}
 
