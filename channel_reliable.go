@@ -66,13 +66,13 @@ func (c *channel_reliable_t) will_send_packet(pkt *pkt_t) error {
 		return ErrPeerBroken
 	}
 
-	pkt.hdr.Seq = c.snd_last_seq.Incr()
-	pkt.hdr.Miss = c.miss
-	pkt.hdr.Ack = c.read_last_seq
+	pkt.priv_hdr.Seq = c.snd_last_seq.Incr()
+	pkt.priv_hdr.Miss = c.miss
+	pkt.priv_hdr.Ack = c.read_last_seq
 	if !c.snd_first_pkt {
 		c.snd_first_pkt = true
 		if c.channel.initiator {
-			pkt.hdr.Type = c.channel.options.Type
+			pkt.priv_hdr.Type = c.channel.options.Type
 		}
 	}
 
@@ -85,8 +85,8 @@ func (c *channel_reliable_t) did_send_packet(pkt *pkt_t) {
 	if c.channel.rcv_end {
 		c.snd_end_ack = true
 	}
-	c.snd_last_ack = pkt.hdr.Ack
-	c.snd_last_seq = pkt.hdr.Seq
+	c.snd_last_ack = pkt.priv_hdr.Ack
+	c.snd_last_seq = pkt.priv_hdr.Seq
 	c.snd_inflight++
 	c.snd_buf = append(c.snd_buf, pkt)
 	c.rcv_unacked = 0
@@ -105,14 +105,14 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 		buf_idx int = -1
 	)
 
-	if pkt.hdr.Ack.IsSet() {
+	if pkt.priv_hdr.Ack.IsSet() {
 		// handle ack
 		c._rcv_ack(pkt)
 	}
 
-	if !pkt.hdr.Seq.IsSet() {
+	if !pkt.priv_hdr.Seq.IsSet() {
 		// pkt is just an ack
-		// c.log.Debugf("rcv ack: hdr=%+v", pkt.hdr)
+		// c.log.Debugf("rcv ack: hdr=%+v", pkt.priv_hdr)
 		return nil
 	}
 
@@ -126,22 +126,22 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 		return nil
 	}
 
-	if c.channel.rcv_end && pkt.hdr.Seq > c.rcv_last_seq {
+	if c.channel.rcv_end && pkt.priv_hdr.Seq > c.rcv_last_seq {
 		// drop packet sent after `end`
 		return nil
 	}
 
 	// check if pkt is a duplicate
-	if pkt.hdr.Seq <= c.read_last_seq {
+	if pkt.priv_hdr.Seq <= c.read_last_seq {
 		// already read (duplicate)
 		return errDuplicatePacket
 	}
 	for idx, p := range c.rcv_buf {
-		if p.hdr.Seq == pkt.hdr.Seq {
+		if p.priv_hdr.Seq == pkt.priv_hdr.Seq {
 			// already in buffer
 			return errDuplicatePacket
 		}
-		if p.hdr.Seq > pkt.hdr.Seq {
+		if p.priv_hdr.Seq > pkt.priv_hdr.Seq {
 			buf_idx = idx
 			break
 		}
@@ -161,8 +161,8 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 	}
 
 	// record last received seq
-	if c.rcv_last_seq < pkt.hdr.Seq {
-		c.rcv_last_seq = pkt.hdr.Seq
+	if c.rcv_last_seq < pkt.priv_hdr.Seq {
+		c.rcv_last_seq = pkt.priv_hdr.Seq
 	}
 
 	c._update_miss_list()
@@ -171,28 +171,30 @@ func (c *channel_reliable_t) push_rcv_pkt(pkt *pkt_t) error {
 }
 
 func (c *channel_reliable_t) _rcv_ack(pkt *pkt_t) {
-	if pkt.hdr.Ack > c.rcv_last_ack {
-		c.rcv_last_ack = pkt.hdr.Ack
+	if pkt.priv_hdr.Ack > c.rcv_last_ack {
+		c.rcv_last_ack = pkt.priv_hdr.Ack
 	}
 
 	snd_buf := make([]*pkt_t, 0, 100)
 
+OUTER:
 	for _, p := range c.snd_buf {
-		if p.hdr.Seq > pkt.hdr.Ack {
+		if p.priv_hdr.Seq > pkt.priv_hdr.Ack {
 			// not acked yet keep in buffer
 			snd_buf = append(snd_buf, p)
-			continue
+			continue OUTER
 		}
 
-		for _, missed := range pkt.hdr.Miss {
-			if p.hdr.Seq == missed {
+		for _, missed := range pkt.priv_hdr.Miss {
+			if p.priv_hdr.Seq == missed {
 				// missing keep
 				snd_buf = append(snd_buf, p)
-				break
+				continue OUTER
 			}
 		}
 
 		// other wise drop
+		packet_pool_release(p)
 	}
 
 	if len(snd_buf) > 0 && c.miss_timer == nil {
@@ -211,7 +213,7 @@ func (c *channel_reliable_t) _update_miss_list() {
 	last := c.read_last_seq.Incr() // last unknown seq
 
 	for i := n - 1; i >= 0; i-- {
-		next := c.rcv_buf[i].hdr.Seq
+		next := c.rcv_buf[i].priv_hdr.Seq
 		for j := last; j < next; j = j.Incr() {
 			c.miss = append(c.miss, j)
 		}
@@ -225,7 +227,7 @@ func (c *channel_reliable_t) can_pop_rcv_pkt() bool {
 		return false
 	}
 
-	if c.rcv_buf[0].hdr.Seq == c.read_last_seq.Incr() {
+	if c.rcv_buf[0].priv_hdr.Seq == c.read_last_seq.Incr() {
 		return true
 	}
 
@@ -242,7 +244,7 @@ func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
 	copy(c.rcv_buf, c.rcv_buf[1:])
 	c.rcv_buf = c.rcv_buf[:len(c.rcv_buf)-1]
 
-	c.read_last_seq = pkt.hdr.Seq
+	c.read_last_seq = pkt.priv_hdr.Seq
 	c.rcv_unacked++
 
 	if c.ack_timer == nil {
@@ -282,8 +284,8 @@ func (c *channel_reliable_t) _get_missing_packets(now time.Time) []*pkt_t {
 	copy(miss, c.miss)
 
 	for _, pkt := range buf {
-		pkt.hdr.Ack = read_last_seq
-		pkt.hdr.Miss = miss
+		pkt.priv_hdr.Ack = read_last_seq
+		pkt.priv_hdr.Miss = miss
 	}
 
 	return buf
@@ -321,13 +323,13 @@ func (cmd *cmd_channel_ack) Exec(sw *Switch) error {
 	)
 
 	pkt := &pkt_t{}
-	pkt.hdr.C = channel.options.Id
-	pkt.hdr.Ack = imp.read_last_seq
-	pkt.hdr.Miss = make([]seq_t, len(imp.miss))
-	copy(pkt.hdr.Miss, imp.miss)
+	pkt.priv_hdr.C = channel.options.Id
+	pkt.priv_hdr.Ack = imp.read_last_seq
+	pkt.priv_hdr.Miss = make([]seq_t, len(imp.miss))
+	copy(pkt.priv_hdr.Miss, imp.miss)
 
 	{
-		cmd := cmd_snd_pkt{nil, channel.line, pkt}
+		cmd := cmd_snd_pkt{channel, channel.line, pkt, true}
 		cmd.Exec(sw) // do we care about err?
 	}
 
@@ -337,7 +339,7 @@ func (cmd *cmd_channel_ack) Exec(sw *Switch) error {
 
 	imp.rcv_unacked = 0
 	imp.snd_last_ack_at = time.Now()
-	imp.snd_last_ack = pkt.hdr.Ack
+	imp.snd_last_ack = pkt.priv_hdr.Ack
 
 	imp.ack_timer.Reset(time.Second)
 	return nil
@@ -367,19 +369,19 @@ func (cmd *cmd_channel_snd_miss) Exec(sw *Switch) error {
 
 	if imp.rcv_last_ack.IsSet() {
 		for i, pkt := range snd_buf {
-			if pkt.hdr.Seq >= imp.rcv_last_ack {
+			if pkt.priv_hdr.Seq >= imp.rcv_last_ack {
 				break
 			}
 
 			last_miss = i
-			cmd := cmd_snd_pkt{nil, channel.line, pkt}
+			cmd := cmd_snd_pkt{channel, channel.line, pkt, true}
 			cmd.Exec(sw) // do we care about err?
 		}
 	}
 
 	if idx := len(snd_buf) - 1; last_miss < idx {
 		pkt := snd_buf[idx]
-		cmd := cmd_snd_pkt{nil, channel.line, pkt}
+		cmd := cmd_snd_pkt{channel, channel.line, pkt, true}
 		cmd.Exec(sw) // do we care about err?
 	}
 

@@ -1,7 +1,6 @@
 package telehash
 
 import (
-	"errors"
 	"fmt"
 	"github.com/fd/go-util/log"
 	"strings"
@@ -14,6 +13,14 @@ type seek_handler struct {
 	log log.Logger
 }
 
+type seek_header struct {
+	Seek string   `json:"seek,omitempty"`
+	See  []string `json:"see,omitempty"`
+	end  bool
+}
+
+func (hdr *seek_header) End() bool { return hdr.end }
+
 func (h *seek_handler) init(sw *Switch) {
 	h.sw = sw
 	h.log = sw.log.Sub(log.DEFAULT, "seek-handler")
@@ -22,13 +29,14 @@ func (h *seek_handler) init(sw *Switch) {
 }
 
 func (h *seek_handler) Seek(via, seek Hashname) error {
+	var (
+		req_header seek_header
+		res_header seek_header
+	)
+
 	h.log.Debugf("seeking=%s via=%s", seek.Short(), via.Short())
 
-	pkt := &pkt_t{
-		hdr: pkt_hdr_t{
-			Seek: seek.String(),
-		},
-	}
+	req_header.Seek = seek.String()
 
 	options := ChannelOptions{To: via, Type: "seek", Reliablility: UnreliableChannel}
 	channel, err := h.sw.open_channel(options)
@@ -37,24 +45,22 @@ func (h *seek_handler) Seek(via, seek Hashname) error {
 	}
 	defer channel.Close()
 
-	err = channel.send_packet(pkt)
+	_, err = channel.SendPacket(&req_header, nil)
 	if err != nil {
 		return err
 	}
 
-	defer channel.Fatal(errors.New("timeout"))
-
 	channel.SetReceiveDeadline(time.Now().Add(15 * time.Second))
 
-	reply, err := channel.receive_packet()
+	_, err = channel.ReceivePacket(&res_header, nil)
 	if err != nil {
 		Log.Debugf("failed to send seek to %s (error: %s)", via.Short(), err)
 		return err
 	}
 
-	h.log.Debugf("rcv seek: see=%+v", reply.hdr.See)
+	h.log.Debugf("rcv seek: see=%+v", res_header.See)
 
-	for _, rec := range reply.hdr.See {
+	for _, rec := range res_header.See {
 		fields := strings.Split(rec, ",")
 
 		hashname, err := HashnameFromString(fields[0])
@@ -161,12 +167,17 @@ func (h *seek_handler) send_seek_cmd(via, seek Hashname, wg *sync.WaitGroup) {
 }
 
 func (h *seek_handler) serve_seek(channel *Channel) {
-	pkt, err := channel.receive_packet()
+	var (
+		req_header seek_header
+		res_header seek_header
+	)
+
+	_, err := channel.ReceivePacket(&req_header, nil)
 	if err != nil {
 		return // drop
 	}
 
-	seek, err := HashnameFromString(pkt.hdr.Seek)
+	seek, err := HashnameFromString(req_header.Seek)
 	if err != nil {
 		Log.Debug(err)
 	}
@@ -211,12 +222,10 @@ func (h *seek_handler) serve_seek(channel *Channel) {
 
 	h.log.Debugf("rcv seek: see=%+v closest=%+v", see, closest)
 
-	err = channel.send_packet(&pkt_t{
-		hdr: pkt_hdr_t{
-			See: see,
-			End: true,
-		},
-	})
+	res_header.See = see
+	res_header.end = true
+
+	_, err = channel.SendPacket(&res_header, nil)
 	if err != nil {
 		return
 	}

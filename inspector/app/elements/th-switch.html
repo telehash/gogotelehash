@@ -18,7 +18,7 @@
   var debug = function(){console.log.apply(console,arguments)};
   // var debug = function(){};
 
-  thjs.debug(debug);
+  // thjs.debug(debug);
 
 </script>
 
@@ -123,6 +123,8 @@
               return;
             }
 
+            debug("ONLINE");
+
             setInterval(function(){
 
               var lines = [];
@@ -138,6 +140,27 @@
       },
       // instance was removed from the document
       leftView: function() { },
+
+      stats: function(hn, callback){
+        var host = me.whois(hn);
+        if(!host) { callback(null); return }
+
+        host.start("_inspect/stats", {}, function(err, arg, chan, cb){
+          debug("STATS:", [err, arg, chan, cb]);
+          cb();
+        });
+      },
+
+      seek: function(hn, callback){
+        var host = me.whois(hn);
+        if(!host) { callback("unknown host: "+hn); return }
+
+        me.seek(hn, function(err, seen){
+          if(err) return callback(err);
+
+          callback(null);
+        });
+      }
     });
 
   })();

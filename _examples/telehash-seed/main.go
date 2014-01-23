@@ -39,7 +39,7 @@ func main() {
 		Transports: []thnet.Transport{
 			&ipv4.Transport{Addr: addr},
 			&ipv6.Transport{Addr: addr},
-			&http.Transport{PublicURL: "http://95.85.6.236:42425/", ListenAddr: ":42425"},
+			&http.Transport{PublicURL: "http://95.85.6.236:42425", ListenAddr: ":42425"},
 		},
 	}
 

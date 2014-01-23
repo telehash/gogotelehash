@@ -102,16 +102,15 @@ func (p *private_line_key) compose_open_pkt() (*pkt_t, error) {
 		return nil, err
 	}
 
-	ipkt := pkt_t{
-		hdr: pkt_hdr_t{
-			To:   p.public_line_key.hashname.String(),
-			At:   time.Now().UnixNano() / 1000000,
-			Line: p.id,
-		},
-		body: rsa_pubkey_der,
-	}
+	ipkt := packet_pool_acquire()
+	defer packet_pool_release(ipkt)
+	ipkt.priv_hdr.To = p.public_line_key.hashname.String()
+	ipkt.priv_hdr.At = time.Now().UnixNano() / int64(time.Millisecond)
+	ipkt.priv_hdr.Line = p.id
+	ipkt.body = rsa_pubkey_der
 
-	ipkt_data, err := ipkt.format_pkt()
+	ipkt_data, err := encode_packet(ipkt)
+	defer buffer_pool_release(ipkt_data)
 	if err != nil {
 		return nil, err
 	}
@@ -131,25 +130,22 @@ func (p *private_line_key) compose_open_pkt() (*pkt_t, error) {
 		return nil, err
 	}
 
-	opkt := &pkt_t{
-		hdr: pkt_hdr_t{
-			Type: "open",
-			Open: base64.StdEncoding.EncodeToString(p.public_line_key.ecc_pubkey_enc),
-			Sig:  base64.StdEncoding.EncodeToString(ipkt_data_sig_enc),
-			Iv:   hex.EncodeToString(iv),
-		},
-		body: ipkt_data_enc,
-	}
+	opkt := packet_pool_acquire()
+	opkt.priv_hdr.Type = "open"
+	opkt.priv_hdr.Open = base64.StdEncoding.EncodeToString(p.public_line_key.ecc_pubkey_enc)
+	opkt.priv_hdr.Sig = base64.StdEncoding.EncodeToString(ipkt_data_sig_enc)
+	opkt.priv_hdr.Iv = hex.EncodeToString(iv)
+	opkt.body = ipkt_data_enc
 
 	return opkt, nil
 }
 
 func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_key, error) {
-	if opkt.hdr.Type != "open" {
+	if opkt.priv_hdr.Type != "open" {
 		return nil, errInvalidPkt
 	}
 
-	iv, err := hex.DecodeString(opkt.hdr.Iv)
+	iv, err := hex.DecodeString(opkt.priv_hdr.Iv)
 	if err != nil {
 		return nil, err
 	}
@@ -157,14 +153,14 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_key, e
 		return nil, errors.New("open: invalid iv")
 	}
 
-	ipkt_data_sig_enc, err := base64.StdEncoding.DecodeString(opkt.hdr.Sig)
+	ipkt_data_sig_enc, err := base64.StdEncoding.DecodeString(opkt.priv_hdr.Sig)
 	if err != nil {
 		return nil, err
 	}
 
 	ipkt_data_enc := opkt.body
 
-	ecc_pubkey_enc, err := base64.StdEncoding.DecodeString(opkt.hdr.Open)
+	ecc_pubkey_enc, err := base64.StdEncoding.DecodeString(opkt.priv_hdr.Open)
 	if err != nil {
 		return nil, err
 	}
@@ -187,22 +183,25 @@ func decompose_open_pkt(local *rsa.PrivateKey, opkt *pkt_t) (*public_line_key, e
 		return nil, err
 	}
 
-	ipkt, err := parse_pkt(ipkt_data, opkt.peer, opkt.netpath)
+	ipkt, err := decode_packet(ipkt_data)
+	defer packet_pool_release(ipkt)
 	if err != nil {
 		return nil, err
 	}
+	ipkt.peer = opkt.peer
+	ipkt.netpath = opkt.netpath
 
-	hex_line_id := ipkt.hdr.Line
-	to_hashname_hex := ipkt.hdr.To
+	hex_line_id := ipkt.priv_hdr.Line
+	to_hashname_hex := ipkt.priv_hdr.To
 	rsa_pubkey_der := ipkt.body
-	at := time.Unix(ipkt.hdr.At/1000, ipkt.hdr.At%1000*1000000)
+	at := time.Unix(ipkt.priv_hdr.At/1000, ipkt.priv_hdr.At%1000*1000000)
 
 	to_hashname, err := HashnameFromString(to_hashname_hex)
 	if err != nil {
 		return nil, err
 	}
 
-	bin_line_id, err := hex.DecodeString(ipkt.hdr.Line)
+	bin_line_id, err := hex.DecodeString(ipkt.priv_hdr.Line)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +284,8 @@ func line_activate(prv *private_line_key, pub *public_line_key) (*shared_line_ke
 }
 
 func (l *shared_line_key) enc(i *pkt_t) (*pkt_t, error) {
-	ipkt_data, err := i.format_pkt()
+	ipkt_data, err := encode_packet(i)
+	defer buffer_pool_release(ipkt_data)
 	if err != nil {
 		return nil, err
 	}
@@ -300,26 +300,22 @@ func (l *shared_line_key) enc(i *pkt_t) (*pkt_t, error) {
 		return nil, err
 	}
 
-	o := &pkt_t{
-		hdr: pkt_hdr_t{
-			Type: "line",
-			Line: l.pub_half.id,
-			Iv:   hex.EncodeToString(iv),
-		},
-		body:    ipkt_data_enc,
-		peer:    i.peer,
-		netpath: i.netpath,
-	}
-
+	o := packet_pool_acquire()
+	o.priv_hdr.Type = "line"
+	o.priv_hdr.Line = l.pub_half.id
+	o.priv_hdr.Iv = hex.EncodeToString(iv)
+	o.body = ipkt_data_enc
+	o.peer = i.peer
+	o.netpath = i.netpath
 	return o, nil
 }
 
 func (l *shared_line_key) dec(i *pkt_t) (*pkt_t, error) {
-	if i.hdr.Type != "line" {
+	if i.priv_hdr.Type != "line" {
 		return nil, errInvalidPkt
 	}
 
-	iv, err := hex.DecodeString(i.hdr.Iv)
+	iv, err := hex.DecodeString(i.priv_hdr.Iv)
 	if err != nil {
 		return nil, errInvalidPkt
 	}
@@ -332,10 +328,13 @@ func (l *shared_line_key) dec(i *pkt_t) (*pkt_t, error) {
 		return nil, errInvalidPkt
 	}
 
-	ipkt, err := parse_pkt(ipkt_data, i.peer, i.netpath)
+	ipkt, err := decode_packet(ipkt_data)
 	if err != nil {
+		packet_pool_release(ipkt)
 		return nil, errInvalidPkt
 	}
+	ipkt.peer = i.peer
+	ipkt.netpath = i.netpath
 
 	return ipkt, nil
 }

@@ -85,8 +85,8 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 		peer *Peer
 	)
 
-	if pkt.hdr.Type == "line" {
-		line := sw.active_lines[pkt.hdr.Line]
+	if pkt.priv_hdr.Type == "line" {
+		line := sw.active_lines[pkt.priv_hdr.Line]
 
 		if line == nil {
 			sw.log.Errorf("line: error: %s", errUnknownLine)
@@ -97,7 +97,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 		return nil
 	}
 
-	if pkt.hdr.Type == "open" {
+	if pkt.priv_hdr.Type == "open" {
 		pub, err := decompose_open_pkt(sw.Key, pkt)
 		if err != nil {
 			sw.log.Errorf("open: error: %s", err)
@@ -145,38 +145,37 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 	ipkt.peer = l.peer
 	ipkt.netpath = opkt.netpath
 
-	if ipkt.hdr.C != "" && ipkt.hdr.Type == "relay" {
-		l.log.Debugf("rcv: %+v %q", ipkt.hdr, ipkt.body)
+	if ipkt.priv_hdr.C != "" && ipkt.priv_hdr.Type == "relay" {
 		l.sw.relay_handler.rcv(ipkt)
 		return nil
 	}
 
-	if ipkt.hdr.C == "" {
+	if ipkt.priv_hdr.C == "" {
 		return errInvalidPkt
 	}
 
 	// send pkt to existing channel
-	if channel := l.channels[ipkt.hdr.C]; channel != nil {
+	if channel := l.channels[ipkt.priv_hdr.C]; channel != nil {
 		l.peer.add_net_path(ipkt.netpath)
-		l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
+		channel.log.Debugf("rcv pkt:\nhdr=%s\nprv-hdr=%+v", ipkt.hdr, ipkt.priv_hdr)
 		return channel.push_rcv_pkt(ipkt)
 	}
 
 	// open new channel
-	if ipkt.hdr.Type == "" {
+	if ipkt.priv_hdr.Type == "" {
 		return errInvalidPkt
 	}
 
 	reliablility := ReliableChannel
-	if !ipkt.hdr.Seq.IsSet() {
+	if !ipkt.priv_hdr.Seq.IsSet() {
 		reliablility = UnreliableChannel
 	}
 
-	if reliablility == ReliableChannel && ipkt.hdr.Seq.Get() != 0 {
+	if reliablility == ReliableChannel && ipkt.priv_hdr.Seq.Get() != 0 {
 		return errInvalidPkt
 	}
 
-	options := ChannelOptions{To: l.peer.hashname, Id: ipkt.hdr.C, Type: ipkt.hdr.Type, Reliablility: reliablility}
+	options := ChannelOptions{To: l.peer.hashname, Id: ipkt.priv_hdr.C, Type: ipkt.priv_hdr.Type, Reliablility: reliablility}
 	channel, err := make_channel(l.sw, l, false, options)
 	if err != nil {
 		return err
@@ -189,14 +188,13 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 	l.channels[channel.Id()] = channel
 	l.sw.met_channels.Inc(1)
 
-	l.log.Debugf("rcv pkt: addr=%s hdr=%+v", l.peer, ipkt.hdr)
-
 	l.log.Debugf("channel[%s:%s](%s -> %s): opened (initiator=false)",
 		short_hash(channel.Id()),
 		channel.Type(),
 		l.peer.Hashname().Short(),
 		l.sw.hashname.Short())
 
+	channel.log.Debugf("rcv pkt:\nhdr=%s\nprv-hdr=%+v", ipkt.hdr, ipkt.priv_hdr)
 	err = channel.push_rcv_pkt(ipkt)
 	if err != nil {
 		return err
@@ -300,9 +298,10 @@ func (cmd *cmd_line_opened) Exec(sw *Switch) error {
 }
 
 type cmd_snd_pkt struct {
-	channel *Channel
-	line    *line_t
-	pkt     *pkt_t
+	channel        *Channel
+	line           *line_t
+	pkt            *pkt_t
+	bypass_channel bool
 }
 
 func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
@@ -314,7 +313,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
 		err     error
 	)
 
-	if channel != nil {
+	if channel != nil && !cmd.bypass_channel {
 		if !channel.can_snd_pkt() {
 			sw.reactor.Defer(&channel.snd_backlog)
 			return nil
@@ -328,6 +327,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
 	ipkt.peer = line.peer
 
 	opkt, err = line.shr_key.enc(ipkt)
+	defer packet_pool_release(opkt)
 	if err != nil {
 		return err
 	}
@@ -346,12 +346,14 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
 		return err
 	}
 
-	if channel != nil {
+	if channel != nil && !cmd.bypass_channel {
 		channel.did_send_packet(ipkt)
-		channel.log.Debugf("snd pkt: hdr=%+v", ipkt.hdr)
+	}
+	if channel != nil {
+		channel.log.Debugf("snd pkt:\nhdr=%s\nprv-hdr=%+v", ipkt.hdr, ipkt.priv_hdr)
 	}
 
-	line.log.Debugf("snd pkt: hdr=%+v", opkt.hdr)
+	// line.log.Debugf("snd pkt:\nhdr=%s\nprv-hdr=%+v", opkt.hdr, opkt.priv_hdr)
 	return nil
 }
 

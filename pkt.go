@@ -4,117 +4,165 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
-	"fmt"
 )
 
 type pkt_t struct {
-	hdr     pkt_hdr_t
-	body    []byte
+	buf       []byte
+	hdr       []byte
+	hdr_value interface{}
+	body      []byte
+
+	priv_hdr struct {
+		Type   string  `json:"type,omitempty"`
+		Line   string  `json:"line,omitempty"`
+		Iv     string  `json:"iv,omitempty"`
+		Open   string  `json:"open,omitempty"`
+		Sig    string  `json:"sig,omitempty"`
+		C      string  `json:"c,omitempty"`
+		To     string  `json:"to,omitempty"`
+		At     int64   `json:"at,omitempty"`
+		Family string  `json:"family,omitempty"`
+		Seq    seq_t   `json:"seq,omitempty"`
+		Ack    seq_t   `json:"ack,omitempty"`
+		Miss   []seq_t `json:"miss,omitempty"`
+		End    bool    `json:"end,omitempty"`
+		Err    string  `json:"err,omitempty"`
+
+		// Seek     string          `json:"seek,omitempty"`
+		// See      []string        `json:"see,omitempty"`
+		// Peer     string          `json:"peer,omitempty"`
+		// Paths    raw_net_paths   `json:"paths,omitempty"`
+		// Priority int             `json:"priority,omitempty"`
+		// Custom   json.RawMessage `json:"_,omitempty"`
+	}
+
 	peer    *Peer
 	netpath *net_path
 }
 
-type pkt_hdr_t struct {
-	Type     string          `json:"type,omitempty"`
-	Line     string          `json:"line,omitempty"`
-	Iv       string          `json:"iv,omitempty"`
-	Open     string          `json:"open,omitempty"`
-	Sig      string          `json:"sig,omitempty"`
-	C        string          `json:"c,omitempty"`
-	To       string          `json:"to,omitempty"`
-	At       int64           `json:"at,omitempty"`
-	Family   string          `json:"family,omitempty"`
-	Seq      seq_t           `json:"seq,omitempty"`
-	Ack      seq_t           `json:"ack,omitempty"`
-	Miss     []seq_t         `json:"miss,omitempty"`
-	End      bool            `json:"end,omitempty"`
-	Err      string          `json:"err,omitempty"`
-	Seek     string          `json:"seek,omitempty"`
-	See      []string        `json:"see,omitempty"`
-	Peer     string          `json:"peer,omitempty"`
-	Paths    raw_net_paths   `json:"paths,omitempty"`
-	Priority int             `json:"priority,omitempty"`
-	Custom   json.RawMessage `json:"_,omitempty"`
-}
-
-func (p *pkt_t) format_pkt() ([]byte, error) {
-	if p == nil {
-		panic("p cannot be nil")
-	}
-
+func encode_packet(pkt *pkt_t) ([]byte, error) {
 	var (
-		data = make([]byte, 0, 1500)
-		buf  = bytes.NewBuffer(data)
-		err  error
-		l    int
+		header_data = buffer_pool_acquire()[:0]
+		buf         *bytes.Buffer
+		offset      int
+		err         error
 	)
 
-	// make room for the length
-	buf.WriteByte(0)
-	buf.WriteByte(0)
+	{ // write private headers
+		buf = bytes.NewBuffer(header_data)
+		err = json.NewEncoder(buf).Encode(&pkt.priv_hdr)
+		if err != nil {
+			buffer_pool_release(header_data)
+			return nil, err
+		}
 
-	// write the header
-	err = json.NewEncoder(buf).Encode(p.hdr)
-	if err != nil {
-		return nil, err
+		offset = buf.Len() - 1
+		header_data = header_data[:offset]
 	}
 
-	// get the header length
-	l = buf.Len() - 2
+	if pkt.hdr_value != nil {
+		offset -= 1
+		buf = bytes.NewBuffer(header_data[offset:offset])
+		err = json.NewEncoder(buf).Encode(pkt.hdr_value)
+		if err != nil {
+			buffer_pool_release(header_data)
+			return nil, err
+		}
+		if header_data[offset] != '{' {
+			buffer_pool_release(header_data)
+			return nil, errInvalidPkt
+		}
 
-	// write the body
-	if len(p.body) > 0 {
-		buf.Write(p.body)
+		if buf.Len() == 3 {
+			header_data[offset] = '}'
+			offset += 1
+		} else {
+			header_data[offset] = ','
+			offset += buf.Len() - 1
+		}
+
+		header_data = header_data[:offset]
 	}
 
-	// get the packet
-	data = buf.Bytes()
-
-	// put the header length
-	binary.BigEndian.PutUint16(data[0:2], uint16(l))
+	data := encode_raw_packet(header_data, pkt.body)
+	buffer_pool_release(header_data)
 
 	return data, nil
 }
 
-func parse_pkt(in []byte, peer *Peer, netpath *net_path) (*pkt_t, error) {
+func encode_raw_packet(hdr, body []byte) []byte {
 	var (
-		hdr_len  int
-		body_len int
-		err      error
-		body     []byte
-		pkt      = &pkt_t{peer: peer, netpath: netpath}
+		len_hdr  = len(hdr)
+		len_body = len(body)
+		buf      = buffer_pool_acquire()
 	)
 
-	if len(in) < 2 {
-		return nil, fmt.Errorf("pkt is too short")
+	binary.BigEndian.PutUint16(buf, uint16(len_hdr))
+	if len_hdr > 0 {
+		copy(buf[2:], hdr)
+	}
+	if len_body > 0 {
+		copy(buf[2+len_hdr:], body)
 	}
 
-	// determin header length
-	hdr_len = int(binary.BigEndian.Uint16(in[:2]))
+	return buf[0 : 2+len_hdr+len_body]
+}
 
-	// determin body length
-	body_len = len(in) - (hdr_len + 2)
-	// Log.Debugf("pkt-len=%d hdr-len=%d body-len=%d", len(in), binary.BigEndian.Uint16(in[:2]), body_len)
-	if body_len < 0 {
-		return nil, fmt.Errorf("pkt is too short")
+func decode_packet(data []byte) (*pkt_t, error) {
+	// get a packet from the pool
+	pkt := packet_pool_acquire()
+
+	// copy the packet data
+	pkt.buf = pkt.buf[:len(data)]
+	copy(pkt.buf, data)
+
+	hdr, body, err := decode_raw_packet(pkt.buf)
+	if err != nil {
+		packet_pool_release(pkt)
+		return nil, err
 	}
 
-	// decode the header
-	if hdr_len > 0 {
-		err = json.NewDecoder(bytes.NewReader(in[2 : hdr_len+2])).Decode(&pkt.hdr)
-		if err != nil {
-			return nil, err
-		}
-	}
+	pkt.hdr = hdr
+	pkt.body = body
 
-	// copy the body
-	if body_len > 0 {
-		body = make([]byte, body_len)
-		copy(body, in[hdr_len+2:])
-		pkt.body = body
-	} else {
-		pkt.body = nil
+	err = json.Unmarshal(pkt.hdr, &pkt.priv_hdr)
+	if err != nil {
+		packet_pool_release(pkt)
+		return nil, err
 	}
 
 	return pkt, nil
+}
+
+func decode_raw_packet(pkt []byte) (hdr, body []byte, err error) {
+	var (
+		len_pkt  = len(pkt)
+		len_hdr  int
+		len_body int
+	)
+
+	if len_pkt == 0 {
+		return nil, nil, nil
+	}
+
+	if len_pkt < 2 {
+		return nil, nil, errInvalidPkt
+	}
+
+	len_hdr = int(binary.BigEndian.Uint16(pkt))
+	len_body = len_pkt - len_hdr - 2
+
+	if len_body < 0 {
+		return nil, nil, errInvalidPkt
+	}
+
+	if len_hdr > 0 {
+		hdr = pkt[2 : 2+len_hdr]
+	}
+
+	if len_body > 0 {
+		body = pkt[2+len_hdr:]
+	}
+
+	return hdr, body, nil
 }

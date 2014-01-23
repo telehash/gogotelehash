@@ -37,7 +37,7 @@ func (h *relay_handler) PopulateStats(s *SwitchStats) {
 func (h *relay_handler) rcv(pkt *pkt_t) {
 	var (
 		err   error
-		to    = pkt.hdr.To
+		to    = pkt.priv_hdr.To
 		to_hn Hashname
 	)
 
@@ -59,12 +59,14 @@ func (h *relay_handler) rcv(pkt *pkt_t) {
 
 func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	go func() {
-		ipkt, err := parse_pkt(opkt.body, nil, &net_path{Network: "relay", Address: &relay_addr{opkt.hdr.C, ZeroHashname, false}})
+		ipkt, err := decode_packet(opkt.body)
 		if err != nil {
 			atomic.AddUint64(&h.num_err_pkt_rcv, 1)
 			h.log.Noticef("error: %s opkt=%+v", err, opkt)
 			return
 		}
+
+		ipkt.netpath = &net_path{Network: "relay", Address: &relay_addr{opkt.priv_hdr.C, ZeroHashname, false}}
 
 		err = h.sw.rcv_pkt(ipkt)
 		if err != nil {
@@ -79,23 +81,29 @@ func (h *relay_handler) rcv_self(opkt *pkt_t) {
 	}()
 }
 
-func (h *relay_handler) rcv_other(opkt *pkt_t, to Hashname) {
+func (h *relay_handler) rcv_other(in *pkt_t, to Hashname) {
 	line := h.sw.lines[to]
 	if line == nil || line.State() != line_opened {
 		return // drop
 	}
 
-	opkt = &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: opkt.hdr.C, To: opkt.hdr.To}, body: opkt.body}
-	cmd := cmd_snd_pkt{nil, line, opkt}
+	out := packet_pool_acquire()
+	out.priv_hdr.Type = "relay"
+	out.priv_hdr.C = in.priv_hdr.C
+	out.priv_hdr.To = in.priv_hdr.To
+	out.body = buffer_pool_acquire()[:len(in.body)]
+	copy(out.body, in.body)
+
+	cmd := cmd_snd_pkt{nil, line, out, true}
 	err := cmd.Exec(h.sw)
 	if err != nil {
 		atomic.AddUint64(&h.num_err_pkt_rly, 1)
-		h.log.Noticef("error: %s opkt=%+v", err, opkt)
+		h.log.Noticef("error: %s out=%+v", err, out)
 		return
 	}
 
 	atomic.AddUint64(&h.num_pkt_rly, 1)
-	h.log.Debugf("rcv-other: %+v %q", opkt.hdr, opkt.body)
+	h.log.Debugf("rcv-other: %+v %q", out.hdr, out.body)
 }
 
 func make_relay_addr() net.Addr {
@@ -197,15 +205,20 @@ REROUTE:
 
 	h.log.Noticef("routing %s", n)
 
-	data, err := pkt.format_pkt()
+	data, err := encode_packet(pkt)
 	if err != nil {
 		atomic.AddUint64(&h.num_err_pkt_snd, 1)
 		h.log.Noticef("error: %s", err)
+		buffer_pool_release(data)
 		return nil
 	}
 
-	opkt := &pkt_t{hdr: pkt_hdr_t{Type: "relay", C: n.C, To: pkt.peer.hashname.String()}, body: data}
-	cmd := cmd_snd_pkt{nil, line, opkt}
+	opkt := packet_pool_acquire()
+	opkt.priv_hdr.Type = "relay"
+	opkt.priv_hdr.C = n.C
+	opkt.priv_hdr.To = pkt.peer.hashname.String()
+	opkt.body = data
+	cmd := cmd_snd_pkt{nil, line, opkt, true}
 	err = cmd.Exec(h.sw)
 	if err != nil {
 		n.via = ZeroHashname
