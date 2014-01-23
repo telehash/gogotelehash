@@ -105,6 +105,10 @@ func encode_raw_packet(hdr, body []byte) []byte {
 		copy(buf[2+len_hdr:], body)
 	}
 
+	if 2+len_hdr+len_body > cap(buf) {
+		Log.Errorf("TRIED TO ENCODE TO LARGE PACKET: len(%d)\n%s\n%x", 2+len_hdr+len_body, hdr, body)
+	}
+
 	return buf[0 : 2+len_hdr+len_body]
 }
 
