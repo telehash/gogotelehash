@@ -205,9 +205,6 @@ func (c *Channel) Read(b []byte) (n int, err error) {
 
 func (c *Channel) Close() error {
 	_, err := c.SendPacket(&channel_basic_end_header{}, nil)
-	if err != nil && err != ErrSendOnClosedChannel {
-		panic(err)
-	}
 	return err
 }
 
