@@ -53,7 +53,7 @@ func (p *Peer) PublicKey() *rsa.PublicKey {
 }
 
 // Set the public key for this peer. Does nothing when the public key is already set.
-func (p *Peer) SetPublicKey(key *rsa.PublicKey) {
+func (p *Peer) set_public_key(key *rsa.PublicKey) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
@@ -174,16 +174,18 @@ func (p *Peer) can_open() bool {
 	return p.pubkey != nil && len(p.paths) > 0 || len(p.via) > 0
 }
 
-func (p *Peer) MustSendPeer() bool {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+func (peer *Peer) FormatSeeAddress() []string {
+	if peer == nil {
+		return nil
+	}
 
-	return p.pubkey == nil && len(p.via) > 0
-}
+	for _, np := range peer.net_paths() {
+		if np.Address.PublishWithSeek() {
+			if fields, err := net.EncodeSee(np.Network, np.Address); err == nil && len(fields) > 0 {
+				return fields
+			}
+		}
+	}
 
-func (p *Peer) HasVia() bool {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
-
-	return len(p.via) > 0
+	return nil
 }

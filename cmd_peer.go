@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/net"
 )
 
 type peer_handler struct {
@@ -52,7 +53,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		}
 	}
 
-	raw_paths, err := h.sw.encode_net_paths(paths)
+	raw_paths, err := encode_net_paths(paths)
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return
@@ -131,7 +132,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	paths := req_header.Paths
 	for _, np := range from_peer.net_paths() {
 		if np.Address.PublishWithConnect() {
-			raw, err := h.sw.encode_net_path(np)
+			raw, err := net.EncodePath(np.Network, np.Address)
 			if err == nil {
 				paths = append(paths, raw)
 			}
@@ -181,10 +182,10 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 	}
 
 	peer := h.sw.GetPeer(hashname, true)
-	peer.SetPublicKey(pubkey)
+	peer.set_public_key(pubkey)
 	peer.AddVia(channel.To())
 
-	paths, err := h.sw.decode_net_paths(req_header.Paths)
+	paths, err := decode_net_paths(req_header.Paths)
 	if err != nil {
 		h.log.Noticef("error: %s", err)
 		return

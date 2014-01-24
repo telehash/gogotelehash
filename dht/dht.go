@@ -16,7 +16,7 @@ type DHT interface {
 	Seek(hashname telehash.Hashname) (*telehash.Peer, error)
 
 	// find the n closest peers
-	SeekMany(hashname telehash.Hashname, n int) ([]*telehash.Peer, error)
+	SeekClosest(hashname telehash.Hashname, n int) ([]*telehash.Peer, error)
 
 	// Get a peer without touching the network
 	GetPeer(hashname telehash.Hashname) *telehash.Peer

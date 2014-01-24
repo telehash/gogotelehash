@@ -1,8 +1,8 @@
 package kademlia
 
 import (
-	"fmt"
 	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/net"
 	"strings"
 	"time"
 )
@@ -75,65 +75,14 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 		peers = append(peers, peer)
 
 		if len(fields) > 1 {
-			net, addr := d.sw.ParseSeeAddress(fields[1:])
-			if net != "" {
+			net, addr, err := net.DecodeSee(fields[1:])
+			if err == nil && net != "" {
 				peer.AddAddress(net, addr)
 			}
 		}
 	}
 
 	return peers, nil
-}
-
-func (d *DHT) seek(target telehash.Hashname) (*telehash.Peer, error) {
-	// try local first
-	peers := d.table.find_closest_peers(target, 15)
-	for _, peer := range peers {
-		if peer.Hashname() == target {
-			return peer, nil
-		}
-	}
-
-	var (
-		in      = make(chan *telehash.Peer, len(peers))
-		out     = make(chan *telehash.Peer)
-		skip    = map[telehash.Hashname]bool{}
-		pending int
-	)
-
-	defer close(in)
-	defer close(out)
-
-	// start some workers
-	for i := 0; i < 5; i++ {
-		go d.do_seek(target, in, out)
-	}
-
-	for _, peer := range peers {
-		skip[peer.Hashname()] = true
-		pending++
-		in <- peer
-	}
-
-	for peer := range out {
-		if peer == nil {
-			pending--
-			if pending == 0 {
-				break
-			}
-		}
-
-		via := peer.Hashname()
-		if via == target {
-			return peer, nil
-		} else if !skip[via] {
-			skip[via] = true
-			pending++
-			in <- peer
-		}
-	}
-
-	return nil, nil
 }
 
 func (d *DHT) do_seek(target telehash.Hashname, in <-chan *telehash.Peer, out chan<- *telehash.Peer) {
@@ -178,24 +127,10 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 			continue
 		}
 
-	FOR_NETPATHS:
-		for _, np := range peer.net_paths() {
-			if np.Address.PublishWithSeek() {
-				t := d.sw.transports[np.Network]
-				if t == nil {
-					continue
-				}
-
-				s := t.FormatSeekAddress(np.Address)
-				if s != "" {
-					added = true
-					see = append(see, fmt.Sprintf("%s,%s", peer.Hashname(), s))
-					break FOR_NETPATHS
-				}
-			}
-		}
-
-		if !added {
+		fields := peer.FormatSeeAddress()
+		if len(fields) > 0 {
+			see = append(see, peer.Hashname().String()+","+strings.Join(fields, ","))
+		} else {
 			see = append(see, peer.Hashname().String())
 		}
 	}

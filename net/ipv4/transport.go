@@ -2,7 +2,7 @@ package ipv4
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
@@ -118,58 +118,60 @@ func _net_conn_is_closed_err(err error) bool {
 	}
 }
 
-func (t *Transport) EncodeAddr(n th.Addr) ([]byte, error) {
-	a := n.(*Addr)
-
-	var (
-		j = struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
-		}{
-			IP:   a.IP.String(),
-			Port: a.Port,
+func init() {
+	th.RegisterSeeEncoder("ipv4", func(addr th.Addr) ([]string, error) {
+		if a, ok := addr.(*Addr); ok && a != nil {
+			return []string{a.IP.String(), strconv.Itoa(a.Port)}, nil
 		}
-	)
+		return nil, nil
+	})
 
-	return json.Marshal(j)
-}
-
-func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
-	var (
-		j struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
+	th.RegisterSeeDecoder("ipv4", func(fields []string) (th.Addr, error) {
+		if len(fields) != 2 {
+			return nil, errors.New("invalid ipv4 see entry")
 		}
-	)
 
-	err := json.Unmarshal(data, &j)
-	if err != nil {
-		return nil, err
-	}
+		addr, err := ResolveAddr(net.JoinHostPort(fields[0], fields[1]))
+		if err != nil {
+			return nil, errors.New("invalid ipv4 see entry")
+		}
 
-	if j.IP == "" || j.Port == 0 {
-		return nil, ErrInvalidIPv4Address
-	}
+		return addr, nil
+	})
 
-	return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
-}
+	th.RegisterPathEncoder("ipv4", func(n th.Addr) ([]byte, error) {
+		a := n.(*Addr)
 
-func (t *Transport) FormatSeekAddress(addr th.Addr) string {
-	if a, ok := addr.(*Addr); ok && a != nil {
-		return fmt.Sprintf("%s,%d", a.IP, a.Port)
-	}
-	return ""
-}
+		var (
+			j = struct {
+				IP   string `json:"ip"`
+				Port int    `json:"port"`
+			}{
+				IP:   a.IP.String(),
+				Port: a.Port,
+			}
+		)
 
-func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
-	if len(fields) != 2 {
-		return nil, false
-	}
+		return json.Marshal(j)
+	})
 
-	addr, err := ResolveAddr(net.JoinHostPort(fields[0], fields[1]))
-	if err != nil {
-		return nil, false
-	}
+	th.RegisterPathDecoder("ipv4", func(data []byte) (th.Addr, error) {
+		var (
+			j struct {
+				IP   string `json:"ip"`
+				Port int    `json:"port"`
+			}
+		)
 
-	return addr, true
+		err := json.Unmarshal(data, &j)
+		if err != nil {
+			return nil, err
+		}
+
+		if j.IP == "" || j.Port == 0 {
+			return nil, ErrInvalidIPv4Address
+		}
+
+		return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
+	})
 }

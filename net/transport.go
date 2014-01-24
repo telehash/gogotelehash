@@ -26,10 +26,4 @@ type Transport interface {
 
 	// parse a json encoded `path` object.
 	DecodeAddr(data []byte) (Addr, error)
-
-	// format a json encoded `path` object.
-	EncodeAddr(addr Addr) ([]byte, error)
-
-	FormatSeekAddress(addr Addr) string
-	ParseSeekAddress(fields []string) (addr Addr, ok bool)
 }

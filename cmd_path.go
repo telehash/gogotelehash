@@ -133,7 +133,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 	}
 
 	paths := h.sw.get_network_paths()
-	raw_paths, err := h.sw.encode_net_paths(paths)
+	raw_paths, err := encode_net_paths(paths)
 	if err != nil {
 		raw_paths = nil
 	}
@@ -205,7 +205,7 @@ func (h *path_handler) serve_path(channel *Channel) {
 		h.log.Debugf("failed snd: peer=%s err=%s", channel.To().Short(), err)
 	}
 
-	paths, err := h.sw.decode_net_paths(req_header.Paths)
+	paths, err := decode_net_paths(req_header.Paths)
 	if err == nil {
 		for _, np := range paths {
 			channel.Peer().add_net_path(np)

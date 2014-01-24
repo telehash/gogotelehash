@@ -112,7 +112,7 @@ func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
 
 		had_net_paths := len(peer.net_paths()) == 0
 		peer.add_net_path(pkt.netpath)
-		peer.SetPublicKey(pub.rsa_pubkey)
+		peer.set_public_key(pub.rsa_pubkey)
 		if !had_net_paths {
 			peer.set_active_paths(peer.net_paths())
 		}
@@ -244,7 +244,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 		return err
 	}
 
-	l.peer.SetPublicKey(pub.rsa_pubkey)
+	l.peer.set_public_key(pub.rsa_pubkey)
 	l.peer.add_net_path(netpath)
 
 	l.prv_key = prv

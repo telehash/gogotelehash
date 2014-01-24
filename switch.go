@@ -187,37 +187,22 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-// func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, error) {
-//   hashname, err := HashnameFromPublicKey(key)
-//   if err != nil {
-//     return ZeroHashname, err
-//   }
+func (s *Switch) Seek(hashname Hashname) (*Peer, error) {
+	resp := make(chan *Peer, len(s.dhts))
 
-//   peer, newpeer := s.add_peer(hashname)
-//   peer.SetPublicKey(key)
-//   peer.add_net_path(&net_path{Network: net, Address: addr})
-//   if newpeer {
-//     peer.set_active_paths(peer.net_paths())
-//   }
+	for _, dht := range s.dhts {
+		go func() { peer, _ := dht.Seek(hashname); resp <- peer }()
+	}
 
-//   err = s.seek_handler.Seek(hashname, s.hashname)
-//   if err != nil {
-//     return hashname, err
-//   }
+	for i := 0; i < len(s.dhts); i++ {
+		peer := <-resp
+		if peer != nil {
+			return peer, nil
+		}
+	}
 
-//   return hashname, nil
-// }
-
-// func (s *Switch) Seek(hashname Hashname, n int) []Hashname {
-//   peers := s.seek_handler.RecusiveSeek(hashname, n)
-//   hashnames := make([]Hashname, len(peers))
-
-//   for i, peer := range peers {
-//     hashnames[i] = peer.Hashname()
-//   }
-
-//   return hashnames
-// }
+	return nil, ErrPeerNotFound
+}
 
 func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {
 	cmd := cmd_channel_open{options, nil}
@@ -230,28 +215,6 @@ func (s *Switch) GetPeer(hashname Hashname, make_new bool) *Peer {
 	s.reactor.Call(&cmd)
 	return cmd.peer
 }
-
-func (s *Switch) ParseSeeAddress(fields []string) (string, net.Addr) {
-	for _, t := range s.transports {
-		addr, ok := t.ParseSeekAddress(fields)
-		if ok && addr != nil {
-			return t.Network(), addr
-		}
-	}
-	return "", nil
-}
-
-// func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
-//   cmd := cmd_peer_get_closest{hashname, n, nil}
-//   s.reactor.Call(&cmd)
-//   return cmd.peers
-// }
-
-// func (s *Switch) add_peer(hashname Hashname) (*Peer, bool) {
-//   cmd := cmd_peer_add{hashname, nil, false}
-//   s.reactor.Call(&cmd)
-//   return cmd.peer, cmd.discovered
-// }
 
 func (s *Switch) get_line(to Hashname) *line_t {
 	cmd := cmd_line_get{to, nil}
@@ -327,6 +290,8 @@ func (s *Switch) get_network_paths() net_paths {
 	return paths
 }
 
+// InternalMux returns the internal SwitchMux of Switch. This function should
+// only be used by protocol extensions.
 func InternalMux(s *Switch) *SwitchMux {
 	return s.mux
 }
