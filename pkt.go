@@ -84,13 +84,16 @@ func encode_packet(pkt *pkt_t) ([]byte, error) {
 		header_data = header_data[:offset]
 	}
 
-	data := encode_raw_packet(header_data, pkt.body)
+	data, err := encode_raw_packet(header_data, pkt.body)
 	buffer_pool_release(header_data)
+	if err != nil {
+		return nil, err
+	}
 
 	return data, nil
 }
 
-func encode_raw_packet(hdr, body []byte) []byte {
+func encode_raw_packet(hdr, body []byte) ([]byte, error) {
 	var (
 		len_hdr  = len(hdr)
 		len_body = len(body)
@@ -105,7 +108,11 @@ func encode_raw_packet(hdr, body []byte) []byte {
 		copy(buf[2+len_hdr:], body)
 	}
 
-	return buf[0 : 2+len_hdr+len_body]
+	if 2+len_hdr+len_body > cap(buf) {
+		return nil, errInvalidPkt
+	}
+
+	return buf[0 : 2+len_hdr+len_body], nil
 }
 
 func decode_packet(data []byte) (*pkt_t, error) {
