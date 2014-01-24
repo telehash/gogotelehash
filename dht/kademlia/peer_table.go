@@ -15,14 +15,13 @@ func (c *peer_table) Init(local_hashname telehash.Hashname) {
 	c.buckets = make([][]*telehash.Peer, 32*8)
 }
 
-func (c *peer_table) add_peer(sw *telehash.Switch, hashname telehash.Hashname) (peer *telehash.Peer, discovered bool) {
-	peer = c.get_peer(hashname)
-
+func (c *peer_table) add_peer(peer *telehash.Peer) bool {
 	if peer == nil {
-		c.num_peers++
+		return false
+	}
 
-		// make new peer
-		peer = make_peer(sw, hashname)
+	if c.get_peer(peer.Hashname()) == nil {
+		c.num_peers++
 
 		// determine bucket for HN
 		bucket := kad_bucket_for(c.local_hashname, peer.Hashname())
@@ -32,10 +31,10 @@ func (c *peer_table) add_peer(sw *telehash.Switch, hashname telehash.Hashname) (
 		l = append(l, peer)
 		c.buckets[bucket] = l
 
-		discovered = true
+		return true
 	}
 
-	return peer, discovered
+	return false
 }
 
 func (c *peer_table) remove_peer(peer *telehash.Peer) {

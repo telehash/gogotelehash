@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"fmt"
+	"github.com/telehash/gogotelehash/net"
 	"sort"
 	"sync"
 )
@@ -37,6 +38,10 @@ func (p *Peer) String() string {
 
 func (p *Peer) Hashname() Hashname {
 	return p.hashname
+}
+
+func (p *Peer) IsConnected() bool {
+	return p.sw.get_active_line(p.hashname) != nil
 }
 
 // Get the public key of the peer. Returns nil when the public key is unknown.
@@ -87,6 +92,10 @@ func (p *Peer) net_paths() net_paths {
 	paths := make(net_paths, len(p.paths))
 	copy(paths, p.paths)
 	return paths
+}
+
+func (p *Peer) AddAddress(network string, address net.Addr) {
+	p.add_net_path(&net_path{Network: network, Address: address})
 }
 
 func (p *Peer) add_net_path(netpath *net_path) *net_path {

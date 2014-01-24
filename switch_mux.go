@@ -1,5 +1,9 @@
 package telehash
 
+import (
+	"fmt"
+)
+
 type SwitchMux struct {
 	channel_types map[string]Handler
 	fallback      Handler
@@ -30,6 +34,9 @@ func (s *SwitchMux) HandleFallbackFunc(f func(*Channel)) {
 }
 
 func (s *SwitchMux) Handle(typ string, h Handler) {
+	if _, p := s.channel_types[typ]; p {
+		panic(fmt.Sprintf("Handler for type %q is already registered", typ))
+	}
 	s.channel_types[typ] = h
 }
 

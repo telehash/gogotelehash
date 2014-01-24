@@ -117,7 +117,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 		return
 	}
 
-	to_peer = h.sw.get_peer(peer_hashname, false)
+	to_peer = h.sw.GetPeer(peer_hashname, false)
 	if to_peer == nil {
 		return
 	}
@@ -180,7 +180,7 @@ func (h *peer_handler) serve_connect(channel *Channel) {
 		return
 	}
 
-	peer := h.sw.get_peer(hashname, true)
+	peer := h.sw.GetPeer(hashname, true)
 	peer.SetPublicKey(pubkey)
 	peer.AddVia(channel.To())
 

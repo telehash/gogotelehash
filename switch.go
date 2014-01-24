@@ -225,10 +225,20 @@ func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {
 	return cmd.channel, err
 }
 
-func (s *Switch) get_peer(hashname Hashname, make_new bool) *Peer {
+func (s *Switch) GetPeer(hashname Hashname, make_new bool) *Peer {
 	cmd := cmd_peer_get{hashname, make_new, nil}
 	s.reactor.Call(&cmd)
 	return cmd.peer
+}
+
+func (s *Switch) ParseSeeAddress(fields []string) (string, net.Addr) {
+	for _, t := range s.transports {
+		addr, ok := t.ParseSeekAddress(fields)
+		if ok && addr != nil {
+			return t.Network(), addr
+		}
+	}
+	return "", nil
 }
 
 // func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
@@ -315,4 +325,8 @@ func (s *Switch) get_network_paths() net_paths {
 	}
 
 	return paths
+}
+
+func InternalMux(s *Switch) *SwitchMux {
+	return s.mux
 }

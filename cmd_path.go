@@ -42,7 +42,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 		score    int
 	)
 
-	peer = h.sw.get_peer(to, false)
+	peer = h.sw.GetPeer(to, false)
 	if peer == nil {
 		return false
 	}
