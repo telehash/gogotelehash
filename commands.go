@@ -175,7 +175,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 		return errInvalidPkt
 	}
 
-	options := ChannelOptions{To: l.peer.hashname, Id: ipkt.priv_hdr.C, Type: ipkt.priv_hdr.Type, Reliablility: reliablility}
+	options := ChannelOptions{to: l.peer.hashname, Id: ipkt.priv_hdr.C, Type: ipkt.priv_hdr.Type, Reliablility: reliablility}
 	channel, err := make_channel(l.sw, l, false, options)
 	if err != nil {
 		return err
@@ -373,7 +373,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 		return errNoOpenLine
 	}
 
-	line = sw.lines[cmd.options.To]
+	line = sw.lines[cmd.options.to]
 	if line == nil {
 		return cmd.open_line(sw)
 	}
@@ -414,7 +414,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	)
 
 	{ // get the peer
-		cmd := cmd_peer_get{cmd.options.To, false, nil}
+		cmd := cmd_peer_get{cmd.options.to, false, nil}
 		cmd.Exec(sw)
 		peer = cmd.peer
 	}
@@ -435,7 +435,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		return err
 	}
 
-	sw.lines[cmd.options.To] = line
+	sw.lines[cmd.options.to] = line
 	sw.met_running_lines.Update(int64(len(sw.lines)))
 
 	sw.reactor.Defer(&line.backlog)

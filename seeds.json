@@ -1,0 +1,52 @@
+[
+  {
+    "hashname": "5fa6f146d784c9ae6f6d762fbc56761d472f3d097dfba3915c890eec9b79a088",
+    "paths": [
+      {"type": "ipv4", "ip": "208.68.164.253", "port": 42424},
+      {"type": "ipv6", "ip": "2605:da00:5222:5269:230:48ff:fe35:6572", "port": 42424},
+      {"type": "http", "http": "http://208.68.164.253:42424"}
+    ],
+    "bridge": true,
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxoQkh8uIPe18Ym5kO3VXqPhKsc7vhrMMH8HgUO3tSZeIcowHxZe+omFadTvquW4az7CV/+3EBVHWzuX90VofsDsgbPXhzeV/TPOgrwz9B6AgEAq+UZ+cs5BSjZXXQgFrTHzEy9uboio+StBt3nB9pLi/LlB0YNIoEk83neX++6dN63C3mSa55P8r4FvCWUXue2ZWfT6qamSGQeOPIUBo4aiN6P4Hzqaco6YRO9v901jV+nq0qp0yHKnxlIYgiY7501vXWceMtnqcEkgzX4Rr7nIoA6QnlUMkTUDP7N3ariNSwl8OL1ZjsFJz7XjfIJMQ+9kd1nNJ3sb4o3jOWCzjXwIDAQAB"
+  },
+  {
+    "hashname": "b61120844c809260126aa0cf75390ef7f72c65a9ce03366efcf89ff549233758",
+    "paths": [
+      {"type": "ipv4", "ip": "173.255.220.185", "port": 42424},
+      {"type": "ipv6", "ip": "2600:3c01::f03c:91ff:fe70:ff59", "port": 42424}
+    ],
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4xkpFtu9IQc/WiWNHGgmKnJ/TgiU9ltLLD4yJSu5LOiV5nH5lcjD8LPD4IgxPbOVKS/Xs2sosNqYsxVbSH60J5EOzc3okIdTLj0OhDoEhpwBXpnWzRCYOqlRSeF78yu2oWxdP1zA9nMC7laB2veADJ4KIaGKcs1uHesD5DGTGtPSHErove03HkMSlOBHpt239bNnv4XayQuwoRBsCoiTtKTPRxkbDN7KQtHozuumwq0wSedYoJe4r0Z36V6UU9KNnFvz2QR+CdRn3idDOeYjGnKFa5775fQGU5pwOk31u7J+gQ8h+tTQq6WZL5VaEeeFD6V4a6Zet2kBGhT6Z7h0uQIDAQAB"
+  },
+  {
+    "hashname": "6b171cedc8945ca7ba078392c0d1bc34fe0e7f161fc60e7b1cdb246f68bcb683",
+    "paths": [
+      {"type": "ipv4", "ip": "204.45.252.101", "port": 42424}
+    ],
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsXUyU223dwN5VbPZN9nniiQ7gTcTK90ad83I+/Nd6M87QF0qwHuF+cQYeQP2aJEfgZsFVCVVwcjRUxjRaVX/BSE4eKtIGazHr4idajkYka0No5hIJfw7p9INLZw6ALx4y9678sy2dyMAm0BHhY+A4AzlFd0uO+I3MJKED5DF0baACLNu9VdNIaRQ/OQeL/Jl1b4VJF/yZ6FZGcyYGYF7wf/ttSHMv1v1gCCC6o42Q2P67M+HpbPO1RD2IRrwmGI5Onmqp1bAqGmu4BMCfFsjn/mCVJnVVC1GNiUWQY6n549j2y7Ow7JKmRGlWq2i+QWSGOUylZIvue+XIObY7/dvPwIDAQAB"
+  },
+  {
+    "hashname": "39c7f1d641947f51960ec5ab070680ea9dff110e8406cb07e4ae093a2e5d823a",
+    "paths": [
+      {"type": "ipv4", "ip": "208.126.199.195", "port": 42424},
+      {"type": "ipv6", "ip": "2001:470:c0a6:3::10", "port": 42424}
+      {"type": "http", "http": "http://208.126.199.195:42424"},
+    ],
+    "bridge": true,
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAltxAjgqbG441oAiqwF0pbJBUpPi06W1c0m3lrGg/h5nv5njiZq7s6LV9JZKPLINRk4UA4DdILBvOlKXG8/kQ0fMxve8di8EFbsaUCKaZ5zFWFYv1FPKc6TU29zIyQEGoZIZfphnfFUvk7PIOBd3myEkncLBviFHVrfY3sDupni9ZOLGeAqpinQfuD1kmc3FbsZ+6j3A7QfMqlXI56jw3ZRKrXyVL6eudj2FHL0ZO70m+MC3AcUBzXtwyDIY9xowIrcp6+dfSyQncGqKKDF3HqLRch+KpYrAZ6abHKjuN93tlIPyyKNCYQwex+j/UKN/5SlqDV8ctp4LwImCZQYGbLwIDAQAB"
+  },
+  {
+    "hashname": "9ba9c175c3c26af9df5c8163ea91d4ae4eca59ba95d66deb287c89ea0c596979",
+    "paths": [
+      {"type": "ipv4", "ip": "162.243.1.152", "port": 42424}
+    ],
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnMrFnowz5jQAQrXSdj6MZE8mqbWweXwc53oe0kNC+AmBCnobYkdL4ZXk8JiHxP+sNtaTxbEagdQohoqTX1ApjjZ+pGt5Dcnqy1OfPMtUQyvEI1hL6xDU9msLPwK0NztHp1BlKeozppeBswNcPPxGevAn6yd51dP+BcrRAM34G8C+TrnNQWmBTRob1eKifDS+80taVxma5jt2/JUHFTxo2ualo4Wf/mScg8RXH4Pfhn7nIMBFQPom+58ERtORZWHl3aOty6It2inpPAx0PFBbNzBbYRMLOkW7IYfTdXz+Y17pM6kEWK1Y5xUHGmxTMY4IZtvX2L5bTTMhAdSYgqSFEQIDAQAB"
+  },
+  {
+    "hashname": "f3a2d1ff11f67069feac11bc562c32549e30135f56a9a9c6575499d6a7c72915",
+    "paths": [
+      {"type": "ipv4", "ip": "95.85.6.236", "port": 42424},
+      {"type": "http", "http": "http://95.85.6.236:42425"}
+    ],
+    "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAvjmrFMFDApND2uOujSSNH9E1p8L65Doc4W8km61FPVtgtsGS/+1NLpFlIDo3c8FhvgVs+I2nPHd9WwvsXa5kgSzwSyBMUTFkIQGBlUbfo9vjdMm85iQt48r2JgKke15IyOsbsnzQYlIQ4s5h7ShFydt1JZyrbQgC5AxL5rD/vx9mTrd2k5oWiFnG8O1K6HVqrIJnZYc5Ts0hN+7nWHn+tuTCZEdtkx7LMqHnw6L4ylSjm7lBHAsIx1FCY+fRQYR+GGSvsBAYxrfsVoJUReuELuuj/5oxeboon9C/CsNB6uI6tC8u1OjYHWG0xpY0bBaPOp5948XIUTXAokhH9fjdtQIDAQAB"
+  }
+]

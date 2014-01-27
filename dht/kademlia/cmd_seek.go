@@ -117,8 +117,6 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 	see := make([]string, 0, len(closest))
 
 	for _, peer := range closest {
-		added := false
-
 		if peer.PublicKey() == nil {
 			continue // unable to forward peer requests to unless we know the public key
 		}

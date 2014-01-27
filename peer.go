@@ -20,6 +20,7 @@ type Peer struct {
 
 func make_peer(sw *Switch, hashname Hashname) *Peer {
 	peer := &Peer{
+		sw:       sw,
 		hashname: hashname,
 		via:      make(map[Hashname]bool),
 	}
@@ -28,7 +29,10 @@ func make_peer(sw *Switch, hashname Hashname) *Peer {
 }
 
 func (p *Peer) Open(options ChannelOptions) (*Channel, error) {
-	options.To = p.hashname
+	if p == nil {
+		return nil, ErrPeerNotFound
+	}
+	options.to = p.hashname
 	return p.sw.open_channel(options)
 }
 

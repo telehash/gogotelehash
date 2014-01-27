@@ -68,7 +68,7 @@ func (h *peer_handler) SendPeer(to *Peer) {
 		func() {
 			h.log.Noticef("peering=%s via=%s", to_hn.Short(), via.Short())
 
-			options := ChannelOptions{To: via, Type: "peer", Reliablility: UnreliableChannel}
+			options := ChannelOptions{to: via, Type: "peer", Reliablility: UnreliableChannel}
 			channel, err := h.sw.open_channel(options)
 			if err != nil {
 				return
@@ -140,7 +140,7 @@ func (h *peer_handler) serve_peer(channel *Channel) {
 	}
 	h.log.Noticef("received peer-cmd: from=%s to=%s paths=%s", channel.To().Short(), peer_hashname.Short(), paths)
 
-	options := ChannelOptions{To: peer_hashname, Type: "connect", Reliablility: UnreliableChannel}
+	options := ChannelOptions{to: peer_hashname, Type: "connect", Reliablility: UnreliableChannel}
 	channel, err = h.sw.open_channel(options)
 	if err != nil {
 		h.log.Noticef("peer:connect err=%s", err)

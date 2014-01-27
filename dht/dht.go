@@ -9,9 +9,6 @@ import (
 type DHT interface {
 	telehash.Component
 
-	// seed the dht
-	Seed(net string, addr net.Addr, key *rsa.PublicKey) (telehash.Hashname, error)
-
 	// find a peer with the exact hashname
 	Seek(hashname telehash.Hashname) (*telehash.Peer, error)
 

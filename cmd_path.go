@@ -144,7 +144,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 		netpath:  netpath,
 	}
 
-	options := ChannelOptions{To: to, Type: "path", Reliablility: UnreliableChannel}
+	options := ChannelOptions{to: to, Type: "path", Reliablility: UnreliableChannel}
 	channel, err = h.sw.open_channel(options)
 	if err != nil {
 		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)

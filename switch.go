@@ -187,8 +187,10 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-func (s *Switch) Seek(hashname Hashname) (*Peer, error) {
+func (s *Switch) Seek(hashname Hashname) *Peer {
 	resp := make(chan *Peer, len(s.dhts))
+
+	s.log.Errorf("dhts=%+v", s.dhts)
 
 	for _, dht := range s.dhts {
 		go func() { peer, _ := dht.Seek(hashname); resp <- peer }()
@@ -197,11 +199,11 @@ func (s *Switch) Seek(hashname Hashname) (*Peer, error) {
 	for i := 0; i < len(s.dhts); i++ {
 		peer := <-resp
 		if peer != nil {
-			return peer, nil
+			return peer
 		}
 	}
 
-	return nil, ErrPeerNotFound
+	return nil
 }
 
 func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {

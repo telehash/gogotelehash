@@ -40,7 +40,7 @@ type channel_imp interface {
 }
 
 type ChannelOptions struct {
-	To           Hashname
+	to           Hashname
 	Type         string
 	Id           string
 	Reliablility Reliablility
@@ -96,7 +96,7 @@ func make_channel(sw *Switch, line *line_t, initiator bool, options ChannelOptio
 }
 
 func (c *Channel) To() Hashname {
-	return c.options.To
+	return c.options.to
 }
 
 func (c *Channel) Peer() *Peer {

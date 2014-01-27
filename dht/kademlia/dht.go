@@ -5,6 +5,7 @@ import (
 )
 
 type DHT struct {
+	Seeds []*telehash.Identity
 	sw    *telehash.Switch
 	table peer_table
 }
@@ -13,6 +14,14 @@ func (d *DHT) Start(sw *telehash.Switch) error {
 	d.sw = sw
 	d.table.Init(sw.LocalHashname())
 	telehash.InternalMux(sw).HandleFunc("seek", d.serve_seek)
+
+	for _, seed := range d.Seeds {
+		peer := seed.ToPeer(sw)
+		if peer != nil {
+			d.table.add_peer(peer)
+		}
+	}
+
 	return nil
 }
 
@@ -24,15 +33,12 @@ func (d *DHT) GetPeer(hashname telehash.Hashname) *telehash.Peer {
 	return d.table.get_peer(hashname)
 }
 
-func (d *DHT) Seed(id *telehash.Identity) {
-
-}
-
 func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 	// try local first
 	peers := d.table.find_closest_peers(target, 5)
 	for _, peer := range peers {
 		if peer.Hashname() == target {
+			telehash.Log.Errorf("seek: peer=%s", peer)
 			return peer, nil
 		}
 	}
@@ -71,6 +77,7 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 
 		via := peer.Hashname()
 		if via == target {
+			telehash.Log.Errorf("seek: peer=%s", peer)
 			return peer, nil // found peer
 		} else if !skip[via] {
 			// try to continue seeking
@@ -80,6 +87,7 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 		}
 	}
 
+	telehash.Log.Errorf("seek: peer=(nil)")
 	return nil, telehash.ErrPeerNotFound
 }
 

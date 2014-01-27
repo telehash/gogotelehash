@@ -1,10 +1,9 @@
-package telehash
+package telehash_test
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
 	"fmt"
-	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/dht/kademlia"
 	"github.com/telehash/gogotelehash/net/ipv4"
 	"io"
 	"runtime"
@@ -19,7 +18,7 @@ func TestOpen(t *testing.T) {
 
 	done := make(chan bool, 2)
 
-	greetings := HandlerFunc(func(c *Channel) {
+	greetings := telehash.HandlerFunc(func(c *telehash.Channel) {
 		defer func() { done <- true }()
 
 		buf := make([]byte, 1500)
@@ -28,14 +27,14 @@ func TestOpen(t *testing.T) {
 		if err != nil {
 			t.Fatalf("err=%s", err)
 		}
-		Log.Infof("msg=%q", buf[:n])
+		telehash.Log.Infof("msg=%q", buf[:n])
 
 		for {
 			buf = buf[:cap(buf)]
 
 			n, err = c.Receive(nil, buf)
 			if err == io.EOF {
-				Log.Infof("err=EOF")
+				telehash.Log.Infof("err=EOF")
 				break
 			}
 			if err != nil {
@@ -44,16 +43,13 @@ func TestOpen(t *testing.T) {
 
 			buf = buf[:n]
 
-			// Log.Infof("msg=%q", buf)
+			// telehash.Log.Infof("msg=%q", buf)
 		}
 	})
 
 	var (
-		key_a = make_key()
-		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, nil))
-
-		key_b = make_key()
-		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, greetings))
+		b = must_start_switch(make_switch("0.0.0.0:4001", greetings, nil))
+		a = must_start_switch(make_switch("0.0.0.0:4000", nil, b))
 	)
 
 	defer a.Stop()
@@ -62,17 +58,7 @@ func TestOpen(t *testing.T) {
 	go func() {
 		defer func() { done <- true }()
 
-		addr, err := ipv4.ResolveAddr("127.0.0.1:4001")
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		hashname, err := a.Seed("ipv4", addr, &key_b.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		channel, err := a.Open(ChannelOptions{To: hashname, Type: "_greetings"})
+		channel, err := a.Seek(b.LocalHashname()).Open(telehash.ChannelOptions{Type: "_greetings"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -96,14 +82,9 @@ func TestSeek(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		key_a = make_key()
-		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong)))
-
-		key_b = make_key()
-		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong)))
-
-		key_c = make_key()
-		c     = must_start_switch(make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong)))
+		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(ping_pong), nil))
+		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(ping_pong), a))
+		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(ping_pong), a))
 	)
 
 	defer a.Stop()
@@ -111,33 +92,25 @@ func TestSeek(t *testing.T) {
 	defer c.Stop()
 
 	go func() {
-		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
-		if err != nil {
-			t.Fatal(err)
+
+		peer := b.Seek(a.LocalHashname())
+		if peer == nil {
+			t.Fatal(telehash.ErrPeerNotFound)
 		}
 
-		_, err = b.Seed("ipv4", addr, &key_a.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
-		Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		// telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname()))
 	}()
 
 	go func() {
-		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
-		if err != nil {
-			t.Fatal(err)
+
+		peer := b.Seek(a.LocalHashname())
+		if peer == nil {
+			t.Fatal(telehash.ErrPeerNotFound)
 		}
 
-		_, err = c.Seed("ipv4", addr, &key_a.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
-		Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		// telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname()))
 	}()
 
 	time.Sleep(60 * time.Second)
@@ -149,14 +122,9 @@ func TestRelay(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		key_a = make_key()
-		a     = must_start_switch(make_switch("0.0.0.0:4000", key_a, HandlerFunc(ping_pong)))
-
-		key_b = make_key()
-		b     = must_start_switch(make_switch("0.0.0.0:4001", key_b, HandlerFunc(ping_pong)))
-
-		key_c = make_key()
-		c     = must_start_switch(make_switch("0.0.0.0:4002", key_c, HandlerFunc(ping_pong)))
+		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(ping_pong), nil))
+		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(ping_pong), a))
+		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(ping_pong), a))
 	)
 
 	defer a.Stop()
@@ -167,59 +135,43 @@ func TestRelay(t *testing.T) {
 	// c.net.deny_from_net("127.0.0.1:4001")
 
 	go func() {
-		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
-		if err != nil {
-			t.Fatal(err)
+
+		peer := b.Seek(a.LocalHashname())
+		if peer == nil {
+			t.Fatal(telehash.ErrPeerNotFound)
 		}
 
-		_, err = b.Seed("ipv4", addr, &key_a.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		// telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 		time.Sleep(200 * time.Millisecond)
-		Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
+		telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname()))
 	}()
 
 	go func() {
-		addr, err := ipv4.ResolveAddr("127.0.0.1:4000")
-		if err != nil {
-			t.Fatal(err)
+
+		peer := b.Seek(a.LocalHashname())
+		if peer == nil {
+			t.Fatal(telehash.ErrPeerNotFound)
 		}
 
-		_, err = c.Seed("ipv4", addr, &key_a.PublicKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		// Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		// telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 		time.Sleep(100 * time.Millisecond)
-		Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
+		telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname()))
 	}()
 
 	time.Sleep(60 * time.Second)
 }
 
-func make_key() *rsa.PrivateKey {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		panic(err)
-	}
-	return key
-}
-
-func make_switch(addr string, key *rsa.PrivateKey, h Handler) *Switch {
-	return &Switch{
-		Key:     key,
+func make_switch(addr string, h telehash.Handler, seed *telehash.Switch) *telehash.Switch {
+	return &telehash.Switch{
 		Handler: h,
-		Transports: []net.Transport{
+		Components: []telehash.Component{
 			&ipv4.Transport{Addr: addr},
+			&kademlia.DHT{Seeds: []*telehash.Identity{seed.Identity()}},
 		},
 	}
 }
 
-func must_start_switch(s *Switch) *Switch {
+func must_start_switch(s *telehash.Switch) *telehash.Switch {
 	err := s.Start()
 	if err != nil {
 		panic(err)
@@ -227,7 +179,7 @@ func must_start_switch(s *Switch) *Switch {
 	return s
 }
 
-func ping_pong(c *Channel) {
+func ping_pong(c *telehash.Channel) {
 	var (
 		buf = make([]byte, 1500)
 	)
