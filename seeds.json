@@ -28,8 +28,8 @@
     "hashname": "39c7f1d641947f51960ec5ab070680ea9dff110e8406cb07e4ae093a2e5d823a",
     "paths": [
       {"type": "ipv4", "ip": "208.126.199.195", "port": 42424},
-      {"type": "ipv6", "ip": "2001:470:c0a6:3::10", "port": 42424}
-      {"type": "http", "http": "http://208.126.199.195:42424"},
+      {"type": "ipv6", "ip": "2001:470:c0a6:3::10", "port": 42424},
+      {"type": "http", "http": "http://208.126.199.195:42424"}
     ],
     "bridge": true,
     "public": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAltxAjgqbG441oAiqwF0pbJBUpPi06W1c0m3lrGg/h5nv5njiZq7s6LV9JZKPLINRk4UA4DdILBvOlKXG8/kQ0fMxve8di8EFbsaUCKaZ5zFWFYv1FPKc6TU29zIyQEGoZIZfphnfFUvk7PIOBd3myEkncLBviFHVrfY3sDupni9ZOLGeAqpinQfuD1kmc3FbsZ+6j3A7QfMqlXI56jw3ZRKrXyVL6eudj2FHL0ZO70m+MC3AcUBzXtwyDIY9xowIrcp6+dfSyQncGqKKDF3HqLRch+KpYrAZ6abHKjuN93tlIPyyKNCYQwex+j/UKN/5SlqDV8ctp4LwImCZQYGbLwIDAQAB"

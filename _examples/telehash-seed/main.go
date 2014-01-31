@@ -19,9 +19,7 @@ import (
 )
 
 func main() {
-	seeds, err := telehash.LoadIdenities(env("SEED_FILE", "seeds.json"))
-	assert(err)
-
+	seeds, _ := telehash.LoadIdenities(env("SEED_FILE", "seeds.json"))
 	defer fmt.Println("BYE!")
 
 	runtime.GOMAXPROCS(runtime.NumCPU() * 2)

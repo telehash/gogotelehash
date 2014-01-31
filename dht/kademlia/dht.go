@@ -2,16 +2,19 @@ package kademlia
 
 import (
 	"github.com/telehash/gogotelehash"
+	"time"
 )
 
 type DHT struct {
-	Seeds []*telehash.Identity
-	sw    *telehash.Switch
-	table peer_table
+	Seeds    []*telehash.Identity
+	sw       *telehash.Switch
+	table    peer_table
+	shutdown chan bool
 }
 
 func (d *DHT) Start(sw *telehash.Switch) error {
 	d.sw = sw
+	d.shutdown = make(chan bool, 1)
 	d.table.Init(sw.LocalHashname())
 	telehash.InternalMux(sw).HandleFunc("seek", d.serve_seek)
 
@@ -22,15 +25,62 @@ func (d *DHT) Start(sw *telehash.Switch) error {
 		}
 	}
 
+	go d.run_maintainer()
+
 	return nil
 }
 
 func (d *DHT) Stop() error {
+	d.shutdown <- true
 	return nil
+}
+
+func (d *DHT) run_maintainer() {
+	var (
+		timer = time.NewTicker(55 * time.Second)
+	)
+
+	defer timer.Stop()
+
+	d.maintain()
+
+	for {
+		select {
+		case <-d.shutdown:
+			return
+		case <-timer.C:
+			d.maintain()
+		}
+	}
+}
+
+func (d *DHT) maintain() {
+	self := d.sw.LocalHashname()
+
+	for _, b := range d.table.buckets {
+		for _, via := range b {
+			peers, _ := d.cmd_seek(self, via)
+			for _, peer := range peers {
+				d.table.add_peer(peer)
+			}
+		}
+	}
+
+	peers, _ := d.SeekClosest(telehash.Hashname{
+		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+	}, 8)
+	for _, peer := range peers {
+		d.table.add_peer(peer)
+	}
 }
 
 func (d *DHT) GetPeer(hashname telehash.Hashname) *telehash.Peer {
 	return d.table.get_peer(hashname)
+}
+
+func (d *DHT) OnNewPeer(peer *telehash.Peer) {
+	d.table.add_peer(peer)
 }
 
 func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {

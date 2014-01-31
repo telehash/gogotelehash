@@ -15,13 +15,13 @@ type Switch struct {
 	DenyRelay bool
 	Key       *rsa.PrivateKey
 	Handler   Handler
-	// Transports []net.Transport
 
 	Components     []Component
 	components     []Component
 	transports     []net.Transport
 	transports_map map[string]net.Transport
 	dhts           []privDHT
+	hook_new_peer  []HookNewPeer
 
 	reactor       reactor_t
 	lines         map[Hashname]*line_t
@@ -90,6 +90,7 @@ func (s *Switch) Start() error {
 	s.peer_handler.init(s)
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
+	s.reactor.Run()
 
 	for _, c := range s.Components {
 		s.components = append(s.components, c)
@@ -107,6 +108,10 @@ func (s *Switch) Start() error {
 		case privDHT:
 			s.dhts = append(s.dhts, v)
 
+		}
+
+		if v, ok := c.(HookNewPeer); ok {
+			s.hook_new_peer = append(s.hook_new_peer, v)
 		}
 	}
 
@@ -128,7 +133,6 @@ func (s *Switch) Start() error {
 	}
 
 	s.running = true
-	s.reactor.Run()
 	s.stats_timer = s.reactor.CastAfter(5*time.Second, &cmd_stats_log{})
 	s.clean_timer = s.reactor.CastAfter(2*time.Second, &cmd_clean{})
 
@@ -190,8 +194,6 @@ func (s *Switch) LocalHashname() Hashname {
 func (s *Switch) Seek(hashname Hashname) *Peer {
 	resp := make(chan *Peer, len(s.dhts))
 
-	s.log.Errorf("dhts=%+v", s.dhts)
-
 	for _, dht := range s.dhts {
 		go func() { peer, _ := dht.Seek(hashname); resp <- peer }()
 	}
@@ -204,12 +206,6 @@ func (s *Switch) Seek(hashname Hashname) *Peer {
 	}
 
 	return nil
-}
-
-func (s *Switch) open_channel(options ChannelOptions) (*Channel, error) {
-	cmd := cmd_channel_open{options, nil}
-	err := s.reactor.Call(&cmd)
-	return cmd.channel, err
 }
 
 func (s *Switch) GetPeer(hashname Hashname, make_new bool) *Peer {

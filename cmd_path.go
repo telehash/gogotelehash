@@ -31,10 +31,9 @@ func (h *path_handler) init(sw *Switch) {
 	sw.mux.HandleFunc("path", h.serve_path)
 }
 
-func (h *path_handler) Negotiate(to Hashname) bool {
+func (h *path_handler) Negotiate(peer *Peer) bool {
 	var (
 		wg       sync.WaitGroup
-		peer     *Peer
 		netpaths net_paths
 		active   net_paths
 		relays   net_paths
@@ -42,7 +41,6 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 		score    int
 	)
 
-	peer = h.sw.GetPeer(to, false)
 	if peer == nil {
 		return false
 	}
@@ -61,7 +59,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 		wg.Add(1)
 		go func(np *net_path, wg *sync.WaitGroup, i int) {
 			defer wg.Done()
-			ok := h.negotiate_netpath(to, np)
+			ok := h.negotiate_netpath(peer, np)
 			results[i] = ok
 			if ok {
 				np.ResetPriority()
@@ -91,7 +89,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 				wg.Add(1)
 				go func(np *net_path, wg *sync.WaitGroup, i int) {
 					defer wg.Done()
-					ok := h.negotiate_netpath(to, np)
+					ok := h.negotiate_netpath(peer, np)
 					results[i] = ok
 					if ok {
 						np.ResetPriority()
@@ -118,7 +116,7 @@ func (h *path_handler) Negotiate(to Hashname) bool {
 	return score > 0
 }
 
-func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
+func (h *path_handler) negotiate_netpath(peer *Peer, netpath *net_path) bool {
 	var (
 		priority int
 		channel  *Channel
@@ -144,17 +142,17 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 		netpath:  netpath,
 	}
 
-	options := ChannelOptions{to: to, Type: "path", Reliablility: UnreliableChannel}
-	channel, err = h.sw.open_channel(options)
+	options := ChannelOptions{Type: "path", Reliablility: UnreliableChannel}
+	channel, err = peer.Open(options)
 	if err != nil {
-		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: peer=%s netpath=%s err=%s", peer.Hashname().Short(), netpath, err)
 		return false
 	}
 	defer channel.Close()
 
 	_, err = channel.SendPacket(&header, nil)
 	if err != nil {
-		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: peer=%s netpath=%s err=%s", peer.Hashname().Short(), netpath, err)
 		return false
 	}
 
@@ -162,7 +160,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 
 	_, err = channel.ReceivePacket(&header, nil)
 	if err != nil {
-		h.log.Debugf("failed: to=%s netpath=%s err=%s", to.Short(), netpath, err)
+		h.log.Debugf("failed: peer=%s netpath=%s err=%s", peer.Hashname().Short(), netpath, err)
 		return false
 	}
 
@@ -174,7 +172,7 @@ func (h *path_handler) negotiate_netpath(to Hashname, netpath *net_path) bool {
 	latency = time.Now().Sub(now)
 	// TODO record latency
 
-	h.log.Debugf("path: to=%s netpath=%s priority=%d latency=%s", to.Short(), netpath, priority, latency)
+	h.log.Debugf("path: peer=%s netpath=%s priority=%d latency=%s", peer.Hashname().Short(), netpath, priority, latency)
 	return true
 }
 

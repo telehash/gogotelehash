@@ -23,7 +23,4 @@ type Transport interface {
 
 	// LocalAddresses returns any local addresses.
 	LocalAddresses() []Addr
-
-	// parse a json encoded `path` object.
-	DecodeAddr(data []byte) (Addr, error)
 }

@@ -7,7 +7,9 @@ import (
 
 var ZeroHashname Hashname
 
-type Hashname [32]byte
+const hashname_len = 32
+
+type Hashname [hashname_len]byte
 
 func HashnameFromPublicKey(pubkey *rsa.PublicKey) (Hashname, error) {
 	der, err := enc_DER_RSA(pubkey)
@@ -28,7 +30,7 @@ func HashnameFromString(s string) (Hashname, error) {
 }
 
 func HashnameFromBytes(b []byte) (Hashname, error) {
-	if len(b) != 32 {
+	if len(b) != hashname_len {
 		return ZeroHashname, ErrInvalidHashname
 	}
 
@@ -52,4 +54,16 @@ func (h Hashname) Bytes() []byte {
 
 func (h Hashname) IsZero() bool {
 	return h == ZeroHashname
+}
+
+func HashnamePrefix(a, b Hashname) string {
+	for i, byte_a := range a {
+		byte_b := b[i]
+
+		if byte_a != byte_b && i < hashname_len-1 {
+			return hex.EncodeToString(b[:i+1])
+		}
+	}
+
+	return hex.EncodeToString(b[:])
 }

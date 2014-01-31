@@ -32,8 +32,12 @@ func (p *Peer) Open(options ChannelOptions) (*Channel, error) {
 	if p == nil {
 		return nil, ErrPeerNotFound
 	}
-	options.to = p.hashname
-	return p.sw.open_channel(options)
+
+	options.peer = p
+
+	cmd := cmd_channel_open{options, nil}
+	err := p.sw.reactor.Call(&cmd)
+	return cmd.channel, err
 }
 
 func (p *Peer) String() string {

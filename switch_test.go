@@ -82,9 +82,9 @@ func TestSeek(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(ping_pong), nil))
-		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(ping_pong), a))
-		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(ping_pong), a))
+		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(pong), nil))
+		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(pong), a))
+		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(pong), a))
 	)
 
 	defer a.Stop()
@@ -92,25 +92,21 @@ func TestSeek(t *testing.T) {
 	defer c.Stop()
 
 	go func() {
-
-		peer := b.Seek(a.LocalHashname())
+		peer := b.Seek(c.LocalHashname())
+		telehash.Log.Noticef("b: seek=%+v", peer)
 		if peer == nil {
 			t.Fatal(telehash.ErrPeerNotFound)
 		}
-
-		// telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
-		telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname()))
+		ping(peer)
 	}()
 
 	go func() {
-
-		peer := b.Seek(a.LocalHashname())
+		peer := c.Seek(b.LocalHashname())
+		telehash.Log.Noticef("c: seek=%+v", peer)
 		if peer == nil {
 			t.Fatal(telehash.ErrPeerNotFound)
 		}
-
-		// telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
-		telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname()))
+		ping(peer)
 	}()
 
 	time.Sleep(60 * time.Second)
@@ -122,9 +118,9 @@ func TestRelay(t *testing.T) {
 	runtime.GOMAXPROCS(runtime.NumCPU())
 
 	var (
-		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(ping_pong), nil))
-		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(ping_pong), a))
-		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(ping_pong), a))
+		a = must_start_switch(make_switch("0.0.0.0:4000", telehash.HandlerFunc(pong), nil))
+		b = must_start_switch(make_switch("0.0.0.0:4001", telehash.HandlerFunc(pong), a))
+		c = must_start_switch(make_switch("0.0.0.0:4002", telehash.HandlerFunc(pong), a))
 	)
 
 	defer a.Stop()
@@ -140,6 +136,7 @@ func TestRelay(t *testing.T) {
 		if peer == nil {
 			t.Fatal(telehash.ErrPeerNotFound)
 		}
+		ping(peer)
 
 		// telehash.Log.Noticef("b: seek=%+v", b.Seek(c.LocalHashname(), 5))
 		time.Sleep(200 * time.Millisecond)
@@ -152,6 +149,7 @@ func TestRelay(t *testing.T) {
 		if peer == nil {
 			t.Fatal(telehash.ErrPeerNotFound)
 		}
+		ping(peer)
 
 		// telehash.Log.Noticef("c: seek=%+v", c.Seek(b.LocalHashname(), 5))
 		time.Sleep(100 * time.Millisecond)
@@ -179,7 +177,35 @@ func must_start_switch(s *telehash.Switch) *telehash.Switch {
 	return s
 }
 
-func ping_pong(c *telehash.Channel) {
+func ping(peer *telehash.Peer) {
+	var (
+		buf = make([]byte, 1500)
+	)
+
+	c, err := peer.Open(telehash.ChannelOptions{Type: "ping"})
+	if err != nil {
+		telehash.Log.Errorf("ping: error=%s", err)
+		return
+	}
+
+	defer c.Close()
+
+	_, err = c.Write([]byte("ping"))
+	if err != nil {
+		telehash.Log.Errorf("ping: error=%s", err)
+		return
+	}
+
+	n, err := c.Read(buf)
+	if err != nil {
+		telehash.Log.Errorf("ping: error=%s", err)
+		return
+	}
+
+	telehash.Log.Infof("ping-pong: %s", buf[:n])
+}
+
+func pong(c *telehash.Channel) {
 	var (
 		buf = make([]byte, 1500)
 	)

@@ -46,6 +46,7 @@ func (c *channel_stateless_t) will_send_packet(pkt *pkt_t) error {
 
 func (c *channel_stateless_t) did_send_packet(pkt *pkt_t) {
 	c.snd_last_pkt_at = time.Now()
+	packet_pool_release(pkt)
 }
 
 // push_rcv_pkt()

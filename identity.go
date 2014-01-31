@@ -71,7 +71,7 @@ func LoadIdenities(path string) ([]*Identity, error) {
 		l []*Identity
 	)
 
-	err = json.NewDecoder(f).Decode(l)
+	err = json.NewDecoder(f).Decode(&l)
 	if err != nil {
 		return nil, err
 	}

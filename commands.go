@@ -19,36 +19,13 @@ func (cmd *cmd_peer_get) Exec(sw *Switch) error {
 	}
 	if cmd.make_new {
 		cmd.peer = make_peer(sw, cmd.hashname)
+
+		for _, hook := range sw.hook_new_peer {
+			hook.OnNewPeer(cmd.peer)
+		}
 	}
 	return nil
 }
-
-// type cmd_peer_add struct {
-//   hashname   Hashname
-//   peer       *Peer
-//   discovered bool
-// }
-
-// func (cmd *cmd_peer_add) Exec(sw *Switch) error {
-//   cmd.peer, cmd.discovered = sw.peers.add_peer(sw, cmd.hashname)
-
-//   if cmd.discovered {
-//     sw.log.Noticef("discovered: %s (add_peer)", cmd.peer)
-//   }
-
-//   return nil
-// }
-
-// type cmd_peer_get_closest struct {
-//   hashname Hashname
-//   n        int
-//   peers    []*Peer
-// }
-
-// func (cmd *cmd_peer_get_closest) Exec(sw *Switch) error {
-//   cmd.peers = sw.peers.find_closest_peers(cmd.hashname, cmd.n)
-//   return nil
-// }
 
 type cmd_line_get struct {
 	hashname Hashname
@@ -175,7 +152,7 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 		return errInvalidPkt
 	}
 
-	options := ChannelOptions{to: l.peer.hashname, Id: ipkt.priv_hdr.C, Type: ipkt.priv_hdr.Type, Reliablility: reliablility}
+	options := ChannelOptions{peer: l.peer, Id: ipkt.priv_hdr.C, Type: ipkt.priv_hdr.Type, Reliablility: reliablility}
 	channel, err := make_channel(l.sw, l, false, options)
 	if err != nil {
 		return err
@@ -263,7 +240,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 	l.log.Debugf("line pathing %s -> %s", local_hashname.Short(), l.peer.hashname.Short())
 
 	go func() {
-		if l.sw.path_handler.Negotiate(l.peer.hashname) {
+		if l.sw.path_handler.Negotiate(l.peer) {
 			l.sw.reactor.Cast(&cmd_line_opened{l})
 		} else {
 			l.sw.reactor.Cast(&cmd_line_close_broken{l})
@@ -373,7 +350,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 		return errNoOpenLine
 	}
 
-	line = sw.lines[cmd.options.to]
+	line = sw.lines[cmd.options.peer.hashname]
 	if line == nil {
 		return cmd.open_line(sw)
 	}
@@ -413,12 +390,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		err  error
 	)
 
-	{ // get the peer
-		cmd := cmd_peer_get{cmd.options.to, false, nil}
-		cmd.Exec(sw)
-		peer = cmd.peer
-	}
-
+	peer = cmd.options.peer
 	if peer == nil {
 		// seek
 		return ErrUnknownPeer
@@ -435,7 +407,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 		return err
 	}
 
-	sw.lines[cmd.options.to] = line
+	sw.lines[cmd.options.peer.hashname] = line
 	sw.met_running_lines.Update(int64(len(sw.lines)))
 
 	sw.reactor.Defer(&line.backlog)
@@ -605,14 +577,14 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) error {
 		)
 
 		if l.last_sync.After(time.Now().Add(-120 * time.Second)) {
-			if sw.path_handler.negotiate_netpath(l.peer.hashname, l.peer.active_path()) {
+			if sw.path_handler.negotiate_netpath(l.peer, l.peer.active_path()) {
 				l.path_timer.Reset(line_path_interval)
 				return
 			}
 			// else do full negotioation
 		}
 
-		if sw.path_handler.Negotiate(l.peer.hashname) {
+		if sw.path_handler.Negotiate(l.peer) {
 			l.last_sync = time.Now()
 			l.path_timer.Reset(line_path_interval)
 			return
