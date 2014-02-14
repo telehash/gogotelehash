@@ -56,11 +56,11 @@ func (a *Addr) String() string {
 func (a *Addr) DefaultPriority() int {
 	switch a.Category {
 	case iputil.CategoryLocal:
-		return 7
+		return 8
 	case iputil.CategoryLAN:
-		return 5
+		return 6
 	case iputil.CategoryWAN:
-		return 3
+		return 4
 	default:
 		return 0
 	}

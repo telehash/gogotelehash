@@ -8,6 +8,7 @@ import (
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
 	"strconv"
+	"sync"
 )
 
 const network = "ipv4"
@@ -21,7 +22,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Start(sw *telehash.Switch) error {
+func (t *Transport) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 	addr, err := net.ResolveUDPAddr("udp4", t.Addr)
 	if err != nil {
 		return err

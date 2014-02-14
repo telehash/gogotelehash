@@ -129,7 +129,6 @@ func (cmd *cmd_rcv_pkt) rcv_line_pkt(l *line_t, opkt *pkt_t) error {
 		return err
 	}
 
-	l.idle_timer.Reset(line_idle_timeout)
 	l.broken_timer.Reset(line_broken_timeout)
 
 	ipkt.peer = l.peer
@@ -278,9 +277,7 @@ func (cmd *cmd_line_opened) Exec(state interface{}) error {
 	stop_timer(l.open_timer)
 	l.open_timer = nil
 
-	l.path_timer = l.sw.runloop.CastAfter(line_path_interval, &cmd_line_snd_path{l})
 	l.broken_timer.Reset(line_broken_timeout)
-	l.idle_timer.Reset(line_idle_timeout)
 
 	l.log.Debugf("line opened")
 
@@ -473,8 +470,6 @@ func (cmd *cmd_line_close_idle) Exec(state interface{}) error {
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
-	stop_timer(cmd.line.idle_timer)
-	stop_timer(cmd.line.path_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -518,8 +513,6 @@ func (cmd *cmd_line_close_broken) Exec(state interface{}) error {
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
-	stop_timer(cmd.line.idle_timer)
-	stop_timer(cmd.line.path_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -563,8 +556,6 @@ func (cmd *cmd_line_close_down) Exec(state interface{}) error {
 
 	stop_timer(cmd.line.open_timer)
 	stop_timer(cmd.line.broken_timer)
-	stop_timer(cmd.line.idle_timer)
-	stop_timer(cmd.line.path_timer)
 
 	if cmd.line.prv_key != nil {
 		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
@@ -610,7 +601,6 @@ func (cmd *cmd_line_snd_path) Exec(state interface{}) error {
 
 		if l.last_sync.After(time.Now().Add(-120 * time.Second)) {
 			if sw.path_handler.negotiate_netpath(l.peer, l.peer.active_path()) {
-				l.path_timer.Reset(line_path_interval)
 				return
 			}
 			// else do full negotioation
@@ -618,7 +608,6 @@ func (cmd *cmd_line_snd_path) Exec(state interface{}) error {
 
 		if sw.path_handler.Negotiate(l.peer) {
 			l.last_sync = time.Now()
-			l.path_timer.Reset(line_path_interval)
 			return
 		}
 
@@ -677,6 +666,7 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(state interface{}) error {
 		channel.rcv_deadline_reached = false
 		if channel.rcv_deadline != nil {
 			stop_timer(channel.rcv_deadline)
+			channel.rcv_deadline = nil
 		}
 
 	case deadline.Before(now):
@@ -684,6 +674,7 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(state interface{}) error {
 		channel.rcv_deadline_reached = true
 		if channel.rcv_deadline != nil {
 			stop_timer(channel.rcv_deadline)
+			channel.rcv_deadline = nil
 		}
 		channel.reschedule()
 
@@ -693,7 +684,7 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(state interface{}) error {
 		if channel.rcv_deadline != nil {
 			channel.rcv_deadline.Reset(deadline.Sub(now))
 		} else {
-			sw.runloop.CastAfter(deadline.Sub(now), &cmd_channel_deadline_reached{channel})
+			channel.rcv_deadline = sw.runloop.CastAfter(deadline.Sub(now), &cmd_channel_deadline_reached{channel})
 		}
 
 	}

@@ -48,6 +48,7 @@ type Switch struct {
 func (s *Switch) Start() error {
 	var (
 		err error
+		wg  sync.WaitGroup
 	)
 
 	s.mtx.Lock()
@@ -117,7 +118,7 @@ func (s *Switch) Start() error {
 	}
 
 	for _, c := range s.components {
-		err = c.Start(s)
+		err = c.Start(s, &wg)
 		if err != nil {
 			break
 		}
@@ -137,6 +138,7 @@ func (s *Switch) Start() error {
 	s.stats_timer = s.runloop.CastAfter(5*time.Second, &cmd_stats_log{})
 	s.clean_timer = s.runloop.CastAfter(2*time.Second, &cmd_clean{})
 
+	wg.Wait()
 	return nil
 }
 
@@ -149,15 +151,18 @@ func (s *Switch) listen(t net.Transport) {
 	for {
 		n, addr, err := t.ReadFrom(buf)
 		if err == net.ErrTransportClosed {
+			s.log.Errorf("error=%s", err)
 			return
 		}
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			continue
 		}
 
 		pkt, err := decode_packet(buf[:n])
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			packet_pool_release(pkt)
 			continue
@@ -166,6 +171,7 @@ func (s *Switch) listen(t net.Transport) {
 
 		err = s.rcv_pkt(pkt)
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			continue
 		}
@@ -192,15 +198,19 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-func (s *Switch) Seek(hashname Hashname) *Peer {
+func (s *Switch) Seek(target Hashname) *Peer {
+	var (
+		peer *Peer
+	)
+
 	resp := make(chan *Peer, len(s.dhts))
 
 	for _, dht := range s.dhts {
-		go func() { peer, _ := dht.Seek(hashname); resp <- peer }()
+		go func() { peer, _ := dht.Seek(target); resp <- peer }()
 	}
 
 	for i := 0; i < len(s.dhts); i++ {
-		peer := <-resp
+		peer = <-resp
 		if peer != nil {
 			return peer
 		}

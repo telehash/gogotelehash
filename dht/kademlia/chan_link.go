@@ -20,6 +20,8 @@ type link_header struct {
 }
 
 func (d *DHT) open_link(peer *telehash.Peer) error {
+	telehash.Log.Errorf("opening link: to=%s", peer.Hashname().Short())
+
 	channel, err := peer.Open(telehash.ChannelOptions{Type: "link", Reliablility: telehash.UnreliableChannel})
 	if err != nil {
 		return err
@@ -51,6 +53,7 @@ func (l *link_t) run_requester() {
 		var (
 			hdr_in  link_header
 			hdr_out link_header
+			now     = time.Now()
 			err     error
 		)
 
@@ -59,17 +62,21 @@ func (l *link_t) run_requester() {
 
 		_, err = l.channel.SendPacket(&hdr_out, nil)
 		if err != nil {
+			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
-		l.channel.SetReceiveDeadline(time.Now().Add(5 * time.Second))
+		l.channel.SetReceiveDeadline(time.Now().Add(50 * time.Second))
 
 		_, err = l.channel.ReceivePacket(&hdr_in, nil)
 		if err != nil {
+			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
 		l.handle_pkt(&hdr_in)
+
+		time.Sleep(now.Sub(time.Now()) + 55*time.Second)
 	}
 }
 
@@ -88,6 +95,7 @@ func (l *link_t) run_responder() {
 
 		_, err = l.channel.ReceivePacket(&hdr_in, nil)
 		if err != nil {
+			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
@@ -98,6 +106,7 @@ func (l *link_t) run_responder() {
 
 		_, err = l.channel.SendPacket(&hdr_out, nil)
 		if err != nil {
+			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 	}
@@ -124,6 +133,8 @@ func (l *link_t) setup() {
 	l.log_distance = kad_bucket_for(l.dht.table.local_hashname, l.peer.Hashname())
 
 	l.dht.runloop.Cast(&cmd_link_add{l})
+
+	telehash.Log.Errorf("opened link: to=%s", l.peer.Hashname().Short())
 }
 
 func (l *link_t) cleanup() {
@@ -134,4 +145,6 @@ func (l *link_t) cleanup() {
 	}
 
 	l.dht.runloop.Cast(&cmd_link_remove{l})
+
+	telehash.Log.Errorf("closed link: to=%s", l.peer.Hashname().Short())
 }

@@ -3,6 +3,7 @@ package kademlia
 import (
 	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/runloop"
+	"sync"
 )
 
 type DHT struct {
@@ -11,11 +12,10 @@ type DHT struct {
 	sw          *telehash.Switch
 	table       seek_table
 	links       map[telehash.Hashname]*link_t
-	running     bool
 	runloop     runloop.RunLoop
 }
 
-func (d *DHT) Start(sw *telehash.Switch) error {
+func (d *DHT) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 	d.runloop.State = d
 	d.sw = sw
 	d.links = make(map[telehash.Hashname]*link_t)
@@ -25,25 +25,38 @@ func (d *DHT) Start(sw *telehash.Switch) error {
 
 	d.runloop.Run()
 
-	for _, seed := range d.Seeds {
-		peer := seed.ToPeer(sw)
-		if peer != nil {
-			d.open_link(peer)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for _, seed := range d.Seeds {
+			peer := seed.ToPeer(sw)
+			if peer != nil {
+				d.open_link(peer)
+			}
 		}
-	}
+	}()
 
 	return nil
 }
 
 func (d *DHT) Stop() error {
-	d.runloop.Cast(&cmd_shutdown{})
+	d.runloop.StopAndWait()
 	return nil
 }
 
 func (d *DHT) GetPeer(hashname telehash.Hashname) *telehash.Peer {
-	cmd := cmd_peer_get{hashname, nil}
+	link := d.get_link(hashname)
+	if link != nil {
+		return link.peer
+	}
+	return nil
+}
+
+func (d *DHT) get_link(hashname telehash.Hashname) *link_t {
+	cmd := cmd_link_get{hashname, nil}
 	d.runloop.Call(&cmd)
-	return cmd.peer
+	return cmd.link
 }
 
 func (d *DHT) closest_links(target telehash.Hashname, num int) []*link_t {
@@ -58,16 +71,12 @@ func (d *DHT) OnNewPeer(peer *telehash.Peer) {
 
 func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 	// try local first
-	links := d.closest_links(target, 5)
-	for _, link := range links {
-		peer := link.peer
-		if peer.Hashname() == target {
-			telehash.Log.Errorf("seek: peer=%s", peer)
-			return peer, nil
-		}
+	if link := d.get_link(target); link != nil {
+		return link.peer, nil
 	}
 
 	var (
+		links   = d.closest_links(target, 5)
 		in      = make(chan *telehash.Peer, len(links))
 		out     = make(chan *telehash.Peer)
 		skip    = map[telehash.Hashname]bool{}
@@ -76,6 +85,10 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 
 	defer close(in)
 	defer close(out)
+
+	if len(links) == 0 {
+		return nil, telehash.ErrPeerNotFound
+	}
 
 	// start some workers
 	for i := 0; i < 5; i++ {
@@ -101,7 +114,6 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 
 		via := peer.Hashname()
 		if via == target {
-			telehash.Log.Errorf("seek: peer=%s", peer)
 			return peer, nil // found peer
 		} else if !skip[via] {
 			// try to continue seeking
@@ -111,7 +123,6 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 		}
 	}
 
-	telehash.Log.Errorf("seek: peer=(nil)")
 	return nil, telehash.ErrPeerNotFound
 }
 
@@ -122,6 +133,10 @@ func (d *DHT) SeekClosest(target telehash.Hashname, n int) ([]*telehash.Peer, er
 
 	// get n closest known peers
 	links := d.closest_links(target, n)
+
+	if len(links) == 0 {
+		return nil, nil
+	}
 
 	var (
 		in         = make(chan *telehash.Peer, len(links))

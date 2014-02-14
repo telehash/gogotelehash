@@ -31,6 +31,8 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 		Reliablility: telehash.UnreliableChannel,
 	}
 
+	telehash.Log.Errorf("seek(client): snd %+v", req_header)
+
 	channel, err := via.Open(options)
 	if err != nil {
 		return nil, err
@@ -48,6 +50,8 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 	if err != nil {
 		return nil, err
 	}
+
+	telehash.Log.Errorf("seek(client): rcv %+v", res_header)
 
 	peers := make([]*telehash.Peer, 0, len(res_header.See))
 
@@ -99,6 +103,7 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 	var (
 		req_header seek_header
 		res_header seek_header
+		closest    []*link_t
 	)
 
 	_, err := channel.ReceivePacket(&req_header, nil)
@@ -106,12 +111,19 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 		return // drop
 	}
 
+	telehash.Log.Errorf("seek(server): rcv %+v", req_header)
+
 	seek, err := telehash.HashnameFromString(req_header.Seek)
 	if err != nil {
 		return // drop
 	}
 
-	closest := d.closest_links(seek, 25)
+	if link := d.get_link(seek); link != nil {
+		closest = []*link_t{link}
+	} else {
+		closest = d.closest_links(seek, 25)
+	}
+
 	see := make([]string, 0, len(closest))
 
 	for _, link := range closest {
@@ -140,4 +152,6 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 	if err != nil {
 		return
 	}
+
+	telehash.Log.Errorf("seek(server): snd %+v", res_header)
 }

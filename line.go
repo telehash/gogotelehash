@@ -8,9 +8,7 @@ import (
 )
 
 const (
-	line_idle_timeout   = 55 * time.Second
-	line_broken_timeout = 60 * time.Second
-	line_path_interval  = 10 * time.Second
+	line_broken_timeout = 120 * time.Second
 )
 
 type line_state uint32
@@ -38,10 +36,8 @@ type line_t struct {
 	channels  map[string]*Channel
 	last_sync time.Time
 
-	idle_timer   *time.Timer
 	broken_timer *time.Timer
 	open_timer   *time.Timer
-	path_timer   *time.Timer
 }
 
 func (l *line_t) Init(sw *Switch, peer *Peer) {
@@ -51,7 +47,6 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 
 	l.channels = make(map[string]*Channel, 10)
 
-	l.idle_timer = sw.runloop.CastAfter(line_idle_timeout, &cmd_line_close_idle{l})
 	l.broken_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
 	l.open_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_down{l})
 }

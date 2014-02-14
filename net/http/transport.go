@@ -9,6 +9,7 @@ import (
 	th "github.com/telehash/gogotelehash/net"
 	"net"
 	"net/http"
+	"sync"
 )
 
 const network = "http"
@@ -36,7 +37,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Start(sw *telehash.Switch) error {
+func (t *Transport) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 
 	if t.Config.HeartbeatTimeout == 0 {
 		t.Config.HeartbeatTimeout = 2

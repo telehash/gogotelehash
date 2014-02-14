@@ -92,6 +92,7 @@ func TestSeek(t *testing.T) {
 	defer c.Stop()
 
 	go func() {
+		time.Sleep(100 * time.Millisecond)
 		peer := b.Seek(c.LocalHashname())
 		telehash.Log.Noticef("b: seek=%+v", peer)
 		if peer == nil {
@@ -101,6 +102,7 @@ func TestSeek(t *testing.T) {
 	}()
 
 	go func() {
+		time.Sleep(110 * time.Millisecond)
 		peer := c.Seek(b.LocalHashname())
 		telehash.Log.Noticef("c: seek=%+v", peer)
 		if peer == nil {
