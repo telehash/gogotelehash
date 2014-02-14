@@ -198,7 +198,7 @@ OUTER:
 	}
 
 	if len(snd_buf) > 0 && c.miss_timer == nil {
-		c.channel.sw.reactor.CastAfter(100*time.Millisecond, &cmd_channel_snd_miss{c.channel, c})
+		c.channel.sw.runloop.CastAfter(100*time.Millisecond, &cmd_channel_snd_miss{c.channel, c})
 	}
 
 	c.rcv_last_ack_at = time.Now()
@@ -248,14 +248,14 @@ func (c *channel_reliable_t) pop_rcv_pkt() (*pkt_t, error) {
 	c.rcv_unacked++
 
 	if c.ack_timer == nil {
-		c.ack_timer = c.channel.sw.reactor.CastAfter(time.Second, &cmd_channel_ack{c.channel, c})
+		c.ack_timer = c.channel.sw.runloop.CastAfter(time.Second, &cmd_channel_ack{c.channel, c})
 	}
 
 	if c.rcv_unacked > 30 {
-		c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
+		c.channel.sw.runloop.Cast(&cmd_channel_ack{c.channel, c})
 	} else if c.snd_last_ack_at.IsZero() {
 		if !c.channel.initiator && c.read_last_seq.IsSet() {
-			c.channel.sw.reactor.Cast(&cmd_channel_ack{c.channel, c})
+			c.channel.sw.runloop.Cast(&cmd_channel_ack{c.channel, c})
 		} else {
 			c.snd_last_ack_at = time.Now()
 		}
@@ -316,7 +316,10 @@ type cmd_channel_ack struct {
 	imp     *channel_reliable_t
 }
 
-func (cmd *cmd_channel_ack) Exec(sw *Switch) error {
+func (cmd *cmd_channel_ack) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
 	var (
 		channel = cmd.channel
 		imp     = cmd.imp
@@ -350,7 +353,10 @@ type cmd_channel_snd_miss struct {
 	imp     *channel_reliable_t
 }
 
-func (cmd *cmd_channel_snd_miss) Exec(sw *Switch) error {
+func (cmd *cmd_channel_snd_miss) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
 	var (
 		channel   = cmd.channel
 		imp       = cmd.imp

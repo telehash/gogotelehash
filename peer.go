@@ -36,7 +36,7 @@ func (p *Peer) Open(options ChannelOptions) (*Channel, error) {
 	options.peer = p
 
 	cmd := cmd_channel_open{options, nil}
-	err := p.sw.reactor.Call(&cmd)
+	err := p.sw.runloop.Call(&cmd)
 	return cmd.channel, err
 }
 

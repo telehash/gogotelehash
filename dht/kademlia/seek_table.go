@@ -4,31 +4,31 @@ import (
 	"github.com/telehash/gogotelehash"
 )
 
-type peer_table struct {
+type seek_table struct {
 	local_hashname telehash.Hashname
-	num_peers      uint32
-	buckets        [][]*telehash.Peer
+	num_links      uint32
+	buckets        [][]*link_t
 }
 
-func (c *peer_table) Init(local_hashname telehash.Hashname) {
+func (c *seek_table) Init(local_hashname telehash.Hashname) {
 	c.local_hashname = local_hashname
-	c.buckets = make([][]*telehash.Peer, 32*8)
+	c.buckets = make([][]*link_t, 32*8)
 }
 
-func (c *peer_table) add_peer(peer *telehash.Peer) bool {
-	if peer == nil {
+func (c *seek_table) add(link *link_t) bool {
+	if link == nil {
 		return false
 	}
 
-	if c.get_peer(peer.Hashname()) == nil {
-		c.num_peers++
+	if c.get(link.peer.Hashname()) == nil {
+		c.num_links++
 
 		// determine bucket for HN
-		bucket := kad_bucket_for(c.local_hashname, peer.Hashname())
+		bucket := link.log_distance
 
 		// add the peer
 		l := c.buckets[bucket]
-		l = append(l, peer)
+		l = append(l, link)
 		c.buckets[bucket] = l
 
 		return true
@@ -37,15 +37,15 @@ func (c *peer_table) add_peer(peer *telehash.Peer) bool {
 	return false
 }
 
-func (c *peer_table) remove_peer(peer *telehash.Peer) {
+func (c *seek_table) remove(link *link_t) {
 	var (
-		bucket_idx = kad_bucket_for(c.local_hashname, peer.Hashname())
+		bucket_idx = link.log_distance
 		bucket     = c.buckets[bucket_idx]
 		idx        = -1
 	)
 
-	for i, p := range bucket {
-		if p == peer {
+	for i, l := range bucket {
+		if l == link {
 			idx = i
 			break
 		}
@@ -61,10 +61,10 @@ func (c *peer_table) remove_peer(peer *telehash.Peer) {
 	bucket = bucket[:len(bucket)-1]
 
 	c.buckets[bucket_idx] = bucket
-	c.num_peers--
+	c.num_links--
 }
 
-func (c *peer_table) get_peer(hashname telehash.Hashname) *telehash.Peer {
+func (c *seek_table) get(hashname telehash.Hashname) *link_t {
 	bucket_index := kad_bucket_for(c.local_hashname, hashname)
 
 	if bucket_index < 0 {
@@ -73,16 +73,16 @@ func (c *peer_table) get_peer(hashname telehash.Hashname) *telehash.Peer {
 
 	bucket := c.buckets[bucket_index]
 
-	for _, peer := range bucket {
-		if peer.Hashname() == hashname {
-			return peer
+	for _, link := range bucket {
+		if link.peer.Hashname() == hashname {
+			return link
 		}
 	}
 
 	return nil
 }
 
-func (c *peer_table) find_closest_peers(t telehash.Hashname, n int) []*telehash.Peer {
+func (c *seek_table) find_closest(t telehash.Hashname, n int) []*link_t {
 	bucket_index := kad_bucket_for(c.local_hashname, t)
 	delta := 0
 
@@ -91,13 +91,13 @@ func (c *peer_table) find_closest_peers(t telehash.Hashname, n int) []*telehash.
 	}
 
 	var (
-		peers = make([]*telehash.Peer, 0, 10)
+		links = make([]*link_t, 0, 10)
 	)
 
-	for len(peers) < n {
+	for len(links) < n {
 		if 0 <= bucket_index+delta && bucket_index+delta < 32*8 {
 			bucket := c.buckets[bucket_index+delta]
-			peers = append(peers, bucket...)
+			links = append(links, bucket...)
 		}
 
 		if delta <= 0 {
@@ -111,11 +111,11 @@ func (c *peer_table) find_closest_peers(t telehash.Hashname, n int) []*telehash.
 		}
 	}
 
-	kad_sort_peers(t, peers)
+	kad_sort_links(t, links)
 
-	if len(peers) > n {
-		peers = peers[:n]
+	if len(links) > n {
+		links = links[:n]
 	}
 
-	return peers
+	return links
 }

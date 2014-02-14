@@ -1,9 +1,7 @@
 package dht
 
 import (
-	"crypto/rsa"
 	"github.com/telehash/gogotelehash"
-	"github.com/telehash/gogotelehash/net"
 )
 
 type DHT interface {

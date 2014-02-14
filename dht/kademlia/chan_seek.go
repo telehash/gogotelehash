@@ -60,8 +60,6 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 		}
 
 		if hashname == d.sw.LocalHashname() {
-			// add address to main
-			// detect nat
 			continue // is self
 		}
 
@@ -113,10 +111,12 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 		return // drop
 	}
 
-	closest := d.table.find_closest_peers(seek, 25)
+	closest := d.closest_links(seek, 25)
 	see := make([]string, 0, len(closest))
 
-	for _, peer := range closest {
+	for _, link := range closest {
+		peer := link.peer
+
 		if peer.PublicKey() == nil {
 			continue // unable to forward peer requests to unless we know the public key
 		}

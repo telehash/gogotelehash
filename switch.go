@@ -7,6 +7,7 @@ import (
 	"github.com/fd/go-util/log"
 	"github.com/rcrowley/go-metrics"
 	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/runloop"
 	"sync"
 	"time"
 )
@@ -23,7 +24,7 @@ type Switch struct {
 	dhts           []privDHT
 	hook_new_peer  []HookNewPeer
 
-	reactor       reactor_t
+	runloop       runloop.RunLoop
 	lines         map[Hashname]*line_t
 	active_lines  map[string]*line_t
 	peer_handler  peer_handler
@@ -86,11 +87,11 @@ func (s *Switch) Start() error {
 	s.mux = NewSwitchMux()
 	s.mux.HandleFallback(s.Handler)
 
-	s.reactor.sw = s
+	s.runloop.State = s
 	s.peer_handler.init(s)
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
-	s.reactor.Run()
+	s.runloop.Run()
 
 	for _, c := range s.Components {
 		s.components = append(s.components, c)
@@ -133,8 +134,8 @@ func (s *Switch) Start() error {
 	}
 
 	s.running = true
-	s.stats_timer = s.reactor.CastAfter(5*time.Second, &cmd_stats_log{})
-	s.clean_timer = s.reactor.CastAfter(2*time.Second, &cmd_clean{})
+	s.stats_timer = s.runloop.CastAfter(5*time.Second, &cmd_stats_log{})
+	s.clean_timer = s.runloop.CastAfter(2*time.Second, &cmd_clean{})
 
 	return nil
 }
@@ -174,8 +175,8 @@ func (s *Switch) listen(t net.Transport) {
 func (s *Switch) Stop() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	s.reactor.Cast(&cmd_shutdown{})
-	s.reactor.StopAndWait()
+	s.runloop.Cast(&cmd_shutdown{})
+	s.runloop.StopAndWait()
 
 	for _, c := range s.components {
 		c.Stop()
@@ -210,13 +211,13 @@ func (s *Switch) Seek(hashname Hashname) *Peer {
 
 func (s *Switch) GetPeer(hashname Hashname, make_new bool) *Peer {
 	cmd := cmd_peer_get{hashname, make_new, nil}
-	s.reactor.Call(&cmd)
+	s.runloop.Call(&cmd)
 	return cmd.peer
 }
 
 func (s *Switch) get_line(to Hashname) *line_t {
 	cmd := cmd_line_get{to, nil}
-	s.reactor.Call(&cmd)
+	s.runloop.Call(&cmd)
 	return cmd.line
 }
 
@@ -230,7 +231,7 @@ func (s *Switch) get_active_line(to Hashname) *line_t {
 
 func (s *Switch) rcv_pkt(pkt *pkt_t) error {
 	cmd := cmd_rcv_pkt{pkt}
-	s.reactor.Cast(&cmd)
+	s.runloop.Cast(&cmd)
 	return nil
 }
 

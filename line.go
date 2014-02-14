@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/runloop"
 	"sync/atomic"
 	"time"
 )
@@ -33,7 +34,7 @@ type line_t struct {
 	shr_key *shared_line_key
 	state   line_state
 
-	backlog   backlog_t
+	backlog   runloop.Backlog
 	channels  map[string]*Channel
 	last_sync time.Time
 
@@ -50,9 +51,9 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 
 	l.channels = make(map[string]*Channel, 10)
 
-	l.idle_timer = sw.reactor.CastAfter(line_idle_timeout, &cmd_line_close_idle{l})
-	l.broken_timer = sw.reactor.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
-	l.open_timer = sw.reactor.CastAfter(line_broken_timeout, &cmd_line_close_down{l})
+	l.idle_timer = sw.runloop.CastAfter(line_idle_timeout, &cmd_line_close_idle{l})
+	l.broken_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
+	l.open_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_down{l})
 }
 
 func (l *line_t) open_with_peer() {

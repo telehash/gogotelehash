@@ -1,6 +1,8 @@
 
 build:
 	go get -v '.'
+	go get -v './net/...'
+	go get -v './dht/...'
 
 examples:
 	go get -v './_examples/telehash-ping'

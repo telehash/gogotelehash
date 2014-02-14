@@ -10,7 +10,11 @@ type cmd_peer_get struct {
 	peer     *Peer
 }
 
-func (cmd *cmd_peer_get) Exec(sw *Switch) error {
+func (cmd *cmd_peer_get) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	for _, dht := range sw.dhts {
 		cmd.peer = dht.GetPeer(cmd.hashname)
 		if cmd.peer != nil {
@@ -32,7 +36,11 @@ type cmd_line_get struct {
 	line     *line_t
 }
 
-func (cmd *cmd_line_get) Exec(sw *Switch) error {
+func (cmd *cmd_line_get) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	cmd.line = sw.lines[cmd.hashname]
 	return nil
 }
@@ -40,13 +48,17 @@ func (cmd *cmd_line_get) Exec(sw *Switch) error {
 type cmd_shutdown struct {
 }
 
-func (cmd *cmd_shutdown) Exec(sw *Switch) error {
+func (cmd *cmd_shutdown) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	sw.terminating = true
 
 	sw.log.Noticef("shutdown lines=%d", len(sw.lines))
 
 	for _, line := range sw.lines {
-		sw.reactor.CastAfter(10*time.Second, &cmd_line_close_broken{line})
+		sw.runloop.CastAfter(10*time.Second, &cmd_line_close_broken{line})
 	}
 
 	return nil
@@ -56,8 +68,9 @@ type cmd_rcv_pkt struct {
 	pkt *pkt_t
 }
 
-func (cmd *cmd_rcv_pkt) Exec(sw *Switch) error {
+func (cmd *cmd_rcv_pkt) Exec(state interface{}) error {
 	var (
+		sw   = state.(*Switch)
 		pkt  = cmd.pkt
 		peer *Peer
 	)
@@ -230,7 +243,7 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 
 	if reopen {
 		// done
-		l.backlog.RescheduleAll(&l.sw.reactor)
+		l.backlog.RescheduleAll(&l.sw.runloop)
 		return nil
 	}
 
@@ -241,9 +254,9 @@ func (cmd *cmd_rcv_pkt) rcv_open_pkt(l *line_t, pub *public_line_key, netpath *n
 
 	go func() {
 		if l.sw.path_handler.Negotiate(l.peer) {
-			l.sw.reactor.Cast(&cmd_line_opened{l})
+			l.sw.runloop.Cast(&cmd_line_opened{l})
 		} else {
-			l.sw.reactor.Cast(&cmd_line_close_broken{l})
+			l.sw.runloop.Cast(&cmd_line_close_broken{l})
 		}
 	}()
 
@@ -254,9 +267,10 @@ type cmd_line_opened struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_opened) Exec(sw *Switch) error {
+func (cmd *cmd_line_opened) Exec(state interface{}) error {
 	var (
-		l = cmd.line
+		sw = state.(*Switch)
+		l  = cmd.line
 	)
 
 	l.state = line_opened
@@ -264,13 +278,13 @@ func (cmd *cmd_line_opened) Exec(sw *Switch) error {
 	stop_timer(l.open_timer)
 	l.open_timer = nil
 
-	l.path_timer = l.sw.reactor.CastAfter(line_path_interval, &cmd_line_snd_path{l})
+	l.path_timer = l.sw.runloop.CastAfter(line_path_interval, &cmd_line_snd_path{l})
 	l.broken_timer.Reset(line_broken_timeout)
 	l.idle_timer.Reset(line_idle_timeout)
 
 	l.log.Debugf("line opened")
 
-	l.backlog.RescheduleAll(&l.sw.reactor)
+	l.backlog.RescheduleAll(&sw.runloop)
 	return nil
 }
 
@@ -281,8 +295,9 @@ type cmd_snd_pkt struct {
 	bypass_channel bool
 }
 
-func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
+func (cmd *cmd_snd_pkt) Exec(state interface{}) error {
 	var (
+		sw      = state.(*Switch)
 		channel = cmd.channel
 		line    = cmd.line
 		ipkt    = cmd.pkt
@@ -292,7 +307,7 @@ func (cmd *cmd_snd_pkt) Exec(sw *Switch) error {
 
 	if channel != nil && !cmd.bypass_channel {
 		if !channel.can_snd_pkt() {
-			sw.reactor.Defer(&channel.snd_backlog)
+			sw.runloop.Defer(&channel.snd_backlog)
 			return nil
 		}
 		err = channel.will_send_packet(ipkt)
@@ -339,8 +354,9 @@ type cmd_channel_open struct {
 	channel *Channel
 }
 
-func (cmd *cmd_channel_open) Exec(sw *Switch) error {
+func (cmd *cmd_channel_open) Exec(state interface{}) error {
 	var (
+		sw      = state.(*Switch)
 		line    *line_t
 		channel *Channel
 		err     error
@@ -356,7 +372,7 @@ func (cmd *cmd_channel_open) Exec(sw *Switch) error {
 	}
 	if !(line.state == line_pathing && cmd.options.Type == "path") {
 		if line.state != line_opened {
-			sw.reactor.Defer(&line.backlog)
+			sw.runloop.Defer(&line.backlog)
 			return nil
 		}
 	}
@@ -410,7 +426,7 @@ func (cmd *cmd_channel_open) open_line(sw *Switch) error {
 	sw.lines[cmd.options.peer.hashname] = line
 	sw.met_running_lines.Update(int64(len(sw.lines)))
 
-	sw.reactor.Defer(&line.backlog)
+	sw.runloop.Defer(&line.backlog)
 	return nil
 }
 
@@ -439,7 +455,11 @@ type cmd_line_close_idle struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_idle) Exec(sw *Switch) error {
+func (cmd *cmd_line_close_idle) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
@@ -480,7 +500,11 @@ type cmd_line_close_broken struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_broken) Exec(sw *Switch) error {
+func (cmd *cmd_line_close_broken) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
@@ -521,7 +545,11 @@ type cmd_line_close_down struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_close_down) Exec(sw *Switch) error {
+func (cmd *cmd_line_close_down) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	cmd.line.state = line_closed
 
 	for _, c := range cmd.line.channels {
@@ -562,7 +590,11 @@ type cmd_line_snd_path struct {
 	line *line_t
 }
 
-func (cmd *cmd_line_snd_path) Exec(sw *Switch) error {
+func (cmd *cmd_line_snd_path) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	if sw.terminating {
 		return nil
 	}
@@ -590,7 +622,7 @@ func (cmd *cmd_line_snd_path) Exec(sw *Switch) error {
 			return
 		}
 
-		sw.reactor.Cast(&cmd_line_close_broken{l})
+		sw.runloop.Cast(&cmd_line_close_broken{l})
 		l.log.Noticef("path failed (breaking the line)")
 	}()
 
@@ -603,13 +635,14 @@ type cmd_get_rcv_pkt struct {
 	err     error
 }
 
-func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) error {
+func (cmd *cmd_get_rcv_pkt) Exec(state interface{}) error {
 	var (
+		sw      = state.(*Switch)
 		channel = cmd.channel
 	)
 
 	if !channel.can_pop_rcv_pkt() {
-		sw.reactor.Defer(&channel.rcv_backlog)
+		sw.runloop.Defer(&channel.rcv_backlog)
 		return nil
 	}
 
@@ -617,7 +650,7 @@ func (cmd *cmd_get_rcv_pkt) Exec(sw *Switch) error {
 	cmd.pkt = pkt
 
 	if err == nil && pkt == nil {
-		sw.reactor.Defer(&channel.rcv_backlog)
+		sw.runloop.Defer(&channel.rcv_backlog)
 		return nil
 	}
 
@@ -629,8 +662,9 @@ type cmd_channel_set_rcv_deadline struct {
 	deadline time.Time
 }
 
-func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) error {
+func (cmd *cmd_channel_set_rcv_deadline) Exec(state interface{}) error {
 	var (
+		sw       = state.(*Switch)
 		channel  = cmd.channel
 		deadline = cmd.deadline
 		now      = time.Now()
@@ -659,7 +693,7 @@ func (cmd *cmd_channel_set_rcv_deadline) Exec(sw *Switch) error {
 		if channel.rcv_deadline != nil {
 			channel.rcv_deadline.Reset(deadline.Sub(now))
 		} else {
-			sw.reactor.CastAfter(deadline.Sub(now), &cmd_channel_deadline_reached{channel})
+			sw.runloop.CastAfter(deadline.Sub(now), &cmd_channel_deadline_reached{channel})
 		}
 
 	}
@@ -671,7 +705,7 @@ type cmd_channel_deadline_reached struct {
 	channel *Channel
 }
 
-func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) error {
+func (cmd *cmd_channel_deadline_reached) Exec(state interface{}) error {
 	var (
 		channel = cmd.channel
 	)
@@ -683,15 +717,23 @@ func (cmd *cmd_channel_deadline_reached) Exec(sw *Switch) error {
 
 type cmd_stats_log struct{}
 
-func (cmd *cmd_stats_log) Exec(sw *Switch) error {
+func (cmd *cmd_stats_log) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	sw.log.Noticef("stats: %s", sw.Stats())
-	sw.reactor.CastAfter(5*time.Second, cmd)
+	sw.runloop.CastAfter(5*time.Second, cmd)
 	return nil
 }
 
 type cmd_clean struct{}
 
-func (cmd *cmd_clean) Exec(sw *Switch) error {
+func (cmd *cmd_clean) Exec(state interface{}) error {
+	var (
+		sw = state.(*Switch)
+	)
+
 	if sw.terminating {
 		return nil
 	}
@@ -710,7 +752,7 @@ func (cmd *cmd_clean) Exec(sw *Switch) error {
 		}
 	}
 
-	sw.reactor.CastAfter(2*time.Second, cmd)
+	sw.runloop.CastAfter(2*time.Second, cmd)
 	return nil
 }
 

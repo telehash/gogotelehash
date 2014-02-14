@@ -2,91 +2,66 @@ package kademlia
 
 import (
 	"github.com/telehash/gogotelehash"
-	"time"
+	"github.com/telehash/gogotelehash/runloop"
 )
 
 type DHT struct {
-	Seeds    []*telehash.Identity
-	sw       *telehash.Switch
-	table    peer_table
-	shutdown chan bool
+	DisableSeed bool
+	Seeds       []*telehash.Identity
+	sw          *telehash.Switch
+	table       seek_table
+	links       map[telehash.Hashname]*link_t
+	running     bool
+	runloop     runloop.RunLoop
 }
 
 func (d *DHT) Start(sw *telehash.Switch) error {
+	d.runloop.State = d
 	d.sw = sw
-	d.shutdown = make(chan bool, 1)
+	d.links = make(map[telehash.Hashname]*link_t)
 	d.table.Init(sw.LocalHashname())
 	telehash.InternalMux(sw).HandleFunc("seek", d.serve_seek)
+	telehash.InternalMux(sw).HandleFunc("link", d.serve_link)
 
-	for _, seed := range d.Seeds {
-		peer := seed.ToPeer(sw)
-		if peer != nil {
-			d.table.add_peer(peer)
-		}
-	}
+	d.runloop.Run()
 
-	go d.run_maintainer()
+	panic("open links")
+	// for _, seed := range d.Seeds {
+	//   peer := seed.ToPeer(sw)
+	//   if peer != nil {
+	//     d.table.add_peer(peer)
+	//   }
+	// }
 
 	return nil
 }
 
 func (d *DHT) Stop() error {
-	d.shutdown <- true
+	d.runloop.Cast(&cmd_shutdown{})
 	return nil
 }
 
-func (d *DHT) run_maintainer() {
-	var (
-		timer = time.NewTicker(55 * time.Second)
-	)
-
-	defer timer.Stop()
-
-	d.maintain()
-
-	for {
-		select {
-		case <-d.shutdown:
-			return
-		case <-timer.C:
-			d.maintain()
-		}
-	}
-}
-
-func (d *DHT) maintain() {
-	self := d.sw.LocalHashname()
-
-	for _, b := range d.table.buckets {
-		for _, via := range b {
-			peers, _ := d.cmd_seek(self, via)
-			for _, peer := range peers {
-				d.table.add_peer(peer)
-			}
-		}
-	}
-
-	peers, _ := d.SeekClosest(telehash.Hashname{
-		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-	}, 8)
-	for _, peer := range peers {
-		d.table.add_peer(peer)
-	}
-}
-
 func (d *DHT) GetPeer(hashname telehash.Hashname) *telehash.Peer {
-	return d.table.get_peer(hashname)
+	cmd := cmd_peer_get{hashname, nil}
+	d.runloop.Call(&cmd)
+	return cmd.peer
+}
+
+func (d *DHT) closest_links(target telehash.Hashname, num int) []*link_t {
+	cmd := cmd_link_closest{target, num, nil}
+	d.runloop.Call(&cmd)
+	return cmd.links
 }
 
 func (d *DHT) OnNewPeer(peer *telehash.Peer) {
-	d.table.add_peer(peer)
+	d.runloop.Cast(&evt_peer_new{peer})
 }
 
 func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 	// try local first
-	peers := d.table.find_closest_peers(target, 5)
-	for _, peer := range peers {
+	links := d.closest_links(target, 5)
+	for _, link := range links {
+		peer := link.peer
 		if peer.Hashname() == target {
 			telehash.Log.Errorf("seek: peer=%s", peer)
 			return peer, nil
@@ -94,7 +69,7 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 	}
 
 	var (
-		in      = make(chan *telehash.Peer, len(peers))
+		in      = make(chan *telehash.Peer, len(links))
 		out     = make(chan *telehash.Peer)
 		skip    = map[telehash.Hashname]bool{}
 		pending int
@@ -108,11 +83,11 @@ func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {
 		go d.do_seek(target, in, out)
 	}
 
-	// enqueue with closest known peers
-	for _, peer := range peers {
-		skip[peer.Hashname()] = true
+	// enqueue with closest known links
+	for _, link := range links {
+		skip[link.peer.Hashname()] = true
 		pending++
-		in <- peer
+		in <- link.peer
 	}
 
 	// handle results
@@ -147,10 +122,10 @@ func (d *DHT) SeekClosest(target telehash.Hashname, n int) ([]*telehash.Peer, er
 	}
 
 	// get n closest known peers
-	peers := d.table.find_closest_peers(target, n)
+	links := d.closest_links(target, n)
 
 	var (
-		in         = make(chan *telehash.Peer, len(peers))
+		in         = make(chan *telehash.Peer, len(links))
 		out        = make(chan *telehash.Peer)
 		skip       = map[telehash.Hashname]bool{}
 		candidates []*telehash.Peer
@@ -165,11 +140,11 @@ func (d *DHT) SeekClosest(target telehash.Hashname, n int) ([]*telehash.Peer, er
 		go d.do_seek(target, in, out)
 	}
 
-	// enqueue with closest known peers
-	for _, peer := range peers {
-		skip[peer.Hashname()] = true
+	// enqueue with closest known links
+	for _, link := range links {
+		skip[link.peer.Hashname()] = true
 		pending++
-		in <- peer
+		in <- link.peer
 	}
 
 	// handle results

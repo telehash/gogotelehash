@@ -74,6 +74,39 @@ func (l *peer_sorter) Swap(i, j int) {
 	l.dist[i], l.dist[j] = l.dist[j], l.dist[i]
 }
 
+func kad_sort_links(target telehash.Hashname, list []*link_t) {
+	s := link_sorter{
+		target: target,
+		list:   list,
+		dist:   make([]kad_distance, len(list)),
+	}
+
+	for i, link := range list {
+		s.dist[i] = kad_distance_between(target, link.peer.Hashname())
+	}
+
+	sort.Sort(&s)
+}
+
+type link_sorter struct {
+	target telehash.Hashname
+	list   []*link_t
+	dist   []kad_distance
+}
+
+func (l *link_sorter) Len() int {
+	return len(l.list)
+}
+
+func (l *link_sorter) Less(i, j int) bool {
+	return kad_compare(l.dist[i], l.dist[j]) < 0
+}
+
+func (l *link_sorter) Swap(i, j int) {
+	l.list[i], l.list[j] = l.list[j], l.list[i]
+	l.dist[i], l.dist[j] = l.dist[j], l.dist[i]
+}
+
 func kad_distance_between(a, b telehash.Hashname) kad_distance {
 	var (
 		d kad_distance
