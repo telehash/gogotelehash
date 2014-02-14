@@ -2,7 +2,7 @@ package telehash
 
 import (
 	"fmt"
-	"github.com/rcrowley/go-metrics"
+	// "github.com/rcrowley/go-metrics"
 	"runtime"
 	"time"
 )
@@ -41,10 +41,10 @@ func (s *Switch) Stats() SwitchStats {
 	stats.NumOpenLines = int(s.met_open_lines.Value())
 	stats.NumRunningLines = int(s.met_running_lines.Value())
 	s.relay_handler.PopulateStats(&stats)
-	stats.ReactorQueueDepth = s.met.Get("reactor.queue.depth").(metrics.Counter).Count()
-	stats.ReactorExecDuration = time.Duration(s.met.Get("reactor.exec.duration").(metrics.Timer).Mean())
-	stats.ReactorExecLatency = time.Duration(s.met.Get("reactor.exec.latency").(metrics.Timer).Mean())
-	stats.ReactorDeferCount = s.met.Get("reactor.defer.count").(metrics.Counter).Count()
+	// stats.ReactorQueueDepth = s.met.Get("reactor.queue.depth").(metrics.Counter).Count()
+	// stats.ReactorExecDuration = time.Duration(s.met.Get("reactor.exec.duration").(metrics.Timer).Mean())
+	// stats.ReactorExecLatency = time.Duration(s.met.Get("reactor.exec.latency").(metrics.Timer).Mean())
+	// stats.ReactorDeferCount = s.met.Get("reactor.defer.count").(metrics.Counter).Count()
 
 	return stats
 }

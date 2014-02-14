@@ -25,13 +25,12 @@ func (d *DHT) Start(sw *telehash.Switch) error {
 
 	d.runloop.Run()
 
-	panic("open links")
-	// for _, seed := range d.Seeds {
-	//   peer := seed.ToPeer(sw)
-	//   if peer != nil {
-	//     d.table.add_peer(peer)
-	//   }
-	// }
+	for _, seed := range d.Seeds {
+		peer := seed.ToPeer(sw)
+		if peer != nil {
+			d.open_link(peer)
+		}
+	}
 
 	return nil
 }

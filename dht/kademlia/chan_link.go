@@ -19,6 +19,30 @@ type link_header struct {
 	See  []string `json:"see,omitempty"`
 }
 
+func (d *DHT) open_link(peer *telehash.Peer) error {
+	channel, err := peer.Open(telehash.ChannelOptions{Type: "link", Reliablility: telehash.UnreliableChannel})
+	if err != nil {
+		return err
+	}
+
+	l := &link_t{
+		dht:     d,
+		channel: channel,
+	}
+
+	go l.run_requester()
+	return nil
+}
+
+func (d *DHT) serve_link(channel *telehash.Channel) {
+	l := &link_t{
+		dht:     d,
+		channel: channel,
+	}
+
+	l.run_responder()
+}
+
 func (l *link_t) run_requester() {
 	l.setup()
 	defer l.cleanup()

@@ -9,10 +9,10 @@ type evt_peer_new struct {
 }
 
 func (evt *evt_peer_new) Exec(state interface{}) error {
-	var (
-		dht = state.(*DHT)
-	)
+	// var (
+	//   dht = state.(*DHT)
+	// )
 
-	panic("open link")
+	// panic("open link")
 	return nil
 }
