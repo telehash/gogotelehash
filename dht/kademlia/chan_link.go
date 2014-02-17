@@ -60,6 +60,10 @@ func (l *link_t) run_requester() {
 		// announce seeder ability
 		hdr_out.Seed = !l.dht.DisableSeed
 
+		// help fill buckets of peer
+		closest := l.dht.closest_links(l.peer.Hashname(), 9)
+		hdr_out.See = l.dht.encode_see_entries(closest)
+
 		_, err = l.channel.SendPacket(&hdr_out, nil)
 		if err != nil {
 			telehash.Log.Errorf("error=%s", err)
@@ -104,6 +108,10 @@ func (l *link_t) run_responder() {
 		// announce seeder ability
 		hdr_out.Seed = !l.dht.DisableSeed
 
+		// help fill buckets of peer
+		closest := l.dht.closest_links(l.peer.Hashname(), 9)
+		hdr_out.See = l.dht.encode_see_entries(closest)
+
 		_, err = l.channel.SendPacket(&hdr_out, nil)
 		if err != nil {
 			telehash.Log.Errorf("error=%s", err)
@@ -124,6 +132,18 @@ func (l *link_t) handle_pkt(hdr_in *link_header) {
 		} else {
 			// remove from seek table
 			l.dht.runloop.Cast(&cmd_seek_table_remove{l})
+		}
+	}
+
+	// open links to .See
+	if len(hdr_in.See) > 0 {
+		peers := l.dht.decode_see_entries(hdr_in.See, l.peer)
+		for _, peer := range peers {
+			link := l.dht.get_link(peer.Hashname())
+			telehash.Log.Noticef("link=%+v (nil=%v)", link, link == nil)
+			if link == nil {
+				go l.dht.open_link(peer)
+			}
 		}
 	}
 }

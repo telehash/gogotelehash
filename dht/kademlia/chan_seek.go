@@ -2,8 +2,6 @@ package kademlia
 
 import (
 	"github.com/telehash/gogotelehash"
-	"github.com/telehash/gogotelehash/net"
-	"strings"
 	"time"
 )
 
@@ -52,38 +50,7 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 	}
 
 	telehash.Log.Errorf("seek(client): rcv %+v", res_header)
-
-	peers := make([]*telehash.Peer, 0, len(res_header.See))
-
-	for _, rec := range res_header.See {
-		fields := strings.Split(rec, ",")
-
-		hashname, err := telehash.HashnameFromString(fields[0])
-		if err != nil {
-			continue
-		}
-
-		if hashname == d.sw.LocalHashname() {
-			continue // is self
-		}
-
-		if hashname == via.Hashname() {
-			continue
-		}
-
-		peer := d.sw.GetPeer(hashname, true)
-		peer.AddVia(via.Hashname())
-
-		peers = append(peers, peer)
-
-		if len(fields) > 1 {
-			net, addr, err := net.DecodeSee(fields[1:])
-			if err == nil && net != "" {
-				peer.AddAddress(net, addr)
-			}
-		}
-	}
-
+	peers := d.decode_see_entries(res_header.See, via)
 	return peers, nil
 }
 
@@ -124,28 +91,7 @@ func (d *DHT) serve_seek(channel *telehash.Channel) {
 		closest = d.closest_links(seek, 25)
 	}
 
-	see := make([]string, 0, len(closest))
-
-	for _, link := range closest {
-		peer := link.peer
-
-		if peer.PublicKey() == nil {
-			continue // unable to forward peer requests to unless we know the public key
-		}
-
-		if !peer.IsConnected() {
-			continue
-		}
-
-		fields := peer.FormatSeeAddress()
-		if len(fields) > 0 {
-			see = append(see, peer.Hashname().String()+","+strings.Join(fields, ","))
-		} else {
-			see = append(see, peer.Hashname().String())
-		}
-	}
-
-	res_header.See = see
+	res_header.See = d.encode_see_entries(closest)
 	res_header.end = true
 
 	_, err = channel.SendPacket(&res_header, nil)

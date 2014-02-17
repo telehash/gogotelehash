@@ -25,19 +25,21 @@ func (d *DHT) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 
 	d.runloop.Run()
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		for _, seed := range d.Seeds {
-			peer := seed.ToPeer(sw)
-			if peer != nil {
-				d.open_link(peer)
-			}
-		}
-	}()
+	for _, seed := range d.Seeds {
+		wg.Add(1)
+		go d.do_seed(seed, wg)
+	}
 
 	return nil
+}
+
+func (d *DHT) do_seed(seed *telehash.Identity, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	peer := seed.ToPeer(d.sw)
+	if peer != nil {
+		d.open_link(peer)
+	}
 }
 
 func (d *DHT) Stop() error {
@@ -63,10 +65,6 @@ func (d *DHT) closest_links(target telehash.Hashname, num int) []*link_t {
 	cmd := cmd_link_closest{target, num, nil}
 	d.runloop.Call(&cmd)
 	return cmd.links
-}
-
-func (d *DHT) OnNewPeer(peer *telehash.Peer) {
-	d.runloop.Cast(&evt_peer_new{peer})
 }
 
 func (d *DHT) Seek(target telehash.Hashname) (*telehash.Peer, error) {

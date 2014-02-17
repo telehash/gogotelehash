@@ -44,10 +44,6 @@ func (a *Addr) PublishWithPeer() bool {
 	return a.Category == iputil.CategoryWAN
 }
 
-func (a *Addr) PublishWithSeek() bool {
-	return a.Category == iputil.CategoryWAN
-}
-
 func (a *Addr) String() string {
 	return fmt.Sprintf("%s:%d cat=%s", a.IP, a.Port, a.Category)
 }

@@ -2,7 +2,6 @@ package ipv4
 
 import (
 	"encoding/json"
-	"errors"
 	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
@@ -120,26 +119,6 @@ func _net_conn_is_closed_err(err error) bool {
 }
 
 func init() {
-	th.RegisterSeeEncoder("ipv4", func(addr th.Addr) ([]string, error) {
-		if a, ok := addr.(*Addr); ok && a != nil {
-			return []string{a.IP.String(), strconv.Itoa(a.Port)}, nil
-		}
-		return nil, nil
-	})
-
-	th.RegisterSeeDecoder("ipv4", func(fields []string) (th.Addr, error) {
-		if len(fields) != 2 {
-			return nil, errors.New("invalid ipv4 see entry")
-		}
-
-		addr, err := ResolveAddr(net.JoinHostPort(fields[0], fields[1]))
-		if err != nil {
-			return nil, errors.New("invalid ipv4 see entry")
-		}
-
-		return addr, nil
-	})
-
 	th.RegisterPathEncoder("ipv4", func(n th.Addr) ([]byte, error) {
 		a := n.(*Addr)
 

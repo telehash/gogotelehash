@@ -182,18 +182,11 @@ func (p *Peer) can_open() bool {
 	return p.pubkey != nil && len(p.paths) > 0 || len(p.via) > 0
 }
 
-func (peer *Peer) FormatSeeAddress() []string {
-	if peer == nil {
-		return nil
+func (p *Peer) ActivePath() (string, net.Addr) {
+	np := p.active_path()
+	if np == nil {
+		return "", nil
 	}
 
-	for _, np := range peer.net_paths() {
-		if np.Address.PublishWithSeek() {
-			if fields, err := net.EncodeSee(np.Network, np.Address); err == nil && len(fields) > 0 {
-				return fields
-			}
-		}
-	}
-
-	return nil
+	return np.Network, np.Address
 }
