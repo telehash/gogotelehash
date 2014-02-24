@@ -21,6 +21,7 @@ func (d *DHT) cmd_seek(seek telehash.Hashname, via *telehash.Peer) ([]*telehash.
 	)
 
 	req_header = seek_header{
+		// Seek:  telehash.HashnamePrefix(via.Hashname(), seek),
 		Seek: seek.String(),
 	}
 
