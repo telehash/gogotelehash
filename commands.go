@@ -335,11 +335,11 @@ func (cmd *cmd_snd_pkt) Exec(state interface{}) error {
 		return err
 	}
 
+	if channel != nil {
+		channel.log.Debugf("snd pkt:\nhdr=%s\nprv-hdr=%+v", ipkt.hdr_value, ipkt.priv_hdr)
+	}
 	if channel != nil && !cmd.bypass_channel {
 		channel.did_send_packet(ipkt)
-	}
-	if channel != nil {
-		channel.log.Debugf("snd pkt:\nhdr=%s\nprv-hdr=%+v", ipkt.hdr, ipkt.priv_hdr)
 	}
 
 	// line.log.Debugf("snd pkt:\nhdr=%s\nprv-hdr=%+v", opkt.hdr, opkt.priv_hdr)
@@ -446,49 +446,6 @@ func (cmd *cmd_channel_open) open(l *line_t, peer *Peer) error {
 		// TODO seek?
 		return ErrPeerBroken
 	}
-}
-
-type cmd_line_close_idle struct {
-	line *line_t
-}
-
-func (cmd *cmd_line_close_idle) Exec(state interface{}) error {
-	var (
-		sw = state.(*Switch)
-	)
-
-	cmd.line.state = line_closed
-
-	for _, c := range cmd.line.channels {
-		c.mark_as_broken()
-		c.rcv_backlog.CancelAll(ErrChannelBroken)
-		c.snd_backlog.CancelAll(ErrChannelBroken)
-	}
-
-	cmd.line.backlog.CancelAll(ErrChannelBroken)
-	sw.met_channels.Dec(int64(len(cmd.line.channels)))
-
-	stop_timer(cmd.line.open_timer)
-	stop_timer(cmd.line.broken_timer)
-
-	if cmd.line.prv_key != nil {
-		if _, p := sw.active_lines[cmd.line.prv_key.id]; p {
-			delete(sw.active_lines, cmd.line.prv_key.id)
-			sw.met_open_lines.Update(int64(len(sw.active_lines)))
-		}
-	}
-	if cmd.line.peer != nil {
-		if _, p := sw.lines[cmd.line.peer.hashname]; p {
-			delete(sw.lines, cmd.line.peer.hashname)
-			sw.met_running_lines.Update(int64(len(sw.lines)))
-		}
-	}
-
-	cmd.line.log.Noticef("line closed: peer=%s (reason=%s)",
-		cmd.line.peer.String(),
-		"idle")
-
-	return nil
 }
 
 type cmd_line_close_broken struct {
@@ -702,7 +659,7 @@ func (cmd *cmd_channel_deadline_reached) Exec(state interface{}) error {
 	)
 
 	channel.rcv_deadline_reached = true
-	channel.reschedule()
+	channel.reschedule_all()
 	return nil
 }
 

@@ -77,6 +77,8 @@ func encode_packet(pkt *pkt_t) ([]byte, error) {
 		header_data = header_data[:offset]
 	}
 
+	Log.Debugf("snd pkt:\nhdr=%s", header_data)
+
 	data, err := encode_raw_packet(header_data, pkt.body)
 	buffer_pool_release(header_data)
 	if err != nil {

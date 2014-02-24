@@ -22,6 +22,19 @@ const (
 	line_closed
 )
 
+var line_state_strings = map[line_state]string{
+	line_pending: "pending",
+	line_peering: "peering",
+	line_opening: "opening",
+	line_pathing: "pathing",
+	line_opened:  "opened",
+	line_closed:  "closed",
+}
+
+func (l line_state) String() string {
+	return line_state_strings[l]
+}
+
 type line_t struct {
 	sw   *Switch
 	peer *Peer

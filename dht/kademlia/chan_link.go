@@ -1,9 +1,8 @@
 package kademlia
 
 import (
-	"time"
-
 	"github.com/telehash/gogotelehash"
+	"time"
 )
 
 type link_t struct {
@@ -12,42 +11,45 @@ type link_t struct {
 	log_distance int
 	peer         *telehash.Peer
 	channel      *telehash.Channel
+	created_at   time.Time
+	last_seen    time.Time
 }
 
 type link_header struct {
-	Seed bool     `json:"seek"`
+	Seed bool     `json:"seed"`
 	See  []string `json:"see,omitempty"`
 }
 
 func (d *DHT) open_link(peer *telehash.Peer) error {
-	telehash.Log.Errorf("opening link: to=%s", peer.Hashname().Short())
-
-	channel, err := peer.Open(telehash.ChannelOptions{Type: "link", Reliablility: telehash.UnreliableChannel})
+	cmd := cmd_link_open{peer: peer}
+	err := d.runloop.Call(&cmd)
 	if err != nil {
 		return err
 	}
-
-	l := &link_t{
-		dht:     d,
-		channel: channel,
-	}
-
-	go l.run_requester()
 	return nil
 }
 
 func (d *DHT) serve_link(channel *telehash.Channel) {
-	l := &link_t{
-		dht:     d,
-		channel: channel,
+	cmd := cmd_link_open{peer: channel.Peer(), channel: channel}
+	err := d.runloop.Call(&cmd)
+	if err != nil {
+		telehash.Log.Errorf("dht: error=%s", err)
+		return
 	}
 
-	l.run_responder()
+	cmd.link.run_responder()
 }
 
 func (l *link_t) run_requester() {
-	l.setup()
 	defer l.cleanup()
+
+	channel, err := l.peer.Open(telehash.ChannelOptions{Type: "link", Reliablility: telehash.UnreliableChannel})
+	if err != nil {
+		return
+	}
+	l.channel = channel
+
+	telehash.Log.Errorf("opened link: link=%p peer=%s type=requester", l, l.peer.Hashname().Short())
 
 	for {
 		var (
@@ -66,7 +68,6 @@ func (l *link_t) run_requester() {
 
 		_, err = l.channel.SendPacket(&hdr_out, nil)
 		if err != nil {
-			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
@@ -74,7 +75,6 @@ func (l *link_t) run_requester() {
 
 		_, err = l.channel.ReceivePacket(&hdr_in, nil)
 		if err != nil {
-			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
@@ -85,7 +85,12 @@ func (l *link_t) run_requester() {
 }
 
 func (l *link_t) run_responder() {
-	l.setup()
+	var (
+		last_snd time.Time
+	)
+
+	telehash.Log.Errorf("opened link: link=%p peer=%s type=responder", l, l.peer.Hashname().Short())
+
 	defer l.cleanup()
 
 	for {
@@ -99,23 +104,25 @@ func (l *link_t) run_responder() {
 
 		_, err = l.channel.ReceivePacket(&hdr_in, nil)
 		if err != nil {
-			telehash.Log.Errorf("error=%s", err)
 			return
 		}
 
 		l.handle_pkt(&hdr_in)
 
-		// announce seeder ability
-		hdr_out.Seed = !l.dht.DisableSeed
+		if last_snd.Before(time.Now().Add(-10 * time.Second)) {
+			// announce seeder ability
+			hdr_out.Seed = !l.dht.DisableSeed
 
-		// help fill buckets of peer
-		closest := l.dht.closest_links(l.peer.Hashname(), 9)
-		hdr_out.See = l.dht.encode_see_entries(closest)
+			// help fill buckets of peer
+			closest := l.dht.closest_links(l.peer.Hashname(), 9)
+			hdr_out.See = l.dht.encode_see_entries(closest)
 
-		_, err = l.channel.SendPacket(&hdr_out, nil)
-		if err != nil {
-			telehash.Log.Errorf("error=%s", err)
-			return
+			_, err = l.channel.SendPacket(&hdr_out, nil)
+			if err != nil {
+				return
+			}
+
+			last_snd = time.Now()
 		}
 	}
 }
@@ -139,32 +146,27 @@ func (l *link_t) handle_pkt(hdr_in *link_header) {
 	if len(hdr_in.See) > 0 {
 		peers := l.dht.decode_see_entries(hdr_in.See, l.peer)
 		for _, peer := range peers {
-			link := l.dht.get_link(peer.Hashname())
-			telehash.Log.Noticef("link=%+v (nil=%v)", link, link == nil)
-			if link == nil {
-				go l.dht.open_link(peer)
-			}
+			go l.dht.open_link(peer)
 		}
 	}
+
+	l.last_seen = time.Now()
 }
 
 func (l *link_t) setup() {
-	l.peer = l.channel.Peer()
+	l.created_at = time.Now()
+	l.last_seen = l.created_at
 	l.log_distance = kad_bucket_for(l.dht.table.local_hashname, l.peer.Hashname())
-
-	l.dht.runloop.Cast(&cmd_link_add{l})
-
-	telehash.Log.Errorf("opened link: to=%s", l.peer.Hashname().Short())
 }
 
 func (l *link_t) cleanup() {
-	l.channel.Close()
+	if l.channel != nil {
+		l.channel.Close()
+	}
 
 	if l.seed {
 		l.dht.runloop.Cast(&cmd_seek_table_remove{l})
 	}
 
 	l.dht.runloop.Cast(&cmd_link_remove{l})
-
-	telehash.Log.Errorf("closed link: to=%s", l.peer.Hashname().Short())
 }

@@ -7,7 +7,7 @@ type cmd_link_remove struct {
 func (cmd *cmd_link_remove) Exec(state interface{}) error {
 	var (
 		dht      = state.(*DHT)
-		hashname = cmd.link.channel.To()
+		hashname = cmd.link.peer.Hashname()
 	)
 
 	// link was claimed by another channel

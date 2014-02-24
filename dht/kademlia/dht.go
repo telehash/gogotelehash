@@ -4,6 +4,7 @@ import (
 	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/runloop"
 	"sync"
+	"time"
 )
 
 type DHT struct {
@@ -13,6 +14,7 @@ type DHT struct {
 	table       seek_table
 	links       map[telehash.Hashname]*link_t
 	runloop     runloop.RunLoop
+	logger      *time.Timer
 }
 
 func (d *DHT) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
@@ -24,6 +26,8 @@ func (d *DHT) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 	telehash.InternalMux(sw).HandleFunc("link", d.serve_link)
 
 	d.runloop.Run()
+
+	d.logger = d.runloop.CastAfter(10*time.Second, &cmd_dht_log{})
 
 	for _, seed := range d.Seeds {
 		wg.Add(1)
@@ -43,6 +47,7 @@ func (d *DHT) do_seed(seed *telehash.Identity, wg *sync.WaitGroup) {
 }
 
 func (d *DHT) Stop() error {
+	d.logger.Stop()
 	d.runloop.StopAndWait()
 	return nil
 }
