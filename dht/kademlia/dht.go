@@ -10,6 +10,8 @@ import (
 type DHT struct {
 	DisableSeed bool
 	Seeds       []*telehash.Identity
+	K           int
+	MaxLinks    int
 	sw          *telehash.Switch
 	table       seek_table
 	links       map[telehash.Hashname]*link_t
@@ -24,6 +26,16 @@ func (d *DHT) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 	d.table.Init(sw.LocalHashname())
 	telehash.InternalMux(sw).HandleFunc("seek", d.serve_seek)
 	telehash.InternalMux(sw).HandleFunc("link", d.serve_link)
+
+	// default K to 8
+	if d.K <= 0 {
+		d.K = 8
+	}
+
+	// default MaxLinks to 256
+	if d.MaxLinks <= 0 {
+		d.MaxLinks = 256
+	}
 
 	d.runloop.Run()
 
