@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/runloop"
 	"io"
 	"runtime/debug"
 	"time"
@@ -18,9 +19,9 @@ type Channel struct {
 	sw                   *Switch
 	broken               bool
 	broken_timer         *time.Timer
-	snd_backlog          backlog_t
+	snd_backlog          runloop.Backlog
 	snd_end              bool
-	rcv_backlog          backlog_t
+	rcv_backlog          runloop.Backlog
 	rcv_deadline         *time.Timer
 	rcv_deadline_reached bool
 	rcv_end              bool
@@ -40,7 +41,7 @@ type channel_imp interface {
 }
 
 type ChannelOptions struct {
-	To           Hashname
+	peer         *Peer
 	Type         string
 	Id           string
 	Reliablility Reliablility
@@ -96,7 +97,7 @@ func make_channel(sw *Switch, line *line_t, initiator bool, options ChannelOptio
 }
 
 func (c *Channel) To() Hashname {
-	return c.options.To
+	return c.options.peer.hashname
 }
 
 func (c *Channel) Peer() *Peer {
@@ -218,7 +219,7 @@ func (c *Channel) send_packet(p *pkt_t) error {
 		return ErrChannelBroken
 	}
 	cmd := cmd_snd_pkt{c, c.line, p, false}
-	return c.sw.reactor.Call(&cmd)
+	return c.sw.runloop.Call(&cmd)
 }
 
 func (c *Channel) receive_packet() (*pkt_t, error) {
@@ -226,7 +227,7 @@ func (c *Channel) receive_packet() (*pkt_t, error) {
 		return nil, ErrChannelBroken
 	}
 	cmd := cmd_get_rcv_pkt{c, nil, nil}
-	err := c.sw.reactor.Call(&cmd)
+	err := c.sw.runloop.Call(&cmd)
 	return cmd.pkt, err
 }
 
@@ -309,7 +310,7 @@ func (c *Channel) push_rcv_pkt(pkt *pkt_t) error {
 
 	if err == nil {
 		if c.broken_timer == nil {
-			c.broken_timer = c.sw.reactor.CastAfter(60*time.Second, &cmd_channel_break{c})
+			c.broken_timer = c.sw.runloop.CastAfter(60*time.Second, &cmd_channel_break{c})
 		} else {
 			c.broken_timer.Reset(60 * time.Second)
 		}
@@ -364,34 +365,34 @@ func (c *Channel) mark_as_broken() {
 
 func (c *Channel) reschedule() {
 	if len(c.rcv_backlog) > 0 && c.can_pop_rcv_pkt() {
-		c.rcv_backlog.RescheduleOne(&c.sw.reactor)
+		c.rcv_backlog.RescheduleOne(&c.sw.runloop)
 	}
 
 	if len(c.snd_backlog) > 0 && c.can_snd_pkt() {
-		c.snd_backlog.RescheduleOne(&c.sw.reactor)
+		c.snd_backlog.RescheduleOne(&c.sw.runloop)
 	}
 }
 
 func (c *Channel) reschedule_all() {
 	if len(c.rcv_backlog) > 0 && c.can_pop_rcv_pkt() {
-		c.rcv_backlog.RescheduleAll(&c.sw.reactor)
+		c.rcv_backlog.RescheduleAll(&c.sw.runloop)
 	}
 
 	if len(c.snd_backlog) > 0 && c.can_snd_pkt() {
-		c.snd_backlog.RescheduleAll(&c.sw.reactor)
+		c.snd_backlog.RescheduleAll(&c.sw.runloop)
 	}
 }
 
 func (c *Channel) SetReceiveDeadline(t time.Time) {
 	cmd := cmd_channel_set_rcv_deadline{c, t}
-	c.sw.reactor.Call(&cmd)
+	c.sw.runloop.Call(&cmd)
 }
 
 type cmd_channel_break struct {
 	channel *Channel
 }
 
-func (cmd *cmd_channel_break) Exec(sw *Switch) error {
+func (cmd *cmd_channel_break) Exec(state interface{}) error {
 	cmd.channel.broken = true
 	cmd.channel.reschedule_all()
 	return nil

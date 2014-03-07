@@ -2,10 +2,12 @@ package ipv6
 
 import (
 	"encoding/json"
+	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"github.com/telehash/gogotelehash/net/iputil"
 	"net"
 	"strconv"
+	"sync"
 )
 
 const network = "ipv6"
@@ -19,7 +21,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Open() error {
+func (t *Transport) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 	addr, err := net.ResolveUDPAddr("udp6", t.Addr)
 	if err != nil {
 		return err
@@ -35,7 +37,7 @@ func (t *Transport) Open() error {
 	return nil
 }
 
-func (t *Transport) Close() error {
+func (t *Transport) Stop() error {
 	if t.conn == nil {
 		return nil
 	}
@@ -117,46 +119,40 @@ func _net_conn_is_closed_err(err error) bool {
 	}
 }
 
-func (t *Transport) EncodeAddr(n th.Addr) ([]byte, error) {
-	a := n.(*Addr)
+func init() {
+	th.RegisterPathEncoder("ipv6", func(n th.Addr) ([]byte, error) {
+		a := n.(*Addr)
 
-	var (
-		j = struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
-		}{
-			IP:   a.IP.String(),
-			Port: a.Port,
+		var (
+			j = struct {
+				IP   string `json:"ip"`
+				Port int    `json:"port"`
+			}{
+				IP:   a.IP.String(),
+				Port: a.Port,
+			}
+		)
+
+		return json.Marshal(j)
+	})
+
+	th.RegisterPathDecoder("ipv6", func(data []byte) (th.Addr, error) {
+		var (
+			j struct {
+				IP   string `json:"ip"`
+				Port int    `json:"port"`
+			}
+		)
+
+		err := json.Unmarshal(data, &j)
+		if err != nil {
+			return nil, err
 		}
-	)
 
-	return json.Marshal(j)
-}
-
-func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
-	var (
-		j struct {
-			IP   string `json:"ip"`
-			Port int    `json:"port"`
+		if j.IP == "" || j.Port == 0 {
+			return nil, ErrInvalidIPv6Address
 		}
-	)
 
-	err := json.Unmarshal(data, &j)
-	if err != nil {
-		return nil, err
-	}
-
-	if j.IP == "" || j.Port == 0 {
-		return nil, ErrInvalidIPv6Address
-	}
-
-	return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
-}
-
-func (t *Transport) FormatSeekAddress(addr th.Addr) string {
-	return ""
-}
-
-func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
-	return nil, false
+		return ResolveAddr(net.JoinHostPort(j.IP, strconv.Itoa(j.Port)))
+	})
 }

@@ -2,6 +2,7 @@ package telehash
 
 import (
 	"encoding/json"
+	"github.com/telehash/gogotelehash/net"
 )
 
 type net_paths []*net_path
@@ -18,11 +19,11 @@ func (n net_paths) FirstOfType(t string) *net_path {
 	return nil
 }
 
-func (s *Switch) encode_net_paths(n net_paths) (raw_net_paths, error) {
+func encode_net_paths(n net_paths) (raw_net_paths, error) {
 	raw := make([]json.RawMessage, len(n))
 
 	for i, np := range n {
-		data, err := s.encode_net_path(np)
+		data, err := net.EncodePath(np.Network, np.Address)
 		if err != nil {
 			return nil, err
 		}
@@ -33,16 +34,16 @@ func (s *Switch) encode_net_paths(n net_paths) (raw_net_paths, error) {
 	return raw, nil
 }
 
-func (s *Switch) decode_net_paths(raw raw_net_paths) (net_paths, error) {
+func decode_net_paths(raw raw_net_paths) (net_paths, error) {
 	paths := make(net_paths, 0, len(raw))
 
 	for _, data := range raw {
-		np, err := s.decode_net_path(data)
+		n, addr, err := net.DecodePath(data)
 		if err != nil {
 			continue // drop invalid netpaths
 		}
 
-		paths = append(paths, np)
+		paths = append(paths, &net_path{Network: n, Address: addr})
 	}
 
 	return paths, nil

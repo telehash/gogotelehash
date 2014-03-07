@@ -3,6 +3,7 @@ package telehash
 import (
 	"crypto/rsa"
 	"fmt"
+	"github.com/telehash/gogotelehash/net"
 	"sort"
 	"sync"
 )
@@ -19,11 +20,24 @@ type Peer struct {
 
 func make_peer(sw *Switch, hashname Hashname) *Peer {
 	peer := &Peer{
+		sw:       sw,
 		hashname: hashname,
 		via:      make(map[Hashname]bool),
 	}
 
 	return peer
+}
+
+func (p *Peer) Open(options ChannelOptions) (*Channel, error) {
+	if p == nil {
+		return nil, ErrPeerNotFound
+	}
+
+	options.peer = p
+
+	cmd := cmd_channel_open{options, nil}
+	err := p.sw.runloop.Call(&cmd)
+	return cmd.channel, err
 }
 
 func (p *Peer) String() string {
@@ -32,6 +46,10 @@ func (p *Peer) String() string {
 
 func (p *Peer) Hashname() Hashname {
 	return p.hashname
+}
+
+func (p *Peer) IsConnected() bool {
+	return p.sw.get_active_line(p.hashname) != nil
 }
 
 // Get the public key of the peer. Returns nil when the public key is unknown.
@@ -43,7 +61,7 @@ func (p *Peer) PublicKey() *rsa.PublicKey {
 }
 
 // Set the public key for this peer. Does nothing when the public key is already set.
-func (p *Peer) SetPublicKey(key *rsa.PublicKey) {
+func (p *Peer) set_public_key(key *rsa.PublicKey) {
 	p.mtx.Lock()
 	defer p.mtx.Unlock()
 
@@ -82,6 +100,10 @@ func (p *Peer) net_paths() net_paths {
 	paths := make(net_paths, len(p.paths))
 	copy(paths, p.paths)
 	return paths
+}
+
+func (p *Peer) AddAddress(network string, address net.Addr) {
+	p.add_net_path(&net_path{Network: network, Address: address})
 }
 
 func (p *Peer) add_net_path(netpath *net_path) *net_path {
@@ -153,23 +175,18 @@ func (p *Peer) set_active_paths(paths net_paths) {
 	p.update_paths()
 }
 
-func (p *Peer) CanOpen() bool {
+func (p *Peer) can_open() bool {
 	p.mtx.RLock()
 	defer p.mtx.RUnlock()
 
 	return p.pubkey != nil && len(p.paths) > 0 || len(p.via) > 0
 }
 
-func (p *Peer) MustSendPeer() bool {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
+func (p *Peer) ActivePath() (string, net.Addr) {
+	np := p.active_path()
+	if np == nil {
+		return "", nil
+	}
 
-	return p.pubkey == nil && len(p.via) > 0
-}
-
-func (p *Peer) HasVia() bool {
-	p.mtx.RLock()
-	defer p.mtx.RUnlock()
-
-	return len(p.via) > 0
+	return np.Network, np.Address
 }

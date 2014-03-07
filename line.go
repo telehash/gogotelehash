@@ -2,15 +2,13 @@ package telehash
 
 import (
 	"github.com/fd/go-util/log"
+	"github.com/telehash/gogotelehash/runloop"
 	"sync/atomic"
 	"time"
 )
 
 const (
-	line_idle_timeout   = 55 * time.Second
-	line_broken_timeout = 60 * time.Second
-	line_path_interval  = 10 * time.Second
-	line_seek_interval  = 30 * time.Second
+	line_broken_timeout = 120 * time.Second
 )
 
 type line_state uint32
@@ -24,6 +22,19 @@ const (
 	line_closed
 )
 
+var line_state_strings = map[line_state]string{
+	line_pending: "pending",
+	line_peering: "peering",
+	line_opening: "opening",
+	line_pathing: "pathing",
+	line_opened:  "opened",
+	line_closed:  "closed",
+}
+
+func (l line_state) String() string {
+	return line_state_strings[l]
+}
+
 type line_t struct {
 	sw   *Switch
 	peer *Peer
@@ -34,15 +45,12 @@ type line_t struct {
 	shr_key *shared_line_key
 	state   line_state
 
-	backlog   backlog_t
+	backlog   runloop.Backlog
 	channels  map[string]*Channel
 	last_sync time.Time
 
-	idle_timer   *time.Timer
 	broken_timer *time.Timer
 	open_timer   *time.Timer
-	path_timer   *time.Timer
-	seek_timer   *time.Timer
 }
 
 func (l *line_t) Init(sw *Switch, peer *Peer) {
@@ -52,9 +60,8 @@ func (l *line_t) Init(sw *Switch, peer *Peer) {
 
 	l.channels = make(map[string]*Channel, 10)
 
-	l.idle_timer = sw.reactor.CastAfter(line_idle_timeout, &cmd_line_close_idle{l})
-	l.broken_timer = sw.reactor.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
-	l.open_timer = sw.reactor.CastAfter(line_broken_timeout, &cmd_line_close_down{l})
+	l.broken_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_broken{l})
+	l.open_timer = sw.runloop.CastAfter(line_broken_timeout, &cmd_line_close_down{l})
 }
 
 func (l *line_t) open_with_peer() {

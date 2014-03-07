@@ -27,13 +27,6 @@ type pkt_t struct {
 		Miss   []seq_t `json:"miss,omitempty"`
 		End    bool    `json:"end,omitempty"`
 		Err    string  `json:"err,omitempty"`
-
-		// Seek     string          `json:"seek,omitempty"`
-		// See      []string        `json:"see,omitempty"`
-		// Peer     string          `json:"peer,omitempty"`
-		// Paths    raw_net_paths   `json:"paths,omitempty"`
-		// Priority int             `json:"priority,omitempty"`
-		// Custom   json.RawMessage `json:"_,omitempty"`
 	}
 
 	peer    *Peer
@@ -83,6 +76,8 @@ func encode_packet(pkt *pkt_t) ([]byte, error) {
 
 		header_data = header_data[:offset]
 	}
+
+	Log.Debugf("snd pkt:\nhdr=%s", header_data)
 
 	data, err := encode_raw_packet(header_data, pkt.body)
 	buffer_pool_release(header_data)

@@ -1,18 +1,13 @@
-package telehash
+package telehash_test
 
 import (
 	"github.com/telehash/gogotelehash/net"
-	"github.com/telehash/gogotelehash/net/ipv4"
-	"github.com/telehash/gogotelehash/net/ipv6"
+	_ "github.com/telehash/gogotelehash/net/ipv4"
+	_ "github.com/telehash/gogotelehash/net/ipv6"
 	"testing"
 )
 
 func TestNetPathCoder(t *testing.T) {
-	sw := &Switch{}
-	sw.transports = make(map[string]net.Transport)
-	sw.transports["ipv4"] = &ipv4.Transport{}
-	sw.transports["ipv6"] = &ipv6.Transport{}
-
 	var table = []struct{ I, E string }{
 		{`{"type":"ipv4","ip":"127.0.0.1","port":1024}`, ""},
 		{`{"type":"ipv6","ip":"::1","port":1024}`, ""},
@@ -25,7 +20,7 @@ func TestNetPathCoder(t *testing.T) {
 	}
 
 	for i, row := range table {
-		np, err := sw.decode_net_path([]byte(row.I))
+		network, addr, err := net.DecodePath([]byte(row.I))
 		if err != nil {
 			if err.Error() != row.E {
 				t.Errorf("[%d]: expected error to be %q but was %q", i, row.E, err)
@@ -33,12 +28,12 @@ func TestNetPathCoder(t *testing.T) {
 			continue
 		}
 
-		if np == nil {
+		if network == "" {
 			t.Errorf("[%d]: expected a netpath", i)
 			continue
 		}
 
-		o, err := sw.encode_net_path(np)
+		o, err := net.EncodePath(network, addr)
 		if err != nil {
 			if err.Error() != row.E {
 				t.Errorf("[%d]: expected error to be %q but was %q", i, row.E, err)

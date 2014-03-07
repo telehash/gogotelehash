@@ -45,10 +45,6 @@ func (a *Addr) PublishWithPeer() bool {
 	return a.Category == iputil.CategoryWAN
 }
 
-func (a *Addr) PublishWithSeek() bool {
-	return false
-}
-
 func (a *Addr) String() string {
 	return fmt.Sprintf("%s:%d cat=%s", a.IP, a.Port, a.Category)
 }
@@ -56,11 +52,11 @@ func (a *Addr) String() string {
 func (a *Addr) DefaultPriority() int {
 	switch a.Category {
 	case iputil.CategoryLocal:
-		return 7
+		return 8
 	case iputil.CategoryLAN:
-		return 5
+		return 6
 	case iputil.CategoryWAN:
-		return 3
+		return 4
 	default:
 		return 0
 	}

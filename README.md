@@ -1,9 +1,7 @@
 # gogotelehash
 
-TODO:
 
-- close channels properly
-- better ACK
-- Kademlia DHT
+## Contributers
 
-[Changes since implementation](https://github.com/telehash/telehash.org/compare/feb3421b36a03e97f395f014a494f5dc90695f04...master)
+- [Simon Menke](https://github.com/fd) (Maintainer) [![Gittip](http://img.shields.io/gittip/fd.png)](https://www.gittip.com/fd/)
+- [dizzyd](https://github.com/dizzyd)

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/fd/go-socket.io"
+	"github.com/telehash/gogotelehash"
 	th "github.com/telehash/gogotelehash/net"
 	"net"
 	"net/http"
+	"sync"
 )
 
 const network = "http"
@@ -35,7 +37,7 @@ func (t *Transport) Network() string {
 	return network
 }
 
-func (t *Transport) Open() error {
+func (t *Transport) Start(sw *telehash.Switch, wg *sync.WaitGroup) error {
 
 	if t.Config.HeartbeatTimeout == 0 {
 		t.Config.HeartbeatTimeout = 2
@@ -73,7 +75,7 @@ func (t *Transport) Open() error {
 	return nil
 }
 
-func (t *Transport) Close() error {
+func (t *Transport) Stop() error {
 	if t.listener == nil {
 		return nil
 	}
@@ -134,39 +136,6 @@ func _net_conn_is_closed_err(err error) bool {
 	}
 }
 
-func (t *Transport) EncodeAddr(n th.Addr) ([]byte, error) {
-	a := n.(*Addr)
-
-	var (
-		j = struct {
-			Http string `json:"http"`
-		}{
-			Http: a.URL,
-		}
-	)
-
-	return json.Marshal(j)
-}
-
-func (t *Transport) DecodeAddr(data []byte) (th.Addr, error) {
-	var (
-		j struct {
-			Http string `json:"http"`
-		}
-	)
-
-	err := json.Unmarshal(data, &j)
-	if err != nil {
-		return nil, err
-	}
-
-	if j.Http == "" {
-		return nil, ErrInvalidHTTPAddress
-	}
-
-	return &Addr{URL: j.Http}, nil
-}
-
 func (t *Transport) on_connect(ns *socketio.NameSpace) {
 	t.sessions[ns.Session.SessionId] = ns.Session
 }
@@ -184,10 +153,37 @@ func (t *Transport) on_packet(ns *socketio.NameSpace, e event_t) {
 	t.rcv <- pkt_t{data, &internal_addr{ns.Session.SessionId}}
 }
 
-func (t *Transport) FormatSeekAddress(addr th.Addr) string {
-	return ""
-}
+func init() {
+	th.RegisterPathEncoder("http", func(n th.Addr) ([]byte, error) {
+		a := n.(*Addr)
 
-func (t *Transport) ParseSeekAddress(fields []string) (th.Addr, bool) {
-	return nil, false
+		var (
+			j = struct {
+				Http string `json:"http"`
+			}{
+				Http: a.URL,
+			}
+		)
+
+		return json.Marshal(j)
+	})
+
+	th.RegisterPathDecoder("http", func(data []byte) (th.Addr, error) {
+		var (
+			j struct {
+				Http string `json:"http"`
+			}
+		)
+
+		err := json.Unmarshal(data, &j)
+		if err != nil {
+			return nil, err
+		}
+
+		if j.Http == "" {
+			return nil, ErrInvalidHTTPAddress
+		}
+
+		return &Addr{URL: j.Http}, nil
+	})
 }

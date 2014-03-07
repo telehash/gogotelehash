@@ -7,23 +7,27 @@ import (
 	"github.com/fd/go-util/log"
 	"github.com/rcrowley/go-metrics"
 	"github.com/telehash/gogotelehash/net"
+	"github.com/telehash/gogotelehash/runloop"
 	"sync"
 	"time"
 )
 
 type Switch struct {
-	DenyRelay  bool
-	Key        *rsa.PrivateKey
-	Handler    Handler
-	Transports []net.Transport
+	DenyRelay bool
+	Key       *rsa.PrivateKey
+	Handler   Handler
 
-	reactor       reactor_t
-	peers         peer_table
-	transports    map[string]net.Transport
+	Components     []Component
+	components     []Component
+	transports     []net.Transport
+	transports_map map[string]net.Transport
+	dhts           []privDHT
+	hook_new_peer  []HookNewPeer
+
+	runloop       runloop.RunLoop
 	lines         map[Hashname]*line_t
 	active_lines  map[string]*line_t
 	peer_handler  peer_handler
-	seek_handler  seek_handler
 	path_handler  path_handler
 	relay_handler relay_handler
 	stats_timer   *time.Timer
@@ -44,6 +48,7 @@ type Switch struct {
 func (s *Switch) Start() error {
 	var (
 		err error
+		wg  sync.WaitGroup
 	)
 
 	s.mtx.Lock()
@@ -78,45 +83,62 @@ func (s *Switch) Start() error {
 
 	s.lines = make(map[Hashname]*line_t)
 	s.active_lines = make(map[string]*line_t)
-	s.transports = make(map[string]net.Transport, len(s.Transports))
+	s.transports_map = make(map[string]net.Transport, len(s.Components))
 	s.log = Log.Sub(log.DEFAULT, "switch["+s.hashname.Short()+"]")
 	s.mux = NewSwitchMux()
 	s.mux.HandleFallback(s.Handler)
 
-	s.reactor.sw = s
-	s.peers.Init(s.hashname)
+	s.runloop.State = s
 	s.peer_handler.init(s)
-	s.seek_handler.init(s)
 	s.path_handler.init(s)
 	s.relay_handler.init(s)
+	s.runloop.Run()
 
-	for _, t := range s.Transports {
-		if _, p := s.transports[t.Network()]; p {
-			err = fmt.Errorf("transport %q is already registerd", t.Network())
-			break
+	for _, c := range s.Components {
+		s.components = append(s.components, c)
+
+		switch v := c.(type) {
+
+		case net.Transport:
+			if _, p := s.transports_map[v.Network()]; p {
+				return fmt.Errorf("transport %q is already registerd", v.Network())
+			}
+
+			s.transports = append(s.transports, v)
+			s.transports_map[v.Network()] = v
+
+		case privDHT:
+			s.dhts = append(s.dhts, v)
+
 		}
 
-		s.transports[t.Network()] = t
+		if v, ok := c.(HookNewPeer); ok {
+			s.hook_new_peer = append(s.hook_new_peer, v)
+		}
+	}
 
-		err = t.Open()
+	for _, c := range s.components {
+		err = c.Start(s, &wg)
 		if err != nil {
 			break
 		}
-
-		go s.listen(t)
 	}
 	if err != nil {
-		for _, t := range s.Transports {
-			t.Close()
+		for _, c := range s.components {
+			c.Stop()
 		}
 		return err
 	}
 
-	s.running = true
-	s.reactor.Run()
-	s.stats_timer = s.reactor.CastAfter(5*time.Second, &cmd_stats_log{})
-	s.clean_timer = s.reactor.CastAfter(2*time.Second, &cmd_clean{})
+	for _, t := range s.transports {
+		go s.listen(t)
+	}
 
+	s.running = true
+	s.stats_timer = s.runloop.CastAfter(5*time.Second, &cmd_stats_log{})
+	s.clean_timer = s.runloop.CastAfter(2*time.Second, &cmd_clean{})
+
+	wg.Wait()
 	return nil
 }
 
@@ -129,15 +151,18 @@ func (s *Switch) listen(t net.Transport) {
 	for {
 		n, addr, err := t.ReadFrom(buf)
 		if err == net.ErrTransportClosed {
+			s.log.Errorf("error=%s", err)
 			return
 		}
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			continue
 		}
 
 		pkt, err := decode_packet(buf[:n])
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			packet_pool_release(pkt)
 			continue
@@ -146,6 +171,7 @@ func (s *Switch) listen(t net.Transport) {
 
 		err = s.rcv_pkt(pkt)
 		if err != nil {
+			s.log.Errorf("error=%s", err)
 			// drop
 			continue
 		}
@@ -155,11 +181,11 @@ func (s *Switch) listen(t net.Transport) {
 func (s *Switch) Stop() error {
 	s.mtx.Lock()
 	defer s.mtx.Unlock()
-	s.reactor.Cast(&cmd_shutdown{})
-	s.reactor.StopAndWait()
+	s.runloop.Cast(&cmd_shutdown{})
+	s.runloop.StopAndWait()
 
-	for _, t := range s.transports {
-		t.Close()
+	for _, c := range s.components {
+		c.Stop()
 	}
 
 	stop_timer(s.stats_timer)
@@ -172,62 +198,36 @@ func (s *Switch) LocalHashname() Hashname {
 	return s.hashname
 }
 
-func (s *Switch) Seed(net string, addr net.Addr, key *rsa.PublicKey) (Hashname, error) {
-	hashname, err := HashnameFromPublicKey(key)
-	if err != nil {
-		return ZeroHashname, err
+func (s *Switch) Seek(target Hashname) *Peer {
+	var (
+		peer *Peer
+	)
+
+	resp := make(chan *Peer, len(s.dhts))
+
+	for _, dht := range s.dhts {
+		go func() { peer, _ := dht.Seek(target); resp <- peer }()
 	}
 
-	peer, newpeer := s.add_peer(hashname)
-	peer.SetPublicKey(key)
-	peer.add_net_path(&net_path{Network: net, Address: addr})
-	if newpeer {
-		peer.set_active_paths(peer.net_paths())
+	for i := 0; i < len(s.dhts); i++ {
+		peer = <-resp
+		if peer != nil {
+			return peer
+		}
 	}
 
-	_, err = s.seek_handler.Seek(hashname, s.hashname)
-	if err != nil {
-		return hashname, err
-	}
-
-	return hashname, nil
+	return nil
 }
 
-func (s *Switch) Seek(hashname Hashname) Hashname {
-	peer := s.seek_handler.RecusiveSeek(hashname)
-	if peer == nil {
-		return ZeroHashname
-	}
-	return peer.Hashname()
-}
-
-func (s *Switch) Open(options ChannelOptions) (*Channel, error) {
-	cmd := cmd_channel_open{options, nil}
-	err := s.reactor.Call(&cmd)
-	return cmd.channel, err
-}
-
-func (s *Switch) get_peer(hashname Hashname) *Peer {
-	cmd := cmd_peer_get{hashname, nil}
-	s.reactor.Call(&cmd)
+func (s *Switch) GetPeer(hashname Hashname, make_new bool) *Peer {
+	cmd := cmd_peer_get{hashname, make_new, nil}
+	s.runloop.Call(&cmd)
 	return cmd.peer
-}
-
-func (s *Switch) get_closest_peers(hashname Hashname, n int) []*Peer {
-	cmd := cmd_peer_get_closest{hashname, n, nil}
-	s.reactor.Call(&cmd)
-	return cmd.peers
-}
-
-func (s *Switch) add_peer(hashname Hashname) (*Peer, bool) {
-	cmd := cmd_peer_add{hashname, nil, false}
-	s.reactor.Call(&cmd)
-	return cmd.peer, cmd.discovered
 }
 
 func (s *Switch) get_line(to Hashname) *line_t {
 	cmd := cmd_line_get{to, nil}
-	s.reactor.Call(&cmd)
+	s.runloop.Call(&cmd)
 	return cmd.line
 }
 
@@ -241,7 +241,7 @@ func (s *Switch) get_active_line(to Hashname) *line_t {
 
 func (s *Switch) rcv_pkt(pkt *pkt_t) error {
 	cmd := cmd_rcv_pkt{pkt}
-	s.reactor.Cast(&cmd)
+	s.runloop.Cast(&cmd)
 	return nil
 }
 
@@ -254,7 +254,7 @@ func (s *Switch) snd_pkt(pkt *pkt_t) error {
 		return s.relay_handler.snd_pkt(s, pkt)
 	}
 
-	transport := s.transports[pkt.netpath.Network]
+	transport := s.transports_map[pkt.netpath.Network]
 	if transport == nil {
 		return ErrInvalidNetwork
 	}
@@ -290,11 +290,17 @@ func (s *Switch) get_network_paths() net_paths {
 		paths net_paths
 	)
 
-	for n, t := range s.transports {
+	for n, t := range s.transports_map {
 		for _, a := range t.LocalAddresses() {
 			paths = append(paths, &net_path{Network: n, Address: a})
 		}
 	}
 
 	return paths
+}
+
+// InternalMux returns the internal SwitchMux of Switch. This function should
+// only be used by protocol extensions.
+func InternalMux(s *Switch) *SwitchMux {
+	return s.mux
 }

@@ -30,10 +30,6 @@ func (a *Addr) PublishWithPeer() bool {
 	return true
 }
 
-func (a *Addr) PublishWithSeek() bool {
-	return false
-}
-
 func (a *Addr) String() string {
 	return fmt.Sprintf("url=%s", a.URL)
 }
@@ -66,10 +62,6 @@ func (a *internal_addr) PublishWithPath() bool {
 }
 
 func (a *internal_addr) PublishWithPeer() bool {
-	return false
-}
-
-func (a *internal_addr) PublishWithSeek() bool {
 	return false
 }
 

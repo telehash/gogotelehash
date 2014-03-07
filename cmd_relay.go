@@ -137,10 +137,6 @@ func (n *relay_addr) PublishWithConnect() bool {
 	return false
 }
 
-func (n *relay_addr) PublishWithSeek() bool {
-	return false
-}
-
 func (n *relay_addr) NeedNatHolePunching() bool {
 	return false
 }
