@@ -14,3 +14,14 @@ func (err *InvalidPacketError) Error() string {
 	}
 	return fmt.Sprintf("cs1a: invalid packet")
 }
+
+type EncodePacketError struct {
+	Reason error
+}
+
+func (err *EncodePacketError) Error() string {
+	if err.Reason != nil {
+		return fmt.Sprintf("cs1a: failed to encode packet (reason: %s)", err.Reason)
+	}
+	return fmt.Sprintf("cs1a: failed to encode packet")
+}
