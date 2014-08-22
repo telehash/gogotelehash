@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/fd/th/e3x/cipherset"
+	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 )
 
 type cipherTestSuite struct {
