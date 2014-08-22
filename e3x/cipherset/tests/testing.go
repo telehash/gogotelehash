@@ -6,6 +6,7 @@ import (
   "github.com/stretchr/testify/suite"
 
   "bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
+  "bitbucket.org/simonmenke/go-telehash/lob"
 )
 
 type cipherTestSuite struct {
@@ -154,4 +155,79 @@ func (s *cipherTestSuite) TestHandshake() {
   assert.True(sb.CanDecryptMessage())
   assert.True(sb.CanDecryptHandshake())
   assert.False(sb.NeedsRemoteKey())
+
+  tb := sb.RemoteToken()
+  assert.Equal(box[4:4+16], tb[:])
+}
+
+func (s *cipherTestSuite) TestPacketEncryption() {
+  var (
+    assert = s.Assertions
+    c      = s.cipher
+  )
+
+  var (
+    ka  cipherset.Key
+    kb  cipherset.Key
+    sa  cipherset.State
+    sb  cipherset.State
+    pkt *lob.Packet
+    box []byte
+    err error
+  )
+
+  ka, err = c.GenerateKey()
+  assert.NoError(err)
+  kb, err = c.GenerateKey()
+  assert.NoError(err)
+
+  sa, err = c.NewState(ka, true)
+  assert.NoError(err)
+  sb, err = c.NewState(kb, false)
+  assert.NoError(err)
+
+  err = sa.SetRemoteKey(kb)
+  assert.NoError(err)
+  box, err = sa.EncryptHandshake(1, nil)
+  assert.NoError(err)
+  _, _, _, err = sb.DecryptHandshake(box)
+  assert.NoError(err)
+  box, err = sb.EncryptHandshake(1, nil)
+  assert.NoError(err)
+  _, _, _, err = sa.DecryptHandshake(box)
+  assert.NoError(err)
+
+  pkt, err = sa.EncryptPacket(&lob.Packet{
+    Json: map[string]int{"foo": 0xbeaf},
+    Body: []byte("Hello world!"),
+  })
+  assert.NoError(err)
+  assert.NotNil(pkt)
+  assert.Nil(pkt.Head)
+  assert.Nil(pkt.Json)
+  assert.NotEmpty(pkt.Body)
+
+  pkt, err = sb.DecryptPacket(pkt)
+  assert.NoError(err)
+  assert.NotNil(pkt)
+  assert.Nil(pkt.Head)
+  assert.Equal(map[string]interface{}{"foo": 0xbeaf}, pkt.Json)
+  assert.Equal([]byte("Hello world!"), pkt.Body)
+
+  pkt, err = sb.EncryptPacket(&lob.Packet{
+    Json: map[string]int{"bar": 0xdead},
+    Body: []byte("Bye world!"),
+  })
+  assert.NoError(err)
+  assert.NotNil(pkt)
+  assert.Nil(pkt.Head)
+  assert.Nil(pkt.Json)
+  assert.NotEmpty(pkt.Body)
+
+  pkt, err = sa.DecryptPacket(pkt)
+  assert.NoError(err)
+  assert.NotNil(pkt)
+  assert.Nil(pkt.Head)
+  assert.Equal(map[string]interface{}{"bar": 0xdead}, pkt.Json)
+  assert.Equal([]byte("Bye world!"), pkt.Body)
 }
