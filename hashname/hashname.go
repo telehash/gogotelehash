@@ -3,17 +3,17 @@ package hashname
 
 import (
 	"crypto/sha256"
-	"encoding/base32"
 	"encoding/hex"
 	"errors"
 	"sort"
+
+	"bitbucket.org/simonmenke/go-telehash/base32"
 )
 
 var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")
 var ErrInvalidIntermediatePart = errors.New("hashname: invalid intermediate part")
 var ErrInvalidIntermediatePartId = errors.New("hashname: invalid intermediate part id")
 var ErrInvalidKey = errors.New("hashname: invalid key")
-var base32Enc = base32.NewEncoding("abcdefghijklmnopqrstuvwxyz234567")
 
 type H string
 
@@ -41,7 +41,7 @@ func FromIntermediates(parts map[string]string) (H, error) {
 		}
 		id, err := hex.DecodeString(idString)
 		if err != nil {
-			return "", ErrInvalidIntermediatePart
+			return "", ErrInvalidIntermediatePartId
 		}
 
 		// decode intermediate part
@@ -49,7 +49,7 @@ func FromIntermediates(parts map[string]string) (H, error) {
 		if len(partString) != 52 {
 			return "", ErrInvalidIntermediatePart
 		}
-		part, err := base32Enc.DecodeString(partString + "====")
+		part, err := base32.DecodeString(partString)
 		if err != nil {
 			return "", ErrInvalidIntermediatePart
 		}
@@ -66,7 +66,7 @@ func FromIntermediates(parts map[string]string) (H, error) {
 		hash.Write(buf[:32])
 	}
 
-	return H(base32Enc.EncodeToString(buf[:32])[:52]), nil
+	return H(base32.EncodeToString(buf[:32])), nil
 }
 
 func FromKeys(keys map[string]string) (H, error) {
@@ -77,7 +77,7 @@ func FromKeys(keys map[string]string) (H, error) {
 	)
 
 	for id, keyString := range keys {
-		key, err := base32Enc.DecodeString(keyString)
+		key, err := base32.DecodeString(keyString)
 		if err != nil {
 			return "", ErrInvalidKey
 		}
@@ -89,7 +89,7 @@ func FromKeys(keys map[string]string) (H, error) {
 		hash.Sum(buf[:0])
 		hash.Reset()
 
-		intermediates[id] = base32Enc.EncodeToString(buf[:])[:52]
+		intermediates[id] = base32.EncodeToString(buf[:])[:52]
 	}
 
 	return FromIntermediates(intermediates)
@@ -99,7 +99,7 @@ func FromKeyAndIntermediates(id string, key []byte, intermediates map[string]str
 	var (
 		all          = make(map[string]string, len(intermediates)+1)
 		sum          = sha256.Sum256(key)
-		intermediate = base32Enc.EncodeToString(sum[:])
+		intermediate = base32.EncodeToString(sum[:])
 	)
 
 	for k, v := range intermediates {
