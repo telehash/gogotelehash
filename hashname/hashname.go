@@ -2,12 +2,12 @@
 package hashname
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"errors"
-	"sort"
+  "crypto/sha256"
+  "encoding/hex"
+  "errors"
+  "sort"
 
-	"bitbucket.org/simonmenke/go-telehash/base32"
+  "bitbucket.org/simonmenke/go-telehash/base32"
 )
 
 var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")
@@ -18,94 +18,98 @@ var ErrInvalidKey = errors.New("hashname: invalid key")
 type H string
 
 func FromIntermediates(parts map[string]string) (H, error) {
-	if len(parts) == 0 {
-		return "", ErrNoIntermediateParts
-	}
+  if len(parts) == 0 {
+    return "", ErrNoIntermediateParts
+  }
 
-	var (
-		hash = sha256.New()
-		ids  = make([]string, 0, len(parts))
-		buf  [32]byte
-	)
+  var (
+    hash = sha256.New()
+    ids  = make([]string, 0, len(parts))
+    buf  [32]byte
+  )
 
-	for id := range parts {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+  for id := range parts {
+    ids = append(ids, id)
+  }
+  sort.Strings(ids)
 
-	for _, idString := range ids {
+  for _, idString := range ids {
 
-		// decode intermediate part id
-		if len(idString) != 2 {
-			return "", ErrInvalidIntermediatePartId
-		}
-		id, err := hex.DecodeString(idString)
-		if err != nil {
-			return "", ErrInvalidIntermediatePartId
-		}
+    // decode intermediate part id
+    if len(idString) != 2 {
+      return "", ErrInvalidIntermediatePartId
+    }
+    id, err := hex.DecodeString(idString)
+    if err != nil {
+      return "", ErrInvalidIntermediatePartId
+    }
 
-		// decode intermediate part
-		partString := parts[idString]
-		if len(partString) != 52 {
-			return "", ErrInvalidIntermediatePart
-		}
-		part, err := base32.DecodeString(partString)
-		if err != nil {
-			return "", ErrInvalidIntermediatePart
-		}
+    // decode intermediate part
+    partString := parts[idString]
+    if len(partString) != 52 {
+      return "", ErrInvalidIntermediatePart
+    }
+    part, err := base32.DecodeString(partString)
+    if err != nil {
+      return "", ErrInvalidIntermediatePart
+    }
 
-		hash.Write(id)
-		hash.Sum(buf[:0])
-		hash.Reset()
+    hash.Write(id)
+    hash.Sum(buf[:0])
+    hash.Reset()
 
-		hash.Write(buf[:32])
-		hash.Write(part)
-		hash.Sum(buf[:0])
-		hash.Reset()
+    hash.Write(buf[:32])
+    hash.Write(part)
+    hash.Sum(buf[:0])
+    hash.Reset()
 
-		hash.Write(buf[:32])
-	}
+    hash.Write(buf[:32])
+  }
 
-	return H(base32.EncodeToString(buf[:32])), nil
+  return H(base32.EncodeToString(buf[:32])), nil
 }
 
 func FromKeys(keys map[string]string) (H, error) {
-	var (
-		hash          = sha256.New()
-		intermediates = make(map[string]string, len(keys))
-		buf           [32]byte
-	)
+  var (
+    hash          = sha256.New()
+    intermediates = make(map[string]string, len(keys))
+    buf           [32]byte
+  )
 
-	for id, keyString := range keys {
-		key, err := base32.DecodeString(keyString)
-		if err != nil {
-			return "", ErrInvalidKey
-		}
-		if len(key) == 0 {
-			return "", ErrInvalidKey
-		}
+  for id, keyString := range keys {
+    key, err := base32.DecodeString(keyString)
+    if err != nil {
+      return "", ErrInvalidKey
+    }
+    if len(key) == 0 {
+      return "", ErrInvalidKey
+    }
 
-		hash.Write(key)
-		hash.Sum(buf[:0])
-		hash.Reset()
+    hash.Write(key)
+    hash.Sum(buf[:0])
+    hash.Reset()
 
-		intermediates[id] = base32.EncodeToString(buf[:])[:52]
-	}
+    intermediates[id] = base32.EncodeToString(buf[:])[:52]
+  }
 
-	return FromIntermediates(intermediates)
+  return FromIntermediates(intermediates)
 }
 
 func FromKeyAndIntermediates(id string, key []byte, intermediates map[string]string) (H, error) {
-	var (
-		all          = make(map[string]string, len(intermediates)+1)
-		sum          = sha256.Sum256(key)
-		intermediate = base32.EncodeToString(sum[:])
-	)
+  var (
+    all          = make(map[string]string, len(intermediates)+1)
+    sum          = sha256.Sum256(key)
+    intermediate = base32.EncodeToString(sum[:])
+  )
 
-	for k, v := range intermediates {
-		all[k] = v
-	}
-	all[id] = intermediate
+  for k, v := range intermediates {
+    all[k] = v
+  }
+  all[id] = intermediate
 
-	return FromIntermediates(all)
+  return FromIntermediates(all)
+}
+
+func (h H) Less(b H) bool {
+  return h < b
 }

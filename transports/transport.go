@@ -1,28 +1,35 @@
 package transports
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/lob"
+  "errors"
 )
 
-type Manager struct{}
-
-func (m *Manager) Deliver(pkt *lob.Packet, addr Addr) error { panic("TODO") }
-func (m *Manager) Receive() (*lob.Packet, Addr)             { panic("TODO") }
+var ErrTransportClosed = errors.New("transports: transport is closed")
 
 type Transport interface {
-	Open() error
-	Close() error
+  Open() error
+  Close() error
 
-	LocalAddresses() []transports.Addr
-	DefaultMTU() int
+  CanDeliverTo(addr ResolvedAddr) bool
+  LocalAddresses() []ResolvedAddr
+  DefaultMTU() int
 
-	Deliver(pkt []byte, to Addr) error
-	Receive(b []byte) (int, Addr, error)
+  Deliver(pkt []byte, to ResolvedAddr) error
+  Receive(b []byte) (int, ResolvedAddr, error)
 }
 
 type Addr interface {
-	Network() string
-	MarshalJSON() ([]byte, error)
-	Less(Addr) bool
-	String() string
+  String() string
+}
+
+type ResolvedAddr interface {
+  Addr
+  Network() string
+  MarshalJSON() ([]byte, error)
+  Less(ResolvedAddr) bool
+}
+
+type UnresolverAddr interface {
+  Addr
+  Resolve(*Manager) []ResolvedAddr
 }
