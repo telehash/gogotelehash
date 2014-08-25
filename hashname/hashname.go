@@ -95,7 +95,7 @@ func FromKeys(keys map[string]string) (H, error) {
   return FromIntermediates(intermediates)
 }
 
-func FromKeyAndIntermediates(id string, key []byte, intermediates map[string]string) (H, error) {
+func FromKeyAndIntermediates(id uint8, key []byte, intermediates map[uint8]string) (H, error) {
   var (
     all          = make(map[string]string, len(intermediates)+1)
     sum          = sha256.Sum256(key)
@@ -103,9 +103,9 @@ func FromKeyAndIntermediates(id string, key []byte, intermediates map[string]str
   )
 
   for k, v := range intermediates {
-    all[k] = v
+    all[hex.EncodeToString([]byte{k})] = v
   }
-  all[id] = intermediate
+  all[hex.EncodeToString([]byte{id})] = intermediate
 
   return FromIntermediates(all)
 }

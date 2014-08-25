@@ -1,123 +1,81 @@
 package e3x
 
 import (
-	"encoding/binary"
+  "encoding/binary"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
+  "bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
+  "bitbucket.org/simonmenke/go-telehash/hashname"
+  "bitbucket.org/simonmenke/go-telehash/lob"
 )
 
-type Endpoint struct {
-	keys         map[string]string
-	inbound      <-chan *lob.Packet // transports -> endpoint
-	outboundLow  chan<- *lob.Packet // endpoint -> transports
-	outboundHigh <-chan *lob.Packet // channels -> endpoint (-> transports)
-	tokens       map[cipherset.Token]*exchange
-	hashnames    map[hashname.H]*exchange
-}
-
 type exchange struct {
-	endpoint *Endpoint
-	last_seq uint32
-	token    cipherset.Token
-	hashname hashname.H
-	cipher   cipherset.State
+  endpoint *Endpoint
+  last_seq uint32
+  token    cipherset.Token
+  hashname hashname.H
+  cipher   cipherset.State
 }
 
-func (e *Endpoint) Run() error {
-	for {
-		select {
+func (e *exchange) received_handshake(op opReceived) bool {
+  var (
+    csid = op.pkt.Head[0]
+    seq  = binary.BigEndian.Uint32(op.pkt.Body[:4])
+    err  error
+  )
 
-		case pkt := <-e.inbound:
-			// handle inbound packet
-			e.handle_inbound(pkt)
+  if seq < e.last_seq {
+    return false
+  }
 
-		case pkt := <-e.outboundHigh:
-			// hanndle outbound packet
-			e.handle_outbound(pkt)
+  if e.cipher == nil {
+    keyData := e.endpoint.key_for_cs(csid)
+    if keyData == "" {
+      return false
+    }
 
-		}
-	}
-}
+    key, err := cipherset.DecodeKey(csid, keyData)
+    if err != nil {
+      return false
+    }
 
-func (e *Endpoint) handle_inbound(pkt *lob.Packet) {
-	// if len(HEAD) == 1
-	// then handle_inbound_handshake
-	// else handle_inbound_packet
-}
+    e.cipher, err = cipherset.NewState(csid, key, false)
+    if err != nil {
+      return false
+    }
+  }
 
-func (e *Endpoint) handle_inbound_handshake(pkt *lob.Packet) {
-	var (
-		token cipherset.Token
-	)
+  _, key, compact, err := e.cipher.DecryptHandshake(op.pkt.Body)
+  if err != nil {
+    return false
+  }
 
-	if len(pkt.Body) < 4+16 {
-		return // DROP
-	}
+  hn, err := hashname.FromKeyAndIntermediates(csid, key.Bytes(), compact)
+  if err != nil {
+    return false
+  }
 
-	// extract TOKEN
-	copy(token[:], pkt.Body[4:4+16])
+  if e.hashname == "" {
+    e.hashname = hn
+  }
 
-	// find / create exchange
-	ex, found := e.tokens[token]
-	if !found {
-		ex = &exchange{endpoint: e, token: token}
-	}
+  if e.hashname != hn {
+    return false
+  }
 
-	valid := ex.handle_inbound_handshake(pkt)
+  if seq > e.last_seq {
+    o := &lob.Packet{Head: []byte{csid}}
+    o.Body, err = e.cipher.EncryptHandshake(seq, e.endpoint.keys)
+    if err != nil {
+      return false
+    }
 
-	if valid && !found {
-		e.tokens[token] = ex
-		e.hashnames[ex.hashname] = ex
-	}
-}
+    err = e.endpoint.deliver(o, op.addr)
+    if err != nil {
+      return false
+    }
 
-func (e *exchange) handle_inbound_handshake(pkt *lob.Packet) bool {
-	var (
-		seq = binary.BigEndian.Uint32(pkt.Body[:4])
-		err error
-	)
+    e.last_seq = seq
+  }
 
-	if seq < e.last_seq {
-		return false
-	}
-
-	if e.cipher == nil {
-		e.cipher = cipherset.NewState(pkt.Head[0], e.endpoint.keys, false)
-	}
-
-	_, key, compact, err := e.cipher.DecryptHandshake(pkt.Body)
-	if err != nil {
-		return false
-	}
-
-	hn, err := hashname.FromKeyAndIntermediates(id, key, compact)
-	if err != nil {
-		return false
-	}
-
-	if seq > e.last_seq {
-		o := &lob.Packet{Head: []byte{pkt.Head[0]}}
-		o.Body, err = e.cipher.EncryptHandshake(seq, e.endpoint.keys)
-		if err != nil {
-			return false
-		}
-
-		err = e.endpoint.deliver(o)
-		if err != nil {
-			return false
-		}
-
-		e.last_seq = seq
-	}
-}
-
-func (e *Endpoint) handle_outbound(pkt *lob.Packet) {
-
-}
-
-func (e *Endpoint) deliver(pkt *Packet) error {
-	e.outboundLow <- pkt
-	return nil
+  return true
 }

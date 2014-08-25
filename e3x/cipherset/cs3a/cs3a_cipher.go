@@ -5,11 +5,13 @@ import (
   "crypto/rand"
   "crypto/sha256"
   "encoding/binary"
+  "encoding/hex"
   "io"
 
   "code.google.com/p/go.crypto/nacl/box"
   "code.google.com/p/go.crypto/poly1305"
 
+  "bitbucket.org/simonmenke/go-telehash/base32"
   "bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
   "bitbucket.org/simonmenke/go-telehash/lob"
 )
@@ -20,7 +22,24 @@ var (
   _ cipherset.Key    = (*key)(nil)
 )
 
+func init() {
+  cipherset.Register(0x3a, &cipher{})
+}
+
 type cipher struct{}
+
+func (c *cipher) DecodeKey(s string) (cipherset.Key, error) {
+  data, err := base32.DecodeString(s)
+  if err != nil {
+    return nil, cipherset.ErrInvalidKey
+  }
+  if len(data) != 32 {
+    return nil, cipherset.ErrInvalidKey
+  }
+  k := new([32]byte)
+  copy((*k)[:], data)
+  return &key{pub: k}, nil
+}
 
 func (c *cipher) GenerateKey() (cipherset.Key, error) {
   return generateKey()
@@ -287,7 +306,7 @@ func (s *state) DecryptMessage(p []byte) (uint32, []byte, error) {
   return seq, out, nil
 }
 
-func (s *state) EncryptHandshake(seq uint32, compact map[string]string) ([]byte, error) {
+func (s *state) EncryptHandshake(seq uint32, compact map[uint8]string) ([]byte, error) {
   pkt := &lob.Packet{Body: s.localKey.Bytes()}
   if compact != nil {
     pkt.Json = compact
@@ -299,7 +318,7 @@ func (s *state) EncryptHandshake(seq uint32, compact map[string]string) ([]byte,
   return s.EncryptMessage(seq, data)
 }
 
-func (s *state) DecryptHandshake(p []byte) (uint32, cipherset.Key, map[string]string, error) {
+func (s *state) DecryptHandshake(p []byte) (uint32, cipherset.Key, map[uint8]string, error) {
   if len(p) < 4+32+16 {
     return 0, nil, nil, cipherset.ErrInvalidMessage
   }
@@ -313,7 +332,7 @@ func (s *state) DecryptHandshake(p []byte) (uint32, cipherset.Key, map[string]st
     remoteLineKey [32]byte
     ciphertext    []byte
     inner         *lob.Packet
-    compact       map[string]string
+    compact       map[uint8]string
     err           error
     ok            bool
   )
@@ -351,10 +370,12 @@ func (s *state) DecryptHandshake(p []byte) (uint32, cipherset.Key, map[string]st
   }
 
   if m, ok := inner.Json.(map[string]interface{}); ok && m != nil {
-    compact = make(map[string]string, len(m))
+    compact = make(map[uint8]string, len(m))
     for k, v := range m {
       if s, ok := v.(string); ok && s != "" {
-        compact[k] = s
+        if idb, err := hex.DecodeString(k); err == nil && len(idb) == 1 {
+          compact[idb[0]] = s
+        }
       }
     }
   }
@@ -481,6 +502,10 @@ func (k *key) Bytes() []byte {
   buf := make([]byte, 32)
   copy(buf, (*k.pub)[:])
   return buf
+}
+
+func (k *key) String() string {
+  return base32.EncodeToString((*k.pub)[:])
 }
 
 func (k *key) CanSign() bool {

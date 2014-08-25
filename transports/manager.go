@@ -262,7 +262,17 @@ func (m *Manager) associate(op opAssociate) {
     m.a2h.ReplaceOrInsert(a2h)
   }
 
-  h2a.addrs = append(h2a.addrs, op.addr)
+  found := false
+  for _, o := range h2a.addrs {
+    if !op.addr.Less(o) && !o.Less(op.addr) {
+      found = true
+      break
+    }
+  }
+  if !found {
+    h2a.addrs = append(h2a.addrs, op.addr)
+  }
+
   a2h.hashnames[op.hn] = true
 }
 
