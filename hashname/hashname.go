@@ -79,6 +79,24 @@ func FromKeys(keys cipherset.Keys) (H, error) {
 	return FromIntermediates(intermediates)
 }
 
+func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
+	var (
+		hash          = sha256.New()
+		intermediates = make(cipherset.Parts, len(keys))
+		buf           [32]byte
+	)
+
+	for id, key := range keys {
+		hash.Write(key.Bytes())
+		hash.Sum(buf[:0])
+		hash.Reset()
+
+		intermediates[id] = base32.EncodeToString(buf[:])[:52]
+	}
+
+	return intermediates
+}
+
 func FromKeyAndIntermediates(id uint8, key []byte, intermediates cipherset.Parts) (H, error) {
 	var (
 		all          = make(cipherset.Parts, len(intermediates)+1)

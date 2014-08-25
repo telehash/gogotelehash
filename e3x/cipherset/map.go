@@ -2,7 +2,10 @@ package cipherset
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+
+	"bitbucket.org/simonmenke/go-telehash/base32"
 )
 
 var ErrInvalidKeys = errors.New("chipherset: invalid keys")
@@ -53,7 +56,13 @@ func KeysFromJSON(i interface{}) (Keys, error) {
 
 		key, err := DecodeKey(csid[0], s)
 		if err != nil {
-			return nil, ErrInvalidKeys
+			keyData, err := base32.DecodeString(s)
+			if err != nil {
+				return nil, ErrInvalidKeys
+			}
+
+			key = opaqueKey(keyData)
+			err = nil
 		}
 
 		y[csid[0]] = key
@@ -100,4 +109,38 @@ func PartsFromJSON(i interface{}) (Parts, error) {
 	}
 
 	return y, nil
+}
+
+func (p Parts) MarshalJSON() ([]byte, error) {
+	m := make(map[string]string, len(p))
+	for k, v := range p {
+		m[hex.EncodeToString([]byte{k})] = v
+	}
+	return json.Marshal(m)
+}
+
+func (p Keys) MarshalJSON() ([]byte, error) {
+	m := make(map[string]string, len(p))
+	for k, v := range p {
+		m[hex.EncodeToString([]byte{k})] = v.String()
+	}
+	return json.Marshal(m)
+}
+
+type opaqueKey []byte
+
+func (o opaqueKey) String() string {
+	return base32.EncodeToString(o)
+}
+
+func (o opaqueKey) Bytes() []byte {
+	return o
+}
+
+func (o opaqueKey) CanSign() bool {
+	return false
+}
+
+func (o opaqueKey) CanEncrypt() bool {
+	return false
 }

@@ -140,7 +140,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.True(sa.CanDecryptHandshake())
 	assert.False(sa.NeedsRemoteKey())
 
-	box, err = sa.EncryptHandshake(1, cipherset.Parts{0x01: "foobar"})
+	box, err = sa.EncryptHandshake(1, cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"})
 	assert.NoError(err)
 	assert.NotNil(box)
 
@@ -148,7 +148,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.NoError(err)
 	assert.NotNil(kc)
 	assert.Equal(ka.Bytes(), kc.Bytes())
-	assert.Equal(cipherset.Parts{0x01: "foobar"}, compact)
+	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, compact)
 	assert.Equal(1, seq)
 	assert.True(sb.CanEncryptMessage())
 	assert.True(sb.CanEncryptHandshake())

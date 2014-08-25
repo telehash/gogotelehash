@@ -10,15 +10,29 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/transports"
 )
 
+type EndpointState uint8
+
+const (
+	UnknownEndpointState EndpointState = iota
+	RunningEndpointState
+	TerminatedEndpointState
+	BrokenEndpointState
+)
+
 var errDeferred = errors.New("e3x: deferred operation")
 
 type Endpoint struct {
-	wg         sync.WaitGroup
+	stateMtx sync.Mutex
+	wg       sync.WaitGroup
+	state    EndpointState
+	err      error
+
 	keys       cipherset.Keys
 	transports transports.Manager
 
-	cReceived chan opReceived
-	cDial     chan *opDial
+	cTerminate chan struct{}
+	cReceived  chan opReceived
+	cDial      chan *opDial
 	// outboundHigh <-chan *lob.Packet // channels -> endpoint (-> transports)
 	tokens    map[cipherset.Token]*exchange
 	hashnames map[hashname.H]*exchange
@@ -37,20 +51,80 @@ type opDial struct {
 	cErr  chan error
 }
 
-func (e *Endpoint) run_receiver() {
-	defer e.wg.Done()
+func New(keys cipherset.Keys) *Endpoint {
+	return &Endpoint{keys: keys}
+}
 
-	for {
-		pkt, addr, err := e.transports.Receive()
-		if err == transports.ErrManagerTerminated {
-			break
-		}
-		if err != nil {
-			continue // report error
-		}
+func (e *Endpoint) AddTransport(t transports.Transport) {
+	e.transports.AddTransport(t)
+}
 
-		e.cReceived <- opReceived{nil, pkt, addr}
+func (e *Endpoint) Start() error {
+	e.stateMtx.Lock()
+	defer e.stateMtx.Unlock()
+
+	err := e.start()
+	if err != nil {
+		e.stop()
+		return err
 	}
+
+	return nil
+}
+
+func (e *Endpoint) start() error {
+	if e.state == BrokenEndpointState {
+		return e.err
+	}
+
+	if e.state != UnknownEndpointState {
+		panic("e3x: Endpoint cannot be started more than once")
+	}
+
+	e.tokens = make(map[cipherset.Token]*exchange)
+	e.hashnames = make(map[hashname.H]*exchange)
+	e.cReceived = make(chan opReceived)
+	e.cDial = make(chan *opDial)
+	e.cTerminate = make(chan struct{}, 1)
+
+	err := e.transports.Start()
+	if err != nil {
+		e.err = err
+		return err
+	}
+
+	e.wg.Add(1)
+	go e.run_receiver()
+
+	e.wg.Add(1)
+	go e.run()
+
+	return nil
+}
+
+func (e *Endpoint) Stop() error {
+	e.stateMtx.Lock()
+	defer e.stateMtx.Unlock()
+
+	return e.stop()
+}
+
+func (e *Endpoint) stop() error {
+	select {
+	case e.cTerminate <- struct{}{}:
+	default:
+	}
+
+	e.err = e.transports.Stop()
+
+	if e.state == RunningEndpointState {
+		e.state = TerminatedEndpointState
+	} else {
+		e.state = BrokenEndpointState
+	}
+
+	e.wg.Wait()
+	return e.err
 }
 
 func (e *Endpoint) run() {
@@ -58,6 +132,10 @@ func (e *Endpoint) run() {
 
 	for {
 		select {
+
+		case <-e.cTerminate:
+			e.cTerminate <- struct{}{}
+			return
 
 		case op := <-e.cDial:
 			op.cErr <- e.dial(op)
@@ -71,6 +149,22 @@ func (e *Endpoint) run() {
 			//   e.handle_outbound(pkt)
 
 		}
+	}
+}
+
+func (e *Endpoint) run_receiver() {
+	defer e.wg.Done()
+
+	for {
+		pkt, addr, err := e.transports.Receive()
+		if err == transports.ErrManagerTerminated {
+			break
+		}
+		if err != nil {
+			continue // report error
+		}
+
+		e.cReceived <- opReceived{nil, pkt, addr}
 	}
 }
 
@@ -168,7 +262,7 @@ func (e *Endpoint) dial(op *opDial) error {
 
 	var (
 		csid   = cipherset.SelectCSID(e.keys, op.keys)
-		x      = &exchange{endpoint: e, hashname: op.hn}
+		x      = &exchange{endpoint: e, hashname: op.hn, csid: csid}
 		cipher cipherset.State
 		err    error
 	)

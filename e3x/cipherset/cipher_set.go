@@ -31,6 +31,7 @@ type State interface {
 	CanDecryptHandshake() bool
 	CanDecryptPacket() bool
 
+	IsHigh() bool
 	RemoteToken() Token
 
 	EncryptMessage(seq uint32, in []byte) ([]byte, error)

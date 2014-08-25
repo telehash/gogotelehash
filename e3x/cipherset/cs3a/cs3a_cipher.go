@@ -67,6 +67,13 @@ type state struct {
 	lineDecryptionKey *[32]byte
 }
 
+func (s *state) IsHigh() bool {
+	if s.localKey != nil && s.remoteKey != nil {
+		return bytes.Compare((*s.remoteKey.pub)[:], (*s.localKey.pub)[:]) < 0
+	}
+	return false
+}
+
 func (s *state) RemoteToken() cipherset.Token {
 	if s.remoteToken != nil {
 		return *s.remoteToken
