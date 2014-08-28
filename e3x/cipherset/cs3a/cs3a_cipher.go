@@ -16,9 +16,10 @@ import (
 )
 
 var (
-	_ cipherset.Cipher = (*cipher)(nil)
-	_ cipherset.State  = (*state)(nil)
-	_ cipherset.Key    = (*key)(nil)
+	_ cipherset.Cipher    = (*cipher)(nil)
+	_ cipherset.State     = (*state)(nil)
+	_ cipherset.Key       = (*key)(nil)
+	_ cipherset.Handshake = (*handshake)(nil)
 )
 
 func init() {
@@ -26,6 +27,28 @@ func init() {
 }
 
 type cipher struct{}
+
+type handshake struct {
+	token   *cipherset.Token
+	key     *key
+	lineKey *key
+	parts   cipherset.Parts
+}
+
+func (h *handshake) Token() cipherset.Token {
+	if h.token == nil {
+		return cipherset.ZeroToken
+	}
+	return *h.token
+}
+
+func (h *handshake) Parts() cipherset.Parts {
+	return h.parts
+}
+
+func (h *handshake) PublicKey() cipherset.Key {
+	return h.key
+}
 
 func (c *cipher) DecodeKey(s string) (cipherset.Key, error) {
 	data, err := base32.DecodeString(s)
@@ -44,17 +67,156 @@ func (c *cipher) GenerateKey() (cipherset.Key, error) {
 	return generateKey()
 }
 
-func (c *cipher) NewState(localKey cipherset.Key, isSender bool) (cipherset.State, error) {
+func (c *cipher) NewState(localKey cipherset.Key) (cipherset.State, error) {
 	if k, ok := localKey.(*key); ok && k != nil && k.CanEncrypt() && k.CanSign() {
-		s := &state{isSender: isSender, localKey: k}
+		s := &state{localKey: k}
 		s.update()
 		return s, nil
 	}
 	return nil, cipherset.ErrInvalidKey
 }
 
+func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) (uint32, []byte, error) {
+	if len(p) < 4+32+16 {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	var (
+		ctLen         = len(p) - (4 + 32 + 16)
+		out           = make([]byte, ctLen)
+		localKey_, _  = localKey.(*key)
+		remoteKey_, _ = remoteKey.(*key)
+		seq           uint32
+		mac           [16]byte
+		nonce         [24]byte
+		macKey        [32]byte
+		agreedKey     [32]byte
+		remoteLineKey [32]byte
+		ciphertext    []byte
+		ok            bool
+	)
+
+	if localKey_ == nil || remoteKey_ == nil {
+		return 0, nil, cipherset.ErrInvalidState
+	}
+
+	copy(nonce[:], p[:4])
+	copy(remoteLineKey[:], p[4:4+32])
+	copy(mac[:], p[4+32+ctLen:])
+	ciphertext = p[4+32 : 4+32+ctLen]
+
+	{ // make macKey
+		box.Precompute(&macKey, remoteKey_.pub, localKey_.prv)
+
+		var (
+			sha = sha256.New()
+		)
+
+		sha.Write(p[:4])
+		sha.Write(macKey[:])
+		sha.Sum(macKey[:0])
+	}
+
+	if !poly1305.Verify(&mac, p[4:4+32+ctLen], &macKey) {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	// make agreedKey
+	box.Precompute(&agreedKey, &remoteLineKey, localKey_.prv)
+
+	// decode BODY
+	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
+	if !ok {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	seq = binary.BigEndian.Uint32(nonce[:4])
+	return seq, out, nil
+}
+
+func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (uint32, cipherset.Handshake, error) {
+	if len(p) < 4+32+16 {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	var (
+		ctLen         = len(p) - (4 + 32 + 16)
+		out           = make([]byte, ctLen)
+		handshake     = &handshake{}
+		localKey_, _  = localKey.(*key)
+		seq           uint32
+		mac           [16]byte
+		nonce         [24]byte
+		macKey        [32]byte
+		agreedKey     [32]byte
+		remoteKey     [32]byte
+		remoteLineKey [32]byte
+		ciphertext    []byte
+		ok            bool
+	)
+
+	if localKey_ == nil {
+		return 0, nil, cipherset.ErrInvalidState
+	}
+
+	copy(nonce[:], p[:4])
+	copy(remoteLineKey[:], p[4:4+32])
+	copy(mac[:], p[4+32+ctLen:])
+	ciphertext = p[4+32 : 4+32+ctLen]
+
+	// make agreedKey
+	box.Precompute(&agreedKey, &remoteLineKey, localKey_.prv)
+
+	// decode BODY
+	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
+	if !ok {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	{ // decode inner
+		inner, err := lob.Decode(out)
+		if err != nil {
+			return 0, nil, cipherset.ErrInvalidMessage
+		}
+
+		parts, err := cipherset.PartsFromHeader(inner.Header())
+		if err != nil {
+			return 0, nil, cipherset.ErrInvalidMessage
+		}
+
+		if len(inner.Body) != 32 {
+			return 0, nil, cipherset.ErrInvalidMessage
+		}
+		copy(remoteKey[:], inner.Body)
+
+		handshake.key = makeKey(nil, &remoteKey)
+		handshake.lineKey = makeKey(nil, &remoteLineKey)
+		handshake.token = new(cipherset.Token)
+		handshake.parts = parts
+		copy((*handshake.token)[:], remoteLineKey[:16])
+	}
+
+	{ // make macKey
+		box.Precompute(&macKey, &remoteKey, localKey_.prv)
+
+		var (
+			sha = sha256.New()
+		)
+
+		sha.Write(p[:4])
+		sha.Write(macKey[:])
+		sha.Sum(macKey[:0])
+	}
+
+	if !poly1305.Verify(&mac, p[4:4+32+ctLen], &macKey) {
+		return 0, nil, cipherset.ErrInvalidMessage
+	}
+
+	seq = binary.BigEndian.Uint32(nonce[:4])
+	return seq, handshake, nil
+}
+
 type state struct {
-	isSender          bool
 	localKey          *key
 	remoteKey         *key
 	localLineKey      *key
@@ -62,7 +224,6 @@ type state struct {
 	localToken        *cipherset.Token
 	remoteToken       *cipherset.Token
 	macKeyBase        *[32]byte
-	agreedKey         *[32]byte
 	lineEncryptionKey *[32]byte
 	lineDecryptionKey *[32]byte
 }
@@ -95,16 +256,6 @@ func (s *state) setRemoteLineKey(k *key) {
 	s.update()
 }
 
-func (s *state) setLocalToken(t *cipherset.Token) {
-	s.localToken = t
-	s.update()
-}
-
-func (s *state) setRemoteToken(t *cipherset.Token) {
-	s.remoteToken = t
-	s.update()
-}
-
 func (s *state) update() {
 	// generate a local line Key
 	if s.localLineKey == nil {
@@ -115,17 +266,6 @@ func (s *state) update() {
 	if s.macKeyBase == nil && s.localKey.CanSign() && s.remoteKey.CanEncrypt() {
 		s.macKeyBase = new([32]byte)
 		box.Precompute(s.macKeyBase, s.remoteKey.pub, s.localKey.prv)
-	}
-
-	// generate agreed key
-	if s.isSender && s.agreedKey == nil && s.localLineKey.CanSign() && s.remoteKey.CanEncrypt() {
-		s.agreedKey = new([32]byte)
-		box.Precompute(s.agreedKey, s.remoteKey.pub, s.localLineKey.prv)
-	}
-
-	if !s.isSender && s.agreedKey == nil && s.remoteLineKey.CanEncrypt() && s.localKey.CanSign() {
-		s.agreedKey = new([32]byte)
-		box.Precompute(s.agreedKey, s.remoteLineKey.pub, s.localKey.prv)
 	}
 
 	// make local token
@@ -141,17 +281,20 @@ func (s *state) update() {
 	}
 
 	// generate line keys
-	if s.agreedKey != nil && s.localToken != nil && s.remoteToken != nil {
+	if s.localToken != nil && s.remoteToken != nil {
+		var sharedKey [32]byte
+		box.Precompute(&sharedKey, s.remoteLineKey.pub, s.localLineKey.prv)
+
 		sha := sha256.New()
 		s.lineEncryptionKey = new([32]byte)
-		sha.Write((*s.agreedKey)[:])
+		sha.Write(sharedKey[:])
 		sha.Write((*s.localToken)[:])
 		sha.Write((*s.remoteToken)[:])
 		sha.Sum((*s.lineEncryptionKey)[:0])
 
 		sha.Reset()
 		s.lineDecryptionKey = new([32]byte)
-		sha.Write((*s.agreedKey)[:])
+		sha.Write(sharedKey[:])
 		sha.Write((*s.remoteToken)[:])
 		sha.Write((*s.localToken)[:])
 		sha.Sum((*s.lineDecryptionKey)[:0])
@@ -243,9 +386,10 @@ func (s *state) CanDecryptPacket() bool {
 
 func (s *state) EncryptMessage(seq uint32, in []byte) ([]byte, error) {
 	var (
-		out   = make([]byte, 4+32+len(in)+box.Overhead+16)
-		nonce [24]byte
-		ctLen int
+		out       = make([]byte, 4+32+len(in)+box.Overhead+16)
+		nonce     [24]byte
+		agreedKey [32]byte
+		ctLen     int
 	)
 
 	if !s.CanEncryptMessage() {
@@ -263,8 +407,11 @@ func (s *state) EncryptMessage(seq uint32, in []byte) ([]byte, error) {
 	// copy public senderLineKey
 	copy(out[4:4+32], (*s.localLineKey.pub)[:])
 
+	// make the agreedKey
+	box.Precompute(&agreedKey, s.remoteKey.pub, s.localLineKey.prv)
+
 	// encrypt p
-	ctLen = len(box.SealAfterPrecomputation(out[4+32:4+32], in, &nonce, s.agreedKey))
+	ctLen = len(box.SealAfterPrecomputation(out[4+32:4+32], in, &nonce, &agreedKey))
 
 	// Sign message
 	s.sign(out[4+32+ctLen:], nonce[:4], out[4:4+32+ctLen])
@@ -272,51 +419,9 @@ func (s *state) EncryptMessage(seq uint32, in []byte) ([]byte, error) {
 	return out[:4+32+ctLen+16], nil
 }
 
-func (s *state) DecryptMessage(p []byte) (uint32, []byte, error) {
-	if len(p) < 4+32+16 {
-		return 0, nil, cipherset.ErrInvalidMessage
-	}
-
-	var (
-		ctLen         = len(p) - (4 + 32 + 16)
-		out           = make([]byte, ctLen)
-		seq           uint32
-		nonce         [24]byte
-		remoteLineKey [32]byte
-		ciphertext    []byte
-		ok            bool
-	)
-
-	if !s.CanDecryptMessage() {
-		return 0, nil, cipherset.ErrInvalidState
-	}
-
-	copy(nonce[:], p[:4])
-	copy(remoteLineKey[:], p[4:4+32])
-	ciphertext = p[4+32 : 4+32+ctLen]
-
-	if !s.verify(p[4+32+ctLen:], p[:4], p[4:4+32+ctLen]) {
-		return 0, nil, cipherset.ErrInvalidMessage
-	}
-
-	s.setRemoteLineKey(makeKey(nil, &remoteLineKey))
-
-	// decode BODY
-	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, s.agreedKey)
-	if !ok {
-		return 0, nil, cipherset.ErrInvalidMessage
-	}
-
-	seq = binary.BigEndian.Uint32(nonce[:4])
-
-	return seq, out, nil
-}
-
 func (s *state) EncryptHandshake(seq uint32, compact cipherset.Parts) ([]byte, error) {
 	pkt := &lob.Packet{Body: s.localKey.Bytes()}
-	if compact != nil {
-		pkt.Json = compact
-	}
+	compact.ApplyToHeader(pkt.Header())
 	data, err := lob.Encode(pkt)
 	if err != nil {
 		return nil, err
@@ -324,61 +429,30 @@ func (s *state) EncryptHandshake(seq uint32, compact cipherset.Parts) ([]byte, e
 	return s.EncryptMessage(seq, data)
 }
 
-func (s *state) DecryptHandshake(p []byte) (uint32, cipherset.Key, cipherset.Parts, error) {
-	if len(p) < 4+32+16 {
-		return 0, nil, nil, cipherset.ErrInvalidMessage
-	}
-
+func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 	var (
-		ctLen         = len(p) - (4 + 32 + 16)
-		out           = make([]byte, ctLen)
-		seq           uint32
-		nonce         [24]byte
-		remoteKey     [32]byte
-		remoteLineKey [32]byte
-		ciphertext    []byte
-		inner         *lob.Packet
-		compact       cipherset.Parts
-		err           error
-		ok            bool
+		hs, _ = h.(*handshake)
 	)
 
-	if !s.CanDecryptHandshake() {
-		return 0, nil, nil, cipherset.ErrInvalidState
+	if hs == nil {
+		return false
 	}
 
-	copy(nonce[:], p[:4])
-	copy(remoteLineKey[:], p[4:4+32])
-	ciphertext = p[4+32 : 4+32+ctLen]
-
-	s.setRemoteLineKey(makeKey(nil, &remoteLineKey))
-
-	// decode BODY
-	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, s.agreedKey)
-	if !ok {
-		return 0, nil, nil, cipherset.ErrInvalidMessage
+	if s.remoteToken != nil && *s.remoteToken != *hs.token {
+		return false
 	}
 
-	inner, err = lob.Decode(out)
-	if err != nil {
-		return 0, nil, nil, err
+	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
+		return false
 	}
 
-	copy(remoteKey[:], inner.Body)
-	s.SetRemoteKey(makeKey(nil, &remoteKey))
-
-	if !s.CanDecryptMessage() {
-		return 0, nil, nil, cipherset.ErrInvalidState
+	if s.remoteKey != nil && *s.remoteKey.pub != *hs.key.pub {
+		return false
 	}
 
-	if !s.verify(p[4+32+ctLen:], p[:4], p[4:4+32+ctLen]) {
-		return 0, nil, nil, cipherset.ErrInvalidMessage
-	}
-
-	compact, _ = cipherset.PartsFromJSON(inner.Json)
-	seq = binary.BigEndian.Uint32(nonce[:4])
-
-	return seq, s.remoteKey, compact, nil
+	s.setRemoteLineKey(hs.lineKey)
+	s.SetRemoteKey(hs.key)
+	return true
 }
 
 func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
@@ -433,7 +507,7 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || pkt.Json != nil || len(pkt.Body) < 16+24 {
+	if len(pkt.Head) != 0 || len(pkt.Header()) != 0 || len(pkt.Body) < 16+24 {
 		return nil, cipherset.ErrInvalidPacket
 	}
 

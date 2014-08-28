@@ -8,6 +8,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
 type EndpointState uint8
@@ -30,13 +31,25 @@ type Endpoint struct {
 	keys       cipherset.Keys
 	transports transports.Manager
 
-	cTerminate chan struct{}
-	cReceived  chan opReceived
-	cDial      chan *opDial
-	// outboundHigh <-chan *lob.Packet // channels -> endpoint (-> transports)
-	tokens    map[cipherset.Token]*exchange
-	hashnames map[hashname.H]*exchange
+	cTerminate       chan struct{}
+	cReceived        chan opReceived
+	cDialExchange    chan *opDialExchange
+	cRegisterChannel chan *opRegisterChannel
+	cDeliverPacket   chan *opDeliverPacket
+	cReceivePacket   chan *opReceivePacket
+	tokens           map[cipherset.Token]*exchange
+	hashnames        map[hashname.H]*exchange
+	scheduler        *scheduler.Scheduler
+	handlers         map[string]Handler
 }
+
+type Handler interface {
+	ServeTelehash(ch *Channel)
+}
+
+type HandlerFunc func(ch *Channel)
+
+func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 
 type opReceived struct {
 	pkt  *lob.Packet
@@ -44,19 +57,25 @@ type opReceived struct {
 	addr transports.ResolvedAddr
 }
 
-type opDial struct {
-	hn    hashname.H
-	keys  cipherset.Keys
-	addrs []transports.ResolvedAddr
-	cErr  chan error
+type opDialExchange struct {
+	addr *Addr
+	cErr chan error
 }
 
 func New(keys cipherset.Keys) *Endpoint {
-	return &Endpoint{keys: keys}
+	return &Endpoint{keys: keys, handlers: make(map[string]Handler)}
 }
 
 func (e *Endpoint) AddTransport(t transports.Transport) {
 	e.transports.AddTransport(t)
+}
+
+func (e *Endpoint) AddHandler(typ string, h Handler) {
+	e.handlers[typ] = h
+}
+
+func (e *Endpoint) LocalAddr() (*Addr, error) {
+	return NewAddr(e.keys, nil, e.transports.LocalAddresses())
 }
 
 func (e *Endpoint) Start() error {
@@ -84,8 +103,14 @@ func (e *Endpoint) start() error {
 	e.tokens = make(map[cipherset.Token]*exchange)
 	e.hashnames = make(map[hashname.H]*exchange)
 	e.cReceived = make(chan opReceived)
-	e.cDial = make(chan *opDial)
+	e.cDialExchange = make(chan *opDialExchange)
+	e.cRegisterChannel = make(chan *opRegisterChannel)
+	e.cDeliverPacket = make(chan *opDeliverPacket)
+	e.cReceivePacket = make(chan *opReceivePacket)
 	e.cTerminate = make(chan struct{}, 1)
+
+	e.scheduler = scheduler.New()
+	e.scheduler.Start()
 
 	err := e.transports.Start()
 	if err != nil {
@@ -123,6 +148,8 @@ func (e *Endpoint) stop() error {
 		e.state = BrokenEndpointState
 	}
 
+	e.scheduler.Stop()
+
 	e.wg.Wait()
 	return e.err
 }
@@ -133,20 +160,27 @@ func (e *Endpoint) run() {
 	for {
 		select {
 
+		case op := <-e.scheduler.C:
+			op.Exec()
+
 		case <-e.cTerminate:
 			e.cTerminate <- struct{}{}
 			return
 
-		case op := <-e.cDial:
+		case op := <-e.cDialExchange:
 			op.cErr <- e.dial(op)
 
 		case op := <-e.cReceived:
-			// handle inbound packet
 			e.received(op)
 
-			// case pkt := <-e.outboundHigh:
-			//   // hanndle outbound packet
-			//   e.handle_outbound(pkt)
+		case op := <-e.cRegisterChannel:
+			op.cErr <- e.register_channel(op)
+
+		case op := <-e.cDeliverPacket:
+			op.cErr <- op.ch.deliver_packet(op)
+
+		case op := <-e.cReceivePacket:
+			op.cErr <- op.ch.receive_packet(op)
 
 		}
 	}
@@ -192,27 +226,48 @@ func (e *Endpoint) received(op opReceived) {
 
 func (e *Endpoint) received_handshake(op opReceived) {
 	var (
-		token cipherset.Token
+		handshake cipherset.Handshake
+		token     cipherset.Token
+		hn        hashname.H
+		csid      uint8
+		err       error
 	)
 
 	if len(op.pkt.Body) < 4+16 {
 		return // DROP
 	}
 
-	// extract TOKEN
-	copy(token[:], op.pkt.Body[4:4+16])
-
-	// find / create exchange
-	ex, found := e.tokens[token]
-	if !found {
-		ex = &exchange{endpoint: e, token: token}
+	if len(op.pkt.Head) != 1 {
+		return // DROP
 	}
 
-	valid := ex.received_handshake(op)
+	csid = op.pkt.Head[0]
+
+	_, handshake, err = cipherset.DecryptHandshake(csid, e.key_for_cs(csid), op.pkt.Body)
+	if err != nil {
+	}
+
+	token = handshake.Token()
+	hn, err = hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Bytes(), handshake.Parts())
+	if err != nil {
+		return // DROP
+	}
+
+	// find / create exchange
+	ex, found := e.hashnames[hn]
+	if !found {
+		ex = newExchange(e)
+		ex.hashname = hn
+		ex.token = token
+	}
+
+	valid := ex.received_handshake(op, handshake)
+	tracef("ReceivedHandshake() => %v", valid)
 
 	if valid && !found {
+		ex.reset_expire()
 		e.tokens[token] = ex
-		e.hashnames[ex.hashname] = ex
+		e.hashnames[hn] = ex
 	}
 
 	if valid {
@@ -221,11 +276,21 @@ func (e *Endpoint) received_handshake(op opReceived) {
 }
 
 func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.ResolvedAddr) {
+	var (
+		token cipherset.Token
+	)
 
-}
+	if len(pkt.Body) < 16 {
+		return //drop
+	}
 
-func (e *Endpoint) handle_outbound(pkt *lob.Packet) {
+	copy(token[:], pkt.Body[:16])
+	x := e.tokens[token]
+	if x == nil {
+		return // drop
+	}
 
+	x.received_packet(pkt)
 }
 
 func (e *Endpoint) deliver(pkt *lob.Packet, addr transports.Addr) error {
@@ -237,19 +302,14 @@ func (e *Endpoint) deliver(pkt *lob.Packet, addr transports.Addr) error {
 	return e.transports.Deliver(data, addr)
 }
 
-func (e *Endpoint) Dial(keys cipherset.Keys, addrs []transports.ResolvedAddr) error {
-	hn, err := hashname.FromKeys(keys)
-	if err != nil {
-		return err
-	}
-
-	op := opDial{hn, keys, addrs, make(chan error)}
-	e.cDial <- &op
+func (e *Endpoint) DialExchange(addr *Addr) error {
+	op := opDialExchange{addr, make(chan error)}
+	e.cDialExchange <- &op
 	return waitForError(op.cErr)
 }
 
-func (e *Endpoint) dial(op *opDial) error {
-	if x, found := e.hashnames[op.hn]; found {
+func (e *Endpoint) dial(op *opDialExchange) error {
+	if x, found := e.hashnames[op.addr.hashname]; found {
 		if x.state == dialingExchangeState {
 			x.qDial = append(x.qDial, op)
 			return errDeferred
@@ -261,33 +321,39 @@ func (e *Endpoint) dial(op *opDial) error {
 	}
 
 	var (
-		csid   = cipherset.SelectCSID(e.keys, op.keys)
-		x      = &exchange{endpoint: e, hashname: op.hn, csid: csid}
+		csid   = cipherset.SelectCSID(e.keys, op.addr.keys)
+		x      = newExchange(e)
 		cipher cipherset.State
 		err    error
 	)
 
-	cipher, err = cipherset.NewState(csid, e.key_for_cs(csid), true)
+	x.hashname = op.addr.hashname
+	x.csid = csid
+
+	cipher, err = cipherset.NewState(csid, e.key_for_cs(csid))
 	if err != nil {
 		return err
 	}
 	x.cipher = cipher
 
-	err = cipher.SetRemoteKey(op.keys[csid])
+	err = cipher.SetRemoteKey(op.addr.keys[csid])
 	if err != nil {
 		return err
 	}
 
-	for _, addr := range op.addrs {
-		e.transports.Associate(op.hn, addr)
+	for _, addr := range op.addr.addrs {
+		e.transports.Associate(op.addr.hashname, addr)
 	}
 
-	err = x.deliver_handshake()
+	err = x.deliver_handshake(0, nil)
 	if err != nil {
 		return err
 	}
 
-	e.hashnames[op.hn] = x
+	x.state = dialingExchangeState
+	x.reset_break()
+	x.reset_expire()
+	e.hashnames[op.addr.hashname] = x
 	x.qDial = append(x.qDial, op)
 	return errDeferred
 }

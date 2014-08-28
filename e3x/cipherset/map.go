@@ -6,6 +6,7 @@ import (
 	"errors"
 
 	"bitbucket.org/simonmenke/go-telehash/base32"
+	"bitbucket.org/simonmenke/go-telehash/lob"
 )
 
 var ErrInvalidKeys = errors.New("chipherset: invalid keys")
@@ -71,22 +72,53 @@ func KeysFromJSON(i interface{}) (Keys, error) {
 	return y, nil
 }
 
-func PartsFromJSON(i interface{}) (Parts, error) {
-	if i == nil {
+// func PartsFromJSON(i interface{}) (Parts, error) {
+//   if i == nil {
+//     return nil, nil
+//   }
+
+//   x, ok := i.(map[string]interface{})
+//   if !ok {
+//     return nil, ErrInvalidParts
+//   }
+
+//   if x == nil || len(x) == 0 {
+//     return nil, nil
+//   }
+
+//   y := make(Parts, len(x))
+//   for k, v := range x {
+//     if len(k) != 2 {
+//       return nil, ErrInvalidParts
+//     }
+
+//     s, ok := v.(string)
+//     if !ok || s == "" {
+//       return nil, ErrInvalidParts
+//     }
+
+//     csid, err := hex.DecodeString(k)
+//     if err != nil {
+//       return nil, ErrInvalidParts
+//     }
+
+//     if len(s) != 52 {
+//       return nil, ErrInvalidParts
+//     }
+
+//     y[csid[0]] = s
+//   }
+
+//   return y, nil
+// }
+
+func PartsFromHeader(h lob.Header) (Parts, error) {
+	if h == nil || len(h) == 0 {
 		return nil, nil
 	}
 
-	x, ok := i.(map[string]interface{})
-	if !ok {
-		return nil, ErrInvalidParts
-	}
-
-	if x == nil || len(x) == 0 {
-		return nil, nil
-	}
-
-	y := make(Parts, len(x))
-	for k, v := range x {
+	y := make(Parts, len(h))
+	for k, v := range h {
 		if len(k) != 2 {
 			return nil, ErrInvalidParts
 		}
@@ -125,6 +157,18 @@ func (p Keys) MarshalJSON() ([]byte, error) {
 		m[hex.EncodeToString([]byte{k})] = v.String()
 	}
 	return json.Marshal(m)
+}
+
+func (p Parts) ApplyToHeader(h lob.Header) {
+	for k, v := range p {
+		h.Set(hex.EncodeToString([]byte{k}), v)
+	}
+}
+
+func (p Keys) ApplyToHeader(h lob.Header) {
+	for k, v := range p {
+		h.Set(hex.EncodeToString([]byte{k}), v.String())
+	}
 }
 
 type opaqueKey []byte

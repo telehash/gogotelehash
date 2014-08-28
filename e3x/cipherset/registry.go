@@ -38,11 +38,29 @@ func DecodeKey(csid uint8, s string) (Key, error) {
 	return c.DecodeKey(s)
 }
 
-func NewState(csid uint8, localKey Key, isSender bool) (State, error) {
+func DecryptMessage(csid uint8, localKey, remoteKey Key, p []byte) (uint32, []byte, error) {
+	c := ciphers[csid]
+	if c == nil {
+		return 0, nil, ErrUnknownCSID
+	}
+
+	return c.DecryptMessage(localKey, remoteKey, p)
+}
+
+func DecryptHandshake(csid uint8, localKey Key, p []byte) (uint32, Handshake, error) {
+	c := ciphers[csid]
+	if c == nil {
+		return 0, nil, ErrUnknownCSID
+	}
+
+	return c.DecryptHandshake(localKey, p)
+}
+
+func NewState(csid uint8, localKey Key) (State, error) {
 	c := ciphers[csid]
 	if c == nil {
 		return nil, ErrUnknownCSID
 	}
 
-	return c.NewState(localKey, isSender)
+	return c.NewState(localKey)
 }

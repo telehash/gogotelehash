@@ -17,7 +17,11 @@ var (
 type Cipher interface {
 	DecodeKey(s string) (Key, error)
 	GenerateKey() (Key, error)
-	NewState(localKey Key, isSender bool) (State, error)
+
+	DecryptMessage(localKey, remoteKey Key, p []byte) (uint32, []byte, error)
+	DecryptHandshake(localKey Key, p []byte) (uint32, Handshake, error)
+
+	NewState(localKey Key) (State, error)
 }
 
 type State interface {
@@ -35,13 +39,17 @@ type State interface {
 	RemoteToken() Token
 
 	EncryptMessage(seq uint32, in []byte) ([]byte, error)
-	DecryptMessage(p []byte) (uint32, []byte, error)
-
 	EncryptHandshake(seq uint32, compact Parts) ([]byte, error)
-	DecryptHandshake(p []byte) (uint32, Key, Parts, error)
+	ApplyHandshake(Handshake) bool
 
 	EncryptPacket(pkt *lob.Packet) (*lob.Packet, error)
 	DecryptPacket(pkt *lob.Packet) (*lob.Packet, error)
+}
+
+type Handshake interface {
+	Token() Token
+	PublicKey() Key // The sender public key
+	Parts() Parts   // The sender parts
 }
 
 type Key interface {

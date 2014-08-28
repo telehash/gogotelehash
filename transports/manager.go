@@ -28,16 +28,17 @@ type Manager struct {
 	state    ManagerState
 	err      error
 
-	transports []Transport
-	h2a        *btree.BTree
-	a2h        *btree.BTree
-	cAssociate chan opAssociate
-	cDeliver   chan opDeliver
-	opReceive  *opReceive
-	cReceive   chan *opReceive
-	cReceived  chan opReceived
-	cResolve   chan opResolve
-	cTerminate chan struct{}
+	transports      []Transport
+	h2a             *btree.BTree
+	a2h             *btree.BTree
+	cAssociate      chan opAssociate
+	cDeliver        chan opDeliver
+	opReceive       *opReceive
+	cReceive        chan *opReceive
+	cReceived       chan opReceived
+	cResolve        chan opResolve
+	cLocalAddresses chan opLocalAddresses
+	cTerminate      chan struct{}
 }
 
 type h2aItem struct {
@@ -75,6 +76,10 @@ type opReceived struct {
 
 type opResolve struct {
 	addr Addr
+	cRes chan []ResolvedAddr
+}
+
+type opLocalAddresses struct {
 	cRes chan []ResolvedAddr
 }
 
@@ -120,6 +125,7 @@ func (m *Manager) start() error {
 	m.cReceive = make(chan *opReceive)
 	m.cReceived = make(chan opReceived)
 	m.cResolve = make(chan opResolve)
+	m.cLocalAddresses = make(chan opLocalAddresses)
 	m.cTerminate = make(chan struct{}, 1)
 
 	for _, t := range m.transports {
@@ -217,6 +223,9 @@ func (m *Manager) run() {
 
 		case op := <-m.cResolve:
 			op.cRes <- m.resolve(op.addr)
+
+		case op := <-m.cLocalAddresses:
+			op.cRes <- m.localAddresses()
 
 		}
 	}
@@ -342,6 +351,20 @@ func (m *Manager) received(op opReceived) {
 	m.opReceive.pkt = op.pkt
 	m.opReceive.cWait <- struct{}{}
 	m.opReceive = nil
+}
+
+func (m *Manager) LocalAddresses() []ResolvedAddr {
+	cRes := make(chan []ResolvedAddr)
+	m.cLocalAddresses <- opLocalAddresses{cRes}
+	return <-cRes
+}
+
+func (m *Manager) localAddresses() []ResolvedAddr {
+	var res []ResolvedAddr
+	for _, t := range m.transports {
+		res = append(res, t.LocalAddresses()...)
+	}
+	return res
 }
 
 func (m *Manager) Resolve(addr Addr) []ResolvedAddr {

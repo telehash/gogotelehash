@@ -32,24 +32,33 @@ func TestSimpleEndpoint(t *testing.T) {
 	ea.AddTransport(ta)
 	eb.AddTransport(tb)
 
-	time.AfterFunc(10*time.Second, func() { panic("OOPS") })
-
 	err = ea.Start()
 	assert.NoError(err)
 
 	err = eb.Start()
 	assert.NoError(err)
 
-	err = ea.Dial(cipherset.Keys{0x3a: kb}, tb.LocalAddresses())
+	addrA, err := NewAddr(cipherset.Keys{0x3a: ka}, nil, ta.LocalAddresses())
 	assert.NoError(err)
 
-	err = ea.Dial(cipherset.Keys{0x3a: kb}, tb.LocalAddresses())
+	addrB, err := NewAddr(cipherset.Keys{0x3a: kb}, nil, tb.LocalAddresses())
 	assert.NoError(err)
 
-	err = eb.Dial(cipherset.Keys{0x3a: ka}, ta.LocalAddresses())
+	tracef("HELLO")
+	err = ea.DialExchange(addrB)
 	assert.NoError(err)
 
-	time.Sleep(5 * time.Second)
+	err = ea.DialExchange(addrB)
+	assert.NoError(err)
+
+	err = eb.DialExchange(addrA)
+	assert.NoError(err)
+
+	time.Sleep(2*time.Minute + 10*time.Second)
+	tracef("BYE")
+
+	tracef("ea: schedule idle=%v next=%s", ea.scheduler.Idle(), ea.scheduler.Next())
+	tracef("eb: schedule idle=%v next=%s", eb.scheduler.Idle(), eb.scheduler.Next())
 
 	err = ea.Stop()
 	assert.NoError(err)

@@ -11,8 +11,8 @@ func TestCoding(t *testing.T) {
 	var tab = []*Packet{
 		{Head: []byte("hello!")},
 		{Head: []byte("hello!"), Body: []byte("world")},
-		{Json: map[string]interface{}{"hello": 5}},
-		{Json: map[string]interface{}{"hello": 5}, Body: []byte("world")},
+		{jsonHeader: Header{"hello": 5}},
+		{jsonHeader: Header{"hello": 5}, Body: []byte("world")},
 	}
 
 	for _, e := range tab {
