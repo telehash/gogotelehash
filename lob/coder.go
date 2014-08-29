@@ -105,11 +105,12 @@ func (p *Packet) Header() Header {
 
 type Header map[string]interface{}
 
-func (h Header) Get(k string) interface{} {
+func (h Header) Get(k string) (v interface{}, found bool) {
 	if h == nil {
-		return nil
+		return nil, false
 	}
-	return h[k]
+	v, found = h[k]
+	return v, found
 }
 
 func (h Header) Set(k string, v interface{}) {
@@ -119,8 +120,12 @@ func (h Header) Set(k string, v interface{}) {
 	h[k] = v
 }
 
-func (h Header) GetString(k string) (string, bool) {
-	x, ok := h.Get(k).(string)
+func (h Header) GetString(k string) (v string, found bool) {
+	y, ok := h.Get(k)
+	if !ok {
+		return "", false
+	}
+	x, ok := y.(string)
 	if !ok {
 		return "", false
 	}
@@ -131,8 +136,28 @@ func (h Header) SetString(k string, v string) {
 	h.Set(k, v)
 }
 
-func (h Header) GetInt(k string) (int, bool) {
-	x, ok := h.Get(k).(int)
+func (h Header) GetBool(k string) (v bool, found bool) {
+	y, ok := h.Get(k)
+	if !ok {
+		return false, false
+	}
+	x, ok := y.(bool)
+	if !ok {
+		return false, false
+	}
+	return x, true
+}
+
+func (h Header) SetBool(k string, v bool) {
+	h.Set(k, v)
+}
+
+func (h Header) GetInt(k string) (v int, found bool) {
+	y, ok := h.Get(k)
+	if !ok {
+		return 0, false
+	}
+	x, ok := y.(int)
 	if !ok {
 		return 0, false
 	}
@@ -143,7 +168,7 @@ func (h Header) SetInt(k string, v int) {
 	h.Set(k, v)
 }
 
-func (h Header) GetUint32(k string) (uint32, bool) {
+func (h Header) GetUint32(k string) (v uint32, found bool) {
 	x, ok := h.GetInt(k)
 	if !ok || x < 0 {
 		return 0, false
@@ -153,4 +178,28 @@ func (h Header) GetUint32(k string) (uint32, bool) {
 
 func (h Header) SetUint32(k string, v uint32) {
 	h.SetInt(k, int(v))
+}
+
+func (h Header) GetUint32Slice(k string) (v []uint32, found bool) {
+	y, ok := h.Get(k)
+	if !ok {
+		return nil, false
+	}
+	x, ok := y.([]interface{})
+	if !ok {
+		return nil, false
+	}
+	z := make([]uint32, len(x))
+	for i, a := range x {
+		b, ok := a.(int)
+		if !ok || b < 0 {
+			return nil, false
+		}
+		z[i] = uint32(b)
+	}
+	return z, true
+}
+
+func (h Header) SetUint32Slice(k string, v []uint32) {
+	h.Set(k, v)
 }
