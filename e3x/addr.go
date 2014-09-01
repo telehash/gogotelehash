@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"encoding/json"
 	"errors"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
@@ -57,4 +58,35 @@ func (a *Addr) Hashname() hashname.H {
 
 func (a *Addr) String() string {
 	return string(a.hashname)
+}
+
+func (a *Addr) MarshalJSON() ([]byte, error) {
+	var jsonAddr = struct {
+		Hashname hashname.H                `json:"hashname"`
+		Keys     cipherset.Keys            `json:"keys"`
+		Parts    cipherset.Parts           `json:"parts"`
+		Addrs    []transports.ResolvedAddr `json:"paths"`
+	}{a.hashname, a.keys, a.parts, a.addrs}
+	return json.Marshal(&jsonAddr)
+}
+
+func (a *Addr) UnmarshalJSON(p []byte) error {
+	var jsonAddr struct {
+		Hashname hashname.H                `json:"hashname"`
+		Keys     cipherset.Keys            `json:"keys"`
+		Parts    cipherset.Parts           `json:"parts"`
+		Addrs    []transports.ResolvedAddr `json:"paths"`
+	}
+	err := json.Unmarshal(p, &jsonAddr)
+	if err != nil {
+		return err
+	}
+
+	b, err := NewAddr(jsonAddr.Keys, jsonAddr.Parts, jsonAddr.Addrs)
+	if err != nil {
+		return err
+	}
+
+	*a = *b
+	return nil
 }
