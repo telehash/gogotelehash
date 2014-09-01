@@ -4,7 +4,7 @@ import (
 	"log"
 )
 
-const traceOn = true
+const traceOn = false
 
 func tracef(format string, args ...interface{}) {
 	if traceOn {

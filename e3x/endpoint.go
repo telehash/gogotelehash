@@ -37,6 +37,7 @@ type Endpoint struct {
 	cRegisterChannel chan *opRegisterChannel
 	cDeliverPacket   chan *opDeliverPacket
 	cReceivePacket   chan *opReceivePacket
+	cCloseChannel    chan *opCloseChannel
 	tokens           map[cipherset.Token]*exchange
 	hashnames        map[hashname.H]*exchange
 	scheduler        *scheduler.Scheduler
@@ -107,6 +108,7 @@ func (e *Endpoint) start() error {
 	e.cRegisterChannel = make(chan *opRegisterChannel)
 	e.cDeliverPacket = make(chan *opDeliverPacket)
 	e.cReceivePacket = make(chan *opReceivePacket)
+	e.cCloseChannel = make(chan *opCloseChannel)
 	e.cTerminate = make(chan struct{}, 1)
 
 	e.scheduler = scheduler.New()
@@ -177,10 +179,13 @@ func (e *Endpoint) run() {
 			op.cErr <- e.register_channel(op)
 
 		case op := <-e.cDeliverPacket:
-			op.cErr <- op.ch.deliver_packet(op)
+			op.ch.deliver_packet(op)
 
 		case op := <-e.cReceivePacket:
-			op.cErr <- op.ch.receive_packet(op)
+			op.ch.receive_packet(op)
+
+		case op := <-e.cCloseChannel:
+			op.ch.close(op)
 
 		}
 	}
@@ -264,10 +269,15 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	valid := ex.received_handshake(op, handshake)
 	tracef("ReceivedHandshake() => %v", valid)
 
-	if valid && !found {
-		ex.reset_expire()
-		e.tokens[token] = ex
-		e.hashnames[hn] = ex
+	if valid {
+		if !found {
+			ex.reset_expire()
+			e.tokens[token] = ex
+			e.hashnames[hn] = ex
+		} else if e.tokens[token] == nil {
+			ex.reset_expire()
+			e.tokens[token] = ex
+		}
 	}
 
 	if valid {
@@ -281,12 +291,14 @@ func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.ResolvedAddr
 	)
 
 	if len(pkt.Body) < 16 {
+		tracef("drop // to short")
 		return //drop
 	}
 
 	copy(token[:], pkt.Body[:16])
 	x := e.tokens[token]
 	if x == nil {
+		tracef("drop no token")
 		return // drop
 	}
 

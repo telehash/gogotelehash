@@ -157,11 +157,34 @@ func (h Header) GetInt(k string) (v int, found bool) {
 	if !ok {
 		return 0, false
 	}
-	x, ok := y.(int)
-	if !ok {
+	switch x := y.(type) {
+	case int:
+		return x, true
+	case int8:
+		return int(x), true
+	case int16:
+		return int(x), true
+	case int32:
+		return int(x), true
+	case int64:
+		return int(x), true
+	case uint:
+		return int(x), true
+	case uint8:
+		return int(x), true
+	case uint16:
+		return int(x), true
+	case uint32:
+		return int(x), true
+	case uint64:
+		return int(x), true
+	case float32:
+		return int(x), true
+	case float64:
+		return int(x), true
+	default:
 		return 0, false
 	}
-	return x, true
 }
 
 func (h Header) SetInt(k string, v int) {

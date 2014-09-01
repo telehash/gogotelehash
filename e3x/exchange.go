@@ -57,7 +57,7 @@ func newExchange(e *Endpoint) *exchange {
 }
 
 func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handshake) bool {
-	tracef("receiving_handshake(%p)", e)
+	// tracef("receiving_handshake(%p) pkt=%v", e, op.pkt)
 
 	var (
 		csid = op.pkt.Head[0]
@@ -106,7 +106,7 @@ func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handsha
 }
 
 func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
-	tracef("delivering_handshake(%p)", e)
+	// tracef("delivering_handshake(%p)", e)
 
 	var (
 		o   = &lob.Packet{Head: []byte{e.csid}}
@@ -159,22 +159,25 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 
 	if !hasC {
 		// drop: missign "c"
+		tracef("drop // no `c`")
 		return
 	}
 
 	c := e.channels[cid]
 	if c == nil {
 		if !hasType {
+			tracef("drop // no `type`")
 			return // drop (missing typ)
 		}
 
 		h := e.endpoint.handlers[typ]
 		if h == nil {
+			tracef("drop // no handler for `%s`", typ)
 			return // drop (no handler)
 		}
 
-		c = newChannel(e.hashname, typ, hasSeq, e.endpoint)
-		c.isServer = true
+		c = newChannel(e.hashname, typ, hasSeq, true)
+		c.id = cid
 		err = e.register_channel(c)
 		if err != nil {
 			return // drop (register failed)
@@ -189,12 +192,14 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 func (e *exchange) deliver_packet(pkt *lob.Packet) {
 	pkt, err := e.cipher.EncryptPacket(pkt)
 	if err != nil {
+		tracef("snd err=%s", err)
 		// report?
 		return
 	}
 
 	err = e.endpoint.deliver(pkt, transports.Best(e.hashname))
 	if err != nil {
+		tracef("snd err=%s", err)
 		// report?
 		return
 	}
@@ -218,6 +223,11 @@ func (e *exchange) expire(err error) {
 	// unregister
 	delete(e.endpoint.hashnames, e.hashname)
 	delete(e.endpoint.tokens, e.token)
+
+	// break channels
+	for _, c := range e.channels {
+		c.on_close_deadline_reached()
+	}
 }
 
 func (e *exchange) getNextSeq() uint32 {

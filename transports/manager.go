@@ -292,7 +292,7 @@ func (m *Manager) Deliver(pkt []byte, addr Addr) error {
 }
 
 func (m *Manager) deliver(op opDeliver) error {
-	tracef("Deliver(%q)", op)
+	// tracef("Deliver(%q)", op)
 
 	var (
 		errs      []error
@@ -339,13 +339,13 @@ func (m *Manager) Receive() ([]byte, ResolvedAddr, error) {
 }
 
 func (m *Manager) receive(op *opReceive) {
-	tracef("Receive(%q)", op)
+	// tracef("Receive(%q)", op)
 
 	m.opReceive = op
 }
 
 func (m *Manager) received(op opReceived) {
-	tracef("Received(%q)", op)
+	// tracef("Received(%q)", op)
 
 	m.opReceive.addr = op.addr
 	m.opReceive.pkt = op.pkt
@@ -374,7 +374,7 @@ func (m *Manager) Resolve(addr Addr) []ResolvedAddr {
 }
 
 func (m *Manager) resolve(addr Addr) []ResolvedAddr {
-	tracef("Resolve(%q)", addr)
+	// tracef("Resolve(%q)", addr)
 
 	if addr == nil {
 		return nil
