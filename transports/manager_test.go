@@ -32,17 +32,11 @@ func TestManagerWithOneTransport(t *testing.T) {
 	var m transports.Manager
 	assert.Equal(transports.UnknownManagerState, m.State())
 
-	tr, err := udp.New("")
-	assert.NotNil(tr)
-	assert.NoError(err)
-
-	if tr != nil {
-		m.AddTransport(tr)
-	}
+	m.AddTransport(udp.Config{})
 
 	assert.Equal(transports.UnknownManagerState, m.State())
 
-	err = m.Start()
+	err := m.Start()
 	assert.NoError(err)
 	assert.Equal(transports.RunningManagerState, m.State())
 
@@ -59,15 +53,10 @@ func TestManagerDeliverReceive(t *testing.T) {
 		mb transports.Manager
 	)
 
-	ta, err := udp.New("")
-	assert.NoError(err)
-	tb, err := udp.New("127.0.0.1")
-	assert.NoError(err)
+	ma.AddTransport(udp.Config{})
+	mb.AddTransport(udp.Config{Addr: "127.0.0.1:0"})
 
-	ma.AddTransport(ta)
-	mb.AddTransport(tb)
-
-	err = ma.Start()
+	err := ma.Start()
 	defer ma.Stop()
 	assert.NoError(err)
 
@@ -75,9 +64,9 @@ func TestManagerDeliverReceive(t *testing.T) {
 	defer mb.Stop()
 	assert.NoError(err)
 
-	t.Logf("SND %q to %q", "Hello Wolrd!", tb.LocalAddresses()[0])
+	t.Logf("SND %q to %q", "Hello Wolrd!", mb.LocalAddresses()[0])
 
-	err = ma.Deliver([]byte("Hello Wolrd!"), tb.LocalAddresses()[0])
+	err = ma.Deliver([]byte("Hello Wolrd!"), mb.LocalAddresses()[0])
 	assert.NoError(err)
 
 	msg, addr, err := mb.Receive()
@@ -95,18 +84,10 @@ func TestManagerResolveAll(t *testing.T) {
 		mb transports.Manager
 	)
 
-	ta, err := udp.New("")
-	assert.NoError(err)
-	tb, err := udp.New("127.0.0.1")
-	assert.NoError(err)
-	tc, err := udp.New("127.0.0.1")
-	assert.NoError(err)
+	ma.AddTransport(udp.Config{})
+	mb.AddTransport(udp.Config{Addr: "127.0.0.1:0"})
 
-	ma.AddTransport(ta)
-	mb.AddTransport(tb)
-	mb.AddTransport(tc)
-
-	err = ma.Start()
+	err := ma.Start()
 	defer ma.Stop()
 	assert.NoError(err)
 
@@ -114,8 +95,7 @@ func TestManagerResolveAll(t *testing.T) {
 	defer mb.Stop()
 	assert.NoError(err)
 
-	ma.Associate(hashname.H("node-a"), tb.LocalAddresses()[0])
-	ma.Associate(hashname.H("node-a"), tc.LocalAddresses()[0])
+	ma.Associate(hashname.H("node-a"), mb.LocalAddresses()[0])
 
 	t.Logf("SND %q to %q", "Hello Wolrd!", transports.All(hashname.H("node-a")))
 
@@ -148,18 +128,10 @@ func TestManagerResolveBest(t *testing.T) {
 		mb transports.Manager
 	)
 
-	ta, err := udp.New("")
-	assert.NoError(err)
-	tb, err := udp.New("127.0.0.1")
-	assert.NoError(err)
-	tc, err := udp.New("127.0.0.1")
-	assert.NoError(err)
+	ma.AddTransport(udp.Config{})
+	mb.AddTransport(udp.Config{Addr: "127.0.0.1:0"})
 
-	ma.AddTransport(ta)
-	mb.AddTransport(tb)
-	mb.AddTransport(tc)
-
-	err = ma.Start()
+	err := ma.Start()
 	defer ma.Stop()
 	assert.NoError(err)
 
@@ -167,8 +139,7 @@ func TestManagerResolveBest(t *testing.T) {
 	defer mb.Stop()
 	assert.NoError(err)
 
-	ma.Associate(hashname.H("node-a"), tb.LocalAddresses()[0])
-	ma.Associate(hashname.H("node-a"), tc.LocalAddresses()[0])
+	ma.Associate(hashname.H("node-a"), mb.LocalAddresses()[0])
 
 	t.Logf("SND %q to %q", "Hello Wolrd!", transports.Best(hashname.H("node-a")))
 

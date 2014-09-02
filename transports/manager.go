@@ -28,7 +28,9 @@ type Manager struct {
 	state    ManagerState
 	err      error
 
+	factories       []Factory
 	transports      []Transport
+	networks        map[string]Transport
 	h2a             *btree.BTree
 	a2h             *btree.BTree
 	cAssociate      chan opAssociate
@@ -89,11 +91,11 @@ func (m *Manager) State() ManagerState {
 	return m.state
 }
 
-func (m *Manager) AddTransport(t Transport) {
+func (m *Manager) AddTransport(factory Factory) {
 	m.stateMtx.Lock()
 	defer m.stateMtx.Unlock()
 
-	m.transports = append(m.transports, t)
+	m.factories = append(m.factories, factory)
 }
 
 func (m *Manager) Start() error {
@@ -118,6 +120,7 @@ func (m *Manager) start() error {
 		panic("transports: Manager cannot be started more than once")
 	}
 
+	m.networks = make(map[string]Transport, len(m.factories))
 	m.h2a = btree.New(8)
 	m.a2h = btree.New(8)
 	m.cAssociate = make(chan opAssociate)
@@ -128,13 +131,22 @@ func (m *Manager) start() error {
 	m.cLocalAddresses = make(chan opLocalAddresses)
 	m.cTerminate = make(chan struct{}, 1)
 
-	for _, t := range m.transports {
-		err := t.Open()
+	for _, f := range m.factories {
+		t, err := f.Open()
 		if err != nil {
 			m.err = err
 			m.state = BrokenManagerState
 			return err
 		}
+		for _, n := range t.Networks() {
+			if m.networks[n] != nil {
+				m.err = errors.New("a transport is already registered for network: " + n)
+				m.state = BrokenManagerState
+				return err
+			}
+			m.networks[n] = t
+		}
+		m.transports = append(m.transports, t)
 	}
 
 	for _, t := range m.transports {
@@ -304,20 +316,24 @@ func (m *Manager) deliver(op opDeliver) error {
 		return net.UnknownNetworkError(op.addr.String())
 	}
 
-	for _, transport := range m.transports {
-		for _, addr := range addrs {
-			if transport.CanDeliverTo(addr) {
-				err := transport.Deliver(op.pkt, addr)
-				if err == nil {
-					delivered = true
-				} else {
-					errs = append(errs, err)
-				}
-			}
+	for _, addr := range addrs {
+		transport := m.networks[addr.Network()]
+		if transport == nil {
+			continue
+		}
+
+		err := transport.Deliver(op.pkt, addr)
+		if err == nil {
+			delivered = true
+		} else {
+			errs = append(errs, err)
 		}
 	}
 
 	if !delivered {
+		if len(errs) == 0 {
+			return net.UnknownNetworkError(op.addr.String())
+		}
 		return errs[0]
 	}
 

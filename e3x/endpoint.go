@@ -67,8 +67,8 @@ func New(keys cipherset.Keys) *Endpoint {
 	return &Endpoint{keys: keys, handlers: make(map[string]Handler)}
 }
 
-func (e *Endpoint) AddTransport(t transports.Transport) {
-	e.transports.AddTransport(t)
+func (e *Endpoint) AddTransport(factory transports.Factory) {
+	e.transports.AddTransport(factory)
 }
 
 func (e *Endpoint) AddHandler(typ string, h Handler) {

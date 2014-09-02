@@ -1,7 +1,6 @@
 package udp
 
 import (
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,14 +8,16 @@ import (
 
 func TestLocalAddresses(t *testing.T) {
 	assert := assert.New(t)
-	var tab = []*transport{
+	var tab = []Config{
 		{},
-		{laddr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1")}},
-		{laddr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 8080}},
+		{Network: "udp", Addr: "127.0.0.1:0"},
+		{Network: "udp", Addr: "127.0.0.1:8080"},
+		{Network: "udp4", Addr: ":0"},
+		{Network: "udp6", Addr: ":0"},
 	}
 
-	for _, trans := range tab {
-		err := trans.Open()
+	for _, factory := range tab {
+		trans, err := factory.Open()
 		assert.NoError(err)
 
 		addrs := trans.LocalAddresses()

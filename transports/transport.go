@@ -5,12 +5,17 @@ import (
 )
 
 var ErrTransportClosed = errors.New("transports: transport is closed")
+var ErrInvalidAddr = errors.New("transports: invalid address")
+
+type Factory interface {
+	Open() (Transport, error)
+}
 
 type Transport interface {
-	Open() error
+	Networks() []string
 	Close() error
 
-	CanDeliverTo(addr ResolvedAddr) bool
+	DecodeAddress(data []byte) (ResolvedAddr, error)
 	LocalAddresses() []ResolvedAddr
 	DefaultMTU() int
 
