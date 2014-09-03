@@ -1,13 +1,12 @@
 package e3x
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/lob"
 	"crypto/rand"
 	"io"
 
 	"code.google.com/p/go.crypto/salsa20"
 
-	"bitbucket.org/simonmenke/go-telehash/hashname"
+	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 )
 
@@ -34,7 +33,7 @@ func cloak(p []byte, key *[32]byte) ([]byte, error) {
 	p[0] = padding
 	if padding > 0 {
 		olen := len(p)
-		nlen := olen + padding
+		nlen := olen + int(padding)
 		p = p[:nlen]
 		_, err = io.ReadFull(rand.Reader, p[olen:])
 		if err != nil {
@@ -59,7 +58,6 @@ func decloak(p []byte, key *[32]byte) ([]byte, error) {
 	var (
 		buf     = transports.GetBuffer()
 		padding uint8
-		err     error
 	)
 
 	if len(p) < 8 {
@@ -74,12 +72,12 @@ func decloak(p []byte, key *[32]byte) ([]byte, error) {
 		padding = buf[0]
 		buf[0] = 0
 
-		if padding > len(buf) {
+		if int(padding) > len(buf) {
 			transports.PutBuffer(buf)
 			return nil, lob.ErrInvalidPacket
 		}
 
-		buf = buf[:len(buf)-padding]
+		buf = buf[:len(buf)-int(padding)]
 	}
 
 	return buf, nil

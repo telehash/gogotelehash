@@ -22,15 +22,15 @@ func Parse(rawstr string) (*Tack, error) {
 func parseApp(rawstr string) (app, rest string, err error) {
 	for i, c := range rawstr {
 		if c == ':' {
-			app = rawstr[:c]
-			rest = rawstr[c+1:]
+			app = rawstr[:i]
+			rest = rawstr[i+1:]
 
 			if len(app) == 0 {
-				return "", "", ErrInvalidTack
+				return "", "", InvalidTackError("missing app component")
 			}
 
 			if len(rest) == 0 {
-				return "", "", ErrInvalidTack
+				return "", "", InvalidTackError("missing alias component")
 			}
 
 			return app, rest, nil
@@ -38,30 +38,30 @@ func parseApp(rawstr string) (app, rest string, err error) {
 
 		if c == '@' {
 			// needs alias
-			return "", "", ErrInvalidTack
+			return "", "", InvalidTackError("missing alias component")
 		}
 
 		if c == '/' {
 			// needs alias
-			return "", "", ErrInvalidTack
+			return "", "", InvalidTackError("missing alias component")
 		}
 	}
 
-	return "", "", ErrInvalidTack
+	return "", "", InvalidTackError("missing alias component")
 }
 
 func parseAlias(rawstr string) (alias, rest string, err error) {
 	for i, c := range rawstr {
 		if c == '@' {
-			alias = rawstr[:c]
-			rest = rawstr[c+1:]
+			alias = rawstr[:i]
+			rest = rawstr[i+1:]
 
 			if len(alias) == 0 {
-				return "", "", ErrInvalidTack
+				return "", "", InvalidTackError("missing alias component")
 			}
 
 			if len(rest) == 0 {
-				return "", "", ErrInvalidTack
+				return "", "", InvalidTackError("missing canonical component")
 			}
 
 			return alias, rest, nil
@@ -69,21 +69,21 @@ func parseAlias(rawstr string) (alias, rest string, err error) {
 
 		if c == '/' {
 			// needs canonical
-			return "", "", ErrInvalidTack
+			return "", "", InvalidTackError("missing canonical component")
 		}
 	}
 
-	return "", "", ErrInvalidTack
+	return "", "", InvalidTackError("missing canonical component")
 }
 
 func parseCanonical(rawstr string) (canonical, rest string, err error) {
 	for i, c := range rawstr {
 		if c == '/' {
-			canonical = rawstr[:c]
-			rest = rawstr[c+1:]
+			canonical = rawstr[:i]
+			rest = rawstr[i+1:]
 
 			if len(canonical) == 0 {
-				return "", "", ErrInvalidTack
+				return "", "", InvalidTackError("missing canonical component")
 			}
 
 			return canonical, rest, nil
@@ -91,7 +91,7 @@ func parseCanonical(rawstr string) (canonical, rest string, err error) {
 	}
 
 	if len(canonical) == 0 {
-		return "", "", ErrInvalidTack
+		return "", "", InvalidTackError("missing canonical component")
 	}
 
 	return canonical, rest, nil

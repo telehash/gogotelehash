@@ -1,5 +1,11 @@
 package tack
 
+type InvalidTackError string
+
+func (e InvalidTackError) Error() string {
+	return "invalid tack: " + string(e)
+}
+
 type Tack struct {
 	App       string
 	Alias     string
