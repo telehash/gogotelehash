@@ -204,6 +204,7 @@ func (t *transport) handleListVnodes(ch *e3x.Channel) {
 	_, err = ch.ReadPacket()
 	if err != nil {
 		// log error
+		tracef("error: %s", err)
 		return
 	}
 
@@ -214,6 +215,7 @@ func (t *transport) handleListVnodes(ch *e3x.Channel) {
 	err = json.NewEncoder(newStream(ch)).Encode(&res)
 	if err != nil {
 		// log error
+		tracef("error: %s", err)
 		return
 	}
 }
@@ -272,6 +274,7 @@ func (t *transport) handlePing(ch *e3x.Channel) {
 	pkt, err = ch.ReadPacket()
 	if err != nil {
 		// log error
+		tracef("error: %s", err)
 		return
 	}
 
@@ -288,6 +291,7 @@ func (t *transport) handlePing(ch *e3x.Channel) {
 	err = ch.WritePacket(pkt)
 	if err != nil {
 		// log error
+		tracef("error: %s", err)
 		return
 	}
 }
@@ -347,6 +351,7 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	pkt, err = ch.ReadPacket()
 	if err != nil {
 		// log error
+		tracef("error: %s", err)
 		return
 	}
 
@@ -354,12 +359,14 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	rpc := t.lookupRPC(id)
 	if rpc == nil {
 		// log
+		tracef("error: %s", "no RPC")
 		return
 	}
 
 	vnode, err = rpc.GetPredecessor()
 	if err != nil {
 		// log
+		tracef("error: %s", err)
 		return
 	}
 
@@ -367,6 +374,7 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	err = json.NewEncoder(newStream(ch)).Encode(&res)
 	if err != nil {
 		// log
+		tracef("error: %s", err)
 		return
 	}
 
@@ -438,18 +446,21 @@ func (t *transport) handleNotify(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
+		tracef("(Notify) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
+		tracef("(Notify) error: %s", "no RPC")
 		return
 	}
 
 	vnodes, err = rpc.Notify(t.internalVnode(req.Self))
 	if err != nil {
 		// log
+		tracef("(Notify) error: %s", err)
 		return
 	}
 
@@ -458,6 +469,7 @@ func (t *transport) handleNotify(ch *e3x.Channel) {
 	err = json.NewEncoder(stream).Encode(&res)
 	if err != nil {
 		// log
+		tracef("(Notify) error: %s", err)
 		return
 	}
 
@@ -470,7 +482,7 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 		addr   *e3x.Addr
 		ch     *e3x.Channel
 		stream io.ReadWriteCloser
-		res    []*chord.Vnode
+		res    []*completeVnode
 		err    error
 
 		req = struct {
@@ -479,6 +491,8 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 			K      []byte
 		}{vn.String(), n, k}
 	)
+
+	tracef("FindSuccessors(target:Vnode(%q))", vn.String())
 
 	addr = t.lookupAddr(hashname.H(vn.Host))
 	if addr == nil {
@@ -507,7 +521,7 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 		return nil, err
 	}
 
-	return res, nil
+	return t.internalVnodes(res), nil
 }
 
 func (t *transport) handleFindSuccessors(ch *e3x.Channel) {
@@ -529,24 +543,28 @@ func (t *transport) handleFindSuccessors(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
+		tracef("(FindSuccessors) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
+		tracef("(FindSuccessors) error: no RPC %s", req.Target)
 		return
 	}
 
 	res, err = rpc.FindSuccessors(req.N, req.K)
 	if err != nil {
 		// log
+		tracef("(FindSuccessors) error: %s", err)
 		return
 	}
 
-	err = json.NewEncoder(stream).Encode(&res)
+	err = json.NewEncoder(stream).Encode(t.completeVnodes(res))
 	if err != nil {
 		// log
+		tracef("(FindSuccessors) error: %s", err)
 		return
 	}
 }
@@ -561,8 +579,8 @@ func (t *transport) ClearPredecessor(target, self *chord.Vnode) error {
 
 		req = struct {
 			Target string
-			Self   *chord.Vnode
-		}{target.String(), self}
+			Self   *completeVnode
+		}{target.String(), t.completeVnode(self)}
 	)
 
 	addr = t.lookupAddr(hashname.H(target.Host))
@@ -596,7 +614,7 @@ func (t *transport) handleClearPredecessor(ch *e3x.Channel) {
 		stream io.ReadWriteCloser
 		req    struct {
 			Target string
-			Self   *chord.Vnode
+			Self   *completeVnode
 		}
 	)
 
@@ -607,18 +625,21 @@ func (t *transport) handleClearPredecessor(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
+		tracef("(ClearPredecessor) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
+		tracef("(ClearPredecessor) error: %s", "no RPC")
 		return
 	}
 
-	err = rpc.ClearPredecessor(req.Self)
+	err = rpc.ClearPredecessor(t.internalVnode(req.Self))
 	if err != nil {
 		// log
+		tracef("(ClearPredecessor) error: %s", err)
 		return
 	}
 }
@@ -633,8 +654,8 @@ func (t *transport) SkipSuccessor(target, self *chord.Vnode) error {
 
 		req = struct {
 			Target string
-			Self   *chord.Vnode
-		}{target.String(), self}
+			Self   *completeVnode
+		}{target.String(), t.completeVnode(self)}
 	)
 
 	addr = t.lookupAddr(hashname.H(target.Host))
@@ -668,7 +689,7 @@ func (t *transport) handleSkipSuccessor(ch *e3x.Channel) {
 		stream io.ReadWriteCloser
 		req    struct {
 			Target string
-			Self   *chord.Vnode
+			Self   *completeVnode
 		}
 	)
 
@@ -679,18 +700,21 @@ func (t *transport) handleSkipSuccessor(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
+		tracef("(SkipSuccessor) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
+		tracef("(SkipSuccessor) error: %s", "no RPC")
 		return
 	}
 
-	err = rpc.SkipSuccessor(req.Self)
+	err = rpc.SkipSuccessor(t.internalVnode(req.Self))
 	if err != nil {
 		// log
+		tracef("(SkipSuccessor) error: %s", err)
 		return
 	}
 }

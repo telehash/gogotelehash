@@ -75,14 +75,24 @@ func (a *Addr) UnmarshalJSON(p []byte) error {
 		Hashname hashname.H        `json:"hashname"`
 		Keys     cipherset.Keys    `json:"keys"`
 		Parts    cipherset.Parts   `json:"parts"`
-		Addrs    []transports.Addr `json:"paths"`
+		Addrs    []json.RawMessage `json:"paths"`
 	}
 	err := json.Unmarshal(p, &jsonAddr)
 	if err != nil {
 		return err
 	}
 
-	b, err := NewAddr(jsonAddr.Keys, jsonAddr.Parts, jsonAddr.Addrs)
+	var addrs []transports.Addr
+	for _, m := range jsonAddr.Addrs {
+		addr, err := transports.DecodeAddr(m)
+		if err != nil {
+			return err
+		}
+
+		addrs = append(addrs, addr)
+	}
+
+	b, err := NewAddr(jsonAddr.Keys, jsonAddr.Parts, addrs)
 	if err != nil {
 		return err
 	}

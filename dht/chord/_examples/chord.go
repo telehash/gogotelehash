@@ -6,6 +6,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/dht/chord"
 	"bitbucket.org/simonmenke/go-telehash/e3x"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
+	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
 
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
@@ -17,16 +18,10 @@ func main() {
 		log.Fatalf("error: %s", err)
 	}
 
-	e := e3x.New(cipherset.Keys{0x3a: key})
-
-	{
-		t, err := udp.New(":0")
-		if err != nil {
-			log.Fatalf("error: %s", err)
-		}
-
-		e.AddTransport(t)
-	}
+	e := e3x.New(cipherset.Keys{0x3a: key}, mux.Config{
+		udp.Config{Network: "udp4"},
+		udp.Config{Network: "udp6"},
+	})
 
 	err = e.Start()
 	if err != nil {
@@ -68,16 +63,10 @@ func join(entry *e3x.Addr) {
 		log.Fatalf("error: %s", err)
 	}
 
-	e := e3x.New(cipherset.Keys{0x3a: key})
-
-	{
-		t, err := udp.New(":0")
-		if err != nil {
-			log.Fatalf("error: %s", err)
-		}
-
-		e.AddTransport(t)
-	}
+	e := e3x.New(cipherset.Keys{0x3a: key}, mux.Config{
+		udp.Config{Network: "udp4"},
+		udp.Config{Network: "udp6"},
+	})
 
 	err = e.Start()
 	if err != nil {

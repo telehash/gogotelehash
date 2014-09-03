@@ -16,7 +16,6 @@ type Transport interface {
 	Close() error
 
 	CanHandleAddress(addr Addr) bool
-	DecodeAddress(data []byte) (Addr, error)
 	LocalAddresses() []Addr
 
 	Deliver(pkt []byte, to Addr) error

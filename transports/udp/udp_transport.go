@@ -10,6 +10,11 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/transports"
 )
 
+func init() {
+	transports.RegisterAddrDecoder("udp4", decodeAddress)
+	transports.RegisterAddrDecoder("udp6", decodeAddress)
+}
+
 type Config struct {
 	Network string // "udp4", "udp6"
 	Addr    string
@@ -122,7 +127,7 @@ func (t *transport) CanHandleAddress(a transports.Addr) bool {
 	return true
 }
 
-func (t *transport) DecodeAddress(data []byte) (transports.Addr, error) {
+func decodeAddress(data []byte) (transports.Addr, error) {
 	var desc struct {
 		Type string `json:"type"`
 		IP   string `json:"ip"`
@@ -131,14 +136,6 @@ func (t *transport) DecodeAddress(data []byte) (transports.Addr, error) {
 
 	err := json.Unmarshal(data, &desc)
 	if err != nil {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	if t.net == UDPv4 && desc.Type != UDPv4 {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	if t.net == UDPv6 && desc.Type != UDPv6 {
 		return nil, transports.ErrInvalidAddr
 	}
 
@@ -151,7 +148,7 @@ func (t *transport) DecodeAddress(data []byte) (transports.Addr, error) {
 		return nil, transports.ErrInvalidAddr
 	}
 
-	return &addr{net: t.net, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
+	return &addr{net: desc.Type, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
 }
 
 func (t *transport) LocalAddresses() []transports.Addr {

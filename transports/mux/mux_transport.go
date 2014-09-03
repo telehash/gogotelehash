@@ -1,7 +1,6 @@
 package mux
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -292,24 +291,4 @@ func detectClosed(f func()) (closed bool) {
 	defer func() { closed = recover() != nil }()
 	f()
 	return false
-}
-
-func (m *muxer) DecodeAddress(data []byte) (transports.Addr, error) {
-	var desc struct {
-		Type string `json:"type"`
-	}
-
-	err := json.Unmarshal(data, &desc)
-	if err != nil {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	for _, t := range m.transports {
-		addr, err := t.DecodeAddress(data)
-		if err == nil {
-			return addr, nil
-		}
-	}
-
-	return nil, transports.ErrInvalidAddr
 }
