@@ -2,39 +2,54 @@ package transports
 
 import (
 	"errors"
+	"sync"
 )
 
-var ErrTransportClosed = errors.New("transports: transport is closed")
+var ErrClosed = errors.New("use of closed network connection")
 var ErrInvalidAddr = errors.New("transports: invalid address")
 
-type Factory interface {
+type Config interface {
 	Open() (Transport, error)
 }
 
 type Transport interface {
-	Networks() []string
 	Close() error
 
-	DecodeAddress(data []byte) (ResolvedAddr, error)
-	LocalAddresses() []ResolvedAddr
-	DefaultMTU() int
+	CanHandleAddress(addr Addr) bool
+	DecodeAddress(data []byte) (Addr, error)
+	LocalAddresses() []Addr
 
-	Deliver(pkt []byte, to ResolvedAddr) error
-	Receive(b []byte) (int, ResolvedAddr, error)
+	Deliver(pkt []byte, to Addr) error
+	Receive(b []byte) (int, Addr, error)
 }
 
 type Addr interface {
-	String() string
-}
-
-type ResolvedAddr interface {
-	Addr
 	Network() string
+	String() string
 	MarshalJSON() ([]byte, error)
-	Less(ResolvedAddr) bool
+	Less(Addr) bool
 }
 
-type UnresolverAddr interface {
-	Addr
-	Resolve(*Manager) []ResolvedAddr
+const bufferSize = 64 * 1024
+
+var zeroBuffer = make([]byte, bufferSize)
+
+var bufferPool = sync.Pool{
+	New: func() interface{} { return make([]byte, bufferSize) },
+}
+
+func GetBuffer() []byte {
+	buf := bufferPool.Get().([]byte)
+	return buf[:bufferSize]
+}
+
+func PutBuffer(buf []byte) {
+	if cap(buf) != bufferSize {
+		panic("invalid buffer return")
+	}
+
+	buf = buf[:bufferSize]
+	copy(buf, zeroBuffer)
+
+	bufferPool.Put(buf)
 }

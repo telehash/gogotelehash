@@ -38,6 +38,7 @@ type exchange struct {
 	qDial           []*opDialExchange
 	next_channel_id uint32
 	channels        map[uint32]*Channel
+	addressBook     *addressBook
 
 	nextHandshake     int
 	tExpire           *scheduler.Event
@@ -47,8 +48,9 @@ type exchange struct {
 
 func newExchange(e *Endpoint) *exchange {
 	x := &exchange{
-		endpoint: e,
-		channels: make(map[uint32]*Channel),
+		endpoint:    e,
+		channels:    make(map[uint32]*Channel),
+		addressBook: newAddressBook(),
 	}
 	x.tExpire = e.scheduler.NewEvent(x.on_expire)
 	x.tBreak = e.scheduler.NewEvent(x.on_break)
@@ -93,6 +95,8 @@ func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handsha
 
 	if seq > e.last_seq {
 		e.deliver_handshake(seq, op.addr)
+	} else {
+		e.addressBook.ReceivedHandshake(op.addr)
 	}
 
 	e.state = openedExchangeState
@@ -109,16 +113,20 @@ func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 	// tracef("delivering_handshake(%p)", e)
 
 	var (
-		o   = &lob.Packet{Head: []byte{e.csid}}
-		err error
+		o     = &lob.Packet{Head: []byte{e.csid}}
+		addrs []transports.Addr
+		err   error
 	)
 
 	if seq == 0 {
 		seq = e.getNextSeq()
 	}
 
-	if addr == nil {
-		addr = transports.All(e.hashname)
+	if addr != nil {
+		addrs = append(addrs, addr)
+	} else {
+		addrs = e.addressBook.KnownAddresses()
+		e.addressBook.NextHandshakeEpoch()
 	}
 
 	o.Body, err = e.cipher.EncryptHandshake(seq, hashname.PartsFromKeys(e.endpoint.keys))
@@ -126,14 +134,25 @@ func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 		return err
 	}
 
-	err = e.endpoint.deliver(o, addr)
-	if err != nil {
-		return err
+	for _, addr := range addrs {
+		e.addressBook.SentHandshake(addr)
+		err = e.endpoint.deliver(o, addr) // ignore error
+		if err != nil {
+			tracef("error: %s %s", addr, err)
+		}
 	}
 
 	e.last_seq = seq
 
 	// determine when the next handshake must be send
+	if addr == nil {
+		e.reschedule_handshake()
+	}
+
+	return nil
+}
+
+func (e *exchange) reschedule_handshake() {
 	if e.nextHandshake <= 0 {
 		e.nextHandshake = 1
 	} else if e.nextHandshake > 60 {
@@ -142,8 +161,6 @@ func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 		e.nextHandshake = e.nextHandshake * 2
 	}
 	e.tDeliverHandshake.ScheduleAfter(time.Duration(e.nextHandshake) * time.Second)
-
-	return nil
 }
 
 func (e *exchange) received_packet(pkt *lob.Packet) {
@@ -197,7 +214,7 @@ func (e *exchange) deliver_packet(pkt *lob.Packet) {
 		return
 	}
 
-	err = e.endpoint.deliver(pkt, transports.Best(e.hashname))
+	err = e.endpoint.deliver(pkt, e.addressBook.ActiveAddress())
 	if err != nil {
 		tracef("snd err=%s", err)
 		// report?

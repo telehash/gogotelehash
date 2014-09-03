@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/hashname"
@@ -54,6 +55,7 @@ type Channel struct {
 
 	oSeq         int // highest seq in write stream
 	iBufferedSeq int // highest buffered seq in read stream
+	iSeenSeq     int // highest seen seq in read stream
 	iSeq         int // highest seq in read stream
 	oAckedSeq    int // highest acked seq in write stream
 	iAckedSeq    int // highest acked seq in read stream
@@ -117,9 +119,9 @@ type readBufferEntry struct {
 }
 
 type writeBufferEntry struct {
-	pkt    *lob.Packet
-	end    bool
-	inMiss bool
+	pkt        *lob.Packet
+	end        bool
+	lastResend time.Time
 }
 
 func newChannel(hn hashname.H, typ string, reliable bool, serverside bool) *Channel {
@@ -132,6 +134,7 @@ func newChannel(hn hashname.H, typ string, reliable bool, serverside bool) *Chan
 		writeBuffer:  make(map[uint32]*writeBufferEntry, c_WRITE_BUFFER_SIZE),
 		oSeq:         -1,
 		iBufferedSeq: -1,
+		iSeenSeq:     -1,
 		iSeq:         -1,
 		oAckedSeq:    -1,
 		iAckedSeq:    -1,
@@ -177,12 +180,20 @@ func (e *Endpoint) Dial(addr *Addr, typ string, reliable bool) (*Channel, error)
 }
 
 func (c *Channel) WritePacket(pkt *lob.Packet) error {
+	if c == nil {
+		return os.ErrInvalid
+	}
+
 	op := opDeliverPacket{c, pkt, true, make(chan error)}
 	c.cDeliverPacket <- &op
 	return waitForError(op.cErr)
 }
 
 func (c *Channel) ReadPacket() (*lob.Packet, error) {
+	if c == nil {
+		return nil, os.ErrInvalid
+	}
+
 	op := opReceivePacket{c, nil, true, make(chan error)}
 	c.cReceivePacket <- &op
 	err := waitForError(op.cErr)
@@ -190,6 +201,10 @@ func (c *Channel) ReadPacket() (*lob.Packet, error) {
 }
 
 func (c *Channel) Close() error {
+	if c == nil {
+		return os.ErrInvalid
+	}
+
 	op := opCloseChannel{c, nil, nil, nil, make(chan error)}
 	c.cCloseChannel <- &op
 	return waitForError(op.cErr)
@@ -199,7 +214,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	var pkt = op.pkt
 
 	if c.broken {
-		tracef("WritePacket() => broken")
+		// tracef("WritePacket() => broken")
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
 		op.cErr <- &BrokenChannelError{c.hashname, c.typ, c.id}
@@ -207,7 +222,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	}
 
 	if c.writeDeadlineReached {
-		tracef("WritePacket() => timeout")
+		// tracef("WritePacket() => timeout")
 		// When a channel reached a write deadline then all writes
 		// must return a ErrTimeout.
 		op.cErr <- ErrTimeout
@@ -215,7 +230,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	}
 
 	if c.deliveredEnd {
-		tracef("WritePacket() => ended")
+		// tracef("WritePacket() => ended")
 		// When a channel sent a packet with the "end" header set
 		// then all subsequent writes must return io.EOF
 		op.cErr <- io.EOF
@@ -223,7 +238,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	}
 
 	if c.serverside && c.iSeq == -1 {
-		tracef("WritePacket() => opening")
+		// tracef("WritePacket() => opening")
 		// When a server channel did not (yet) read an initial packet
 		// then all writes must be deferred.
 		if op.queue {
@@ -234,7 +249,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	}
 
 	if !c.serverside && c.iSeq == -1 && c.oSeq >= 0 {
-		tracef("WritePacket() => opening")
+		// tracef("WritePacket() => opening")
 		// When a client channel sent a packet but did not yet read a response
 		// to the initial packet then subsequent writes must be deferred.
 		if op.queue {
@@ -245,7 +260,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 	}
 
 	if len(c.writeBuffer) >= c_WRITE_BUFFER_SIZE {
-		tracef("WritePacket() => blocking")
+		// tracef("WritePacket() => blocking")
 		// When a channel filled its write buffer then
 		// all writes must be deferred.
 		if op.queue {
@@ -271,12 +286,16 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 
 	if c.reliable {
 		c.apply_ack_headers(pkt)
-		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, false}
+		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, time.Time{}}
 	}
 
 	c.fDeliverPacket(pkt)
 	op.cErr <- nil
-	tracef("WritePacket() => sent")
+	// tracef("WritePacket() => sent")
+
+	if c.oSeq == 0 && c.serverside {
+		c.tOpenDeadline.Cancel()
+	}
 
 	if c.oSeq == 0 || end {
 		// first packet is sent
@@ -288,7 +307,7 @@ func (c *Channel) deliver_packet(op *opDeliverPacket) {
 
 func (c *Channel) receive_packet(op *opReceivePacket) {
 	if c.broken {
-		tracef("ReadPacket() => broken")
+		// tracef("ReadPacket() => broken")
 		// When a channel is marked as broken the all reads
 		// must return a BrokenChannelError.
 		op.cErr <- &BrokenChannelError{c.hashname, c.typ, c.id}
@@ -296,7 +315,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 	}
 
 	if c.readDeadlineReached {
-		tracef("ReadPacket() => timeout")
+		// tracef("ReadPacket() => timeout")
 		// When a channel reached a read deadline then all reads
 		// must return a ErrTimeout.
 		op.cErr <- ErrTimeout
@@ -304,7 +323,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 	}
 
 	if c.readEnd {
-		tracef("ReadPacket() => ended")
+		// tracef("ReadPacket() => ended")
 		// When a channel read a packet with the "end" header set
 		// then all subsequent reads must return io.EOF
 		op.cErr <- io.EOF
@@ -312,7 +331,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 	}
 
 	if c.serverside && c.oSeq == -1 && c.iSeq >= 0 {
-		tracef("server.ReadPacket() => opening")
+		// tracef("server.ReadPacket() => opening")
 		// When a server channel read a packet but did not yet respond
 		// to the initial packet then subsequent reads must be deferred.
 		if op.queue {
@@ -323,7 +342,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 	}
 
 	if !c.serverside && c.oSeq == -1 {
-		tracef("client.ReadPacket() => opening")
+		// tracef("client.ReadPacket() => opening")
 		// When a client channel did not (yet) send an initial packet
 		// then all reads must be deferred.
 		if op.queue {
@@ -336,7 +355,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 	rSeq := uint32(c.iSeq + 1)
 	e := c.readBuffer[rSeq]
 	if e == nil {
-		tracef("ReadPacket() => blocking")
+		// tracef("ReadPacket() => blocking")
 		// Packet has not yet been received
 		// defer the read
 		if op.queue {
@@ -354,7 +373,7 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 		c.readEnd = e.end
 	}
 
-	tracef("ReadPacket() => returned packet")
+	// tracef("ReadPacket() => returned packet")
 	{ // clean headers
 		h := e.pkt.Header()
 		delete(h, "c")
@@ -373,6 +392,10 @@ func (c *Channel) receive_packet(op *opReceivePacket) {
 		// nor mal packet
 		op.pkt = e.pkt
 		op.cErr <- nil
+	}
+
+	if c.iSeq == 0 && !c.serverside {
+		c.tOpenDeadline.Cancel()
 	}
 
 	if c.iSeq == 0 {
@@ -409,33 +432,18 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 			}
 
 			for i := oldAck + 1; i <= int(ack); i++ {
-				tracef("W-BUF->DEL(%d)", i)
+				// tracef("W-BUF->DEL(%d)", i)
 				delete(c.writeBuffer, uint32(i))
 			}
 		}
 
 		if hasMiss {
-			for _, e := range c.writeBuffer {
-				e.inMiss = false
-			}
-
-			for _, seq := range miss {
-				if p, f := c.writeBuffer[seq]; f && p != nil {
-					p.inMiss = true
-				}
-			}
-
-			for k, e := range c.writeBuffer {
-				if e.inMiss == false {
-					tracef("W-BUF->DEL(%d)", k)
-					delete(c.writeBuffer, k)
-				}
-			}
+			c.process_missing_packets(miss)
 		}
 	}
 
 	if !hasSeq {
-		tracef("ReceivePacket() => drop // no seq")
+		// tracef("ReceivePacket() => drop // no seq")
 		// drop: is not a valid packet
 		if hasAck {
 			c.process_deliver_queue()
@@ -445,20 +453,25 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 		return
 	}
 
+	if c.reliable && c.iSeenSeq < int(seq) {
+		// record highest seen seq
+		c.iSeenSeq = int(seq)
+	}
+
 	if int(seq) <= c.iSeq {
-		tracef("ReceivePacket() => drop // seq is already read")
+		// tracef("ReceivePacket() => drop // seq is already read")
 		// drop: the reader already read a packet with this seq
 		return
 	}
 
 	if _, found := c.readBuffer[seq]; found {
-		tracef("ReceivePacket() => drop // seq is already buffered")
+		// tracef("ReceivePacket() => drop // seq is already buffered")
 		// drop: a packet with this seq is already buffered
 		return
 	}
 
 	if len(c.readBuffer) >= c_READ_BUFFER_SIZE {
-		tracef("ReceivePacket() => drop // buffer is full")
+		// tracef("ReceivePacket() => drop // buffer is full")
 		// drop: the read buffer is full
 		return
 	}
@@ -471,7 +484,7 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 		c.deliver_ack()
 	}
 
-	tracef("ReceivePacket() => buffered")
+	// tracef("ReceivePacket() => buffered")
 	c.readBuffer[seq] = &readBufferEntry{pkt, seq, end}
 
 	c.process_receive_queue()
@@ -480,7 +493,7 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 
 func (c *Channel) close(op *opCloseChannel) {
 	if c.broken {
-		tracef("Close() => broken")
+		// tracef("Close() => broken")
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
 		op.cErr <- &BrokenChannelError{c.hashname, c.typ, c.id}
@@ -506,13 +519,13 @@ func (c *Channel) close(op *opCloseChannel) {
 
 		err := <-op.deliver.cErr
 		if err == errDeferred {
-			tracef("Close() => deliver `end` deferred")
+			// tracef("Close() => deliver `end` deferred")
 			c.qClose = append(c.qClose, op)
 			op.cErr <- errDeferred
 			return
 		}
 		if err != nil {
-			tracef("Close() => deliver `end` err: %s", err)
+			// tracef("Close() => deliver `end` err: %s", err)
 			op.cErr <- err
 			return
 		}
@@ -527,36 +540,76 @@ func (c *Channel) close(op *opCloseChannel) {
 
 		err := <-op.receive.cErr
 		if err == errDeferred {
-			tracef("Close() => receive `end` deferred")
+			// tracef("Close() => receive `end` deferred")
 			c.qClose = append(c.qClose, op)
 			op.cErr <- errDeferred
 			return
 		}
 		if err == io.EOF {
-			tracef("Close() => received `end`")
+			// tracef("Close() => received `end`")
 			break
 		}
 		if err != nil {
-			tracef("Close() => receive `end` err: %s", err)
+			// tracef("Close() => receive `end` err: %s", err)
 			op.cErr <- err
 			return
 		}
 	}
 
 	if c.reliable && len(c.writeBuffer) > 0 {
-		tracef("Close() // write buffer not empty")
+		// tracef("Close() // write buffer not empty")
 		c.qClose = append(c.qClose, op)
 		op.cErr <- errDeferred
 		return
 	}
 
-	tracef("Close() // closed")
+	// tracef("Close() // closed")
 
 	c.unregister()
 
 	c.process_receive_queue()
 	c.process_deliver_queue()
 	op.cErr <- nil
+}
+
+func (c *Channel) buildMissList() []uint32 {
+	var miss = make([]uint32, 0, 50)
+	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
+		if _, p := c.readBuffer[uint32(i)]; !p {
+			miss = append(miss, uint32(i))
+		}
+	}
+	if len(miss) > 100 {
+		miss = miss[:100]
+	}
+	return miss
+}
+
+func (c *Channel) process_missing_packets(miss []uint32) {
+	var (
+		omiss       = c.buildMissList()
+		now         = time.Now()
+		one_sec_ago = now.Add(-1 * time.Second)
+	)
+
+	// tracef("MISS: %v", miss)
+	for _, seq := range miss {
+		e, f := c.writeBuffer[seq]
+		if !f || e == nil {
+			continue
+		}
+
+		if e.lastResend.After(one_sec_ago) {
+			continue
+		}
+
+		// tracef("MISS->SND(%d)", seq)
+		e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+		e.pkt.Header().SetUint32Slice("miss", omiss)
+		e.lastResend = now
+
+		c.fDeliverPacket(e.pkt)
+	}
 }
 
 func (c *Channel) maybe_deliver_ack() {
@@ -607,11 +660,12 @@ func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
 	}
 
 	pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	pkt.Header().SetUint32Slice("miss", c.buildMissList())
 
 	c.iAckedSeq = c.iSeq
 	c.lastSentAck = time.Now()
 
-	tracef("ACK(%d)", c.iSeq)
+	// tracef("ACK(%d)", c.iSeq)
 }
 
 func (c *Channel) on_read_deadline_reached() {

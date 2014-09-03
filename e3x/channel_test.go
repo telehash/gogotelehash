@@ -9,6 +9,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
 )
 
@@ -26,6 +27,10 @@ func (c *channelTestSuite) SetupTest() {
 	var (
 		assert = c.Assertions
 		err    error
+		tc     = mux.Config{
+			udp.Config{Network: "udp4"},
+			udp.Config{Network: "udp6"},
+		}
 	)
 
 	ka, err := cipherset.GenerateKey(0x3a)
@@ -34,16 +39,8 @@ func (c *channelTestSuite) SetupTest() {
 	kb, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
 
-	ta, err := udp.New("127.0.0.1:8081")
-	assert.NoError(err)
-
-	tb, err := udp.New("127.0.0.1:8082")
-	assert.NoError(err)
-
-	c.A = New(cipherset.Keys{0x3a: ka})
-	c.B = New(cipherset.Keys{0x3a: kb})
-	c.A.AddTransport(ta)
-	c.B.AddTransport(tb)
+	c.A = New(cipherset.Keys{0x3a: ka}, tc)
+	c.B = New(cipherset.Keys{0x3a: kb}, tc)
 
 	err = c.A.Start()
 	assert.NoError(err)
@@ -93,6 +90,7 @@ func (s *channelTestSuite) TestPingPong() {
 	}))
 
 	addr, err = A.LocalAddr()
+	s.T().Logf("A.LocalAddr => %v", addr.addrs)
 	assert.NoError(err)
 
 	c, err = B.Dial(addr, "ping", false)
@@ -181,7 +179,7 @@ func (s *channelTestSuite) TestFloodReliable() {
 		assert.NoError(err)
 		assert.NotNil(pkt)
 
-		for i := 0; i < 100000; i++ {
+		for i := 0; i < 1000000; i++ {
 			pkt := &lob.Packet{}
 			pkt.Header().SetInt("flood_id", i)
 			err = c.WritePacket(pkt)
@@ -209,6 +207,9 @@ func (s *channelTestSuite) TestFloodReliable() {
 		}
 		assert.NoError(err)
 		assert.NotNil(pkt)
+		if err != nil {
+			break
+		}
 		if pkt != nil {
 			id, _ := pkt.Header().GetInt("flood_id")
 			assert.True(lastId < id)

@@ -28,8 +28,9 @@ type Endpoint struct {
 	state    EndpointState
 	err      error
 
-	keys       cipherset.Keys
-	transports transports.Manager
+	keys            cipherset.Keys
+	transportConfig transports.Config
+	transport       transports.Transport
 
 	cTerminate       chan struct{}
 	cReceived        chan opReceived
@@ -55,7 +56,7 @@ func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 type opReceived struct {
 	pkt  *lob.Packet
 	data []byte
-	addr transports.ResolvedAddr
+	addr transports.Addr
 }
 
 type opDialExchange struct {
@@ -63,12 +64,8 @@ type opDialExchange struct {
 	cErr chan error
 }
 
-func New(keys cipherset.Keys) *Endpoint {
-	return &Endpoint{keys: keys, handlers: make(map[string]Handler)}
-}
-
-func (e *Endpoint) AddTransport(factory transports.Factory) {
-	e.transports.AddTransport(factory)
+func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
+	return &Endpoint{keys: keys, transportConfig: tc, handlers: make(map[string]Handler)}
 }
 
 func (e *Endpoint) AddHandler(typ string, h Handler) {
@@ -76,7 +73,7 @@ func (e *Endpoint) AddHandler(typ string, h Handler) {
 }
 
 func (e *Endpoint) LocalAddr() (*Addr, error) {
-	return NewAddr(e.keys, nil, e.transports.LocalAddresses())
+	return NewAddr(e.keys, nil, e.transport.LocalAddresses())
 }
 
 func (e *Endpoint) Start() error {
@@ -114,11 +111,12 @@ func (e *Endpoint) start() error {
 	e.scheduler = scheduler.New()
 	e.scheduler.Start()
 
-	err := e.transports.Start()
+	t, err := e.transportConfig.Open()
 	if err != nil {
 		e.err = err
 		return err
 	}
+	e.transport = t
 
 	e.wg.Add(1)
 	go e.run_receiver()
@@ -142,7 +140,7 @@ func (e *Endpoint) stop() error {
 	default:
 	}
 
-	e.err = e.transports.Stop()
+	e.err = e.transport.Close()
 
 	if e.state == RunningEndpointState {
 		e.state = TerminatedEndpointState
@@ -195,19 +193,24 @@ func (e *Endpoint) run_receiver() {
 	defer e.wg.Done()
 
 	for {
-		pkt, addr, err := e.transports.Receive()
-		if err == transports.ErrManagerTerminated {
+		var buf = transports.GetBuffer()
+		n, addr, err := e.transport.Receive(buf)
+		if err == transports.ErrClosed {
+			transports.PutBuffer(buf)
 			break
 		}
 		if err != nil {
+			transports.PutBuffer(buf)
 			continue // report error
 		}
 
-		e.cReceived <- opReceived{nil, pkt, addr}
+		e.cReceived <- opReceived{nil, buf[:n], addr}
 	}
 }
 
 func (e *Endpoint) received(op opReceived) {
+	defer transports.PutBuffer(op.data)
+
 	pkt, err := lob.Decode(op.data)
 	if err != nil {
 		// drop
@@ -250,6 +253,7 @@ func (e *Endpoint) received_handshake(op opReceived) {
 
 	_, handshake, err = cipherset.DecryptHandshake(csid, e.key_for_cs(csid), op.pkt.Body)
 	if err != nil {
+		return // drop
 	}
 
 	token = handshake.Token()
@@ -267,11 +271,12 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	}
 
 	valid := ex.received_handshake(op, handshake)
-	tracef("ReceivedHandshake() => %v", valid)
+	// tracef("ReceivedHandshake(%s) => %v", op.addr, valid)
 
 	if valid {
 		if !found {
 			ex.reset_expire()
+			ex.reschedule_handshake()
 			e.tokens[token] = ex
 			e.hashnames[hn] = ex
 		} else if e.tokens[token] == nil {
@@ -279,26 +284,22 @@ func (e *Endpoint) received_handshake(op opReceived) {
 			e.tokens[token] = ex
 		}
 	}
-
-	if valid {
-		e.transports.Associate(ex.hashname, op.addr)
-	}
 }
 
-func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.ResolvedAddr) {
+func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.Addr) {
 	var (
 		token cipherset.Token
 	)
 
 	if len(pkt.Body) < 16 {
-		tracef("drop // to short")
+		// tracef("drop // to short")
 		return //drop
 	}
 
 	copy(token[:], pkt.Body[:16])
 	x := e.tokens[token]
 	if x == nil {
-		tracef("drop no token")
+		// tracef("drop no token")
 		return // drop
 	}
 
@@ -311,7 +312,7 @@ func (e *Endpoint) deliver(pkt *lob.Packet, addr transports.Addr) error {
 		return err
 	}
 
-	return e.transports.Deliver(data, addr)
+	return e.transport.Deliver(data, addr)
 }
 
 func (e *Endpoint) DialExchange(addr *Addr) error {
@@ -354,8 +355,9 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 	}
 
 	for _, addr := range op.addr.addrs {
-		e.transports.Associate(op.addr.hashname, addr)
+		x.addressBook.AddAddress(addr)
 	}
+	// tracef("Address Book: %s", x.addressBook.KnownAddresses())
 
 	err = x.deliver_handshake(0, nil)
 	if err != nil {

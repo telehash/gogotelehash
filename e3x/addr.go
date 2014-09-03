@@ -16,10 +16,10 @@ type Addr struct {
 	hashname hashname.H
 	keys     cipherset.Keys
 	parts    cipherset.Parts
-	addrs    []transports.ResolvedAddr
+	addrs    []transports.Addr
 }
 
-func NewAddr(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.ResolvedAddr) (*Addr, error) {
+func NewAddr(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Addr) (*Addr, error) {
 	var err error
 
 	addr := &Addr{
@@ -62,20 +62,20 @@ func (a *Addr) String() string {
 
 func (a *Addr) MarshalJSON() ([]byte, error) {
 	var jsonAddr = struct {
-		Hashname hashname.H                `json:"hashname"`
-		Keys     cipherset.Keys            `json:"keys"`
-		Parts    cipherset.Parts           `json:"parts"`
-		Addrs    []transports.ResolvedAddr `json:"paths"`
+		Hashname hashname.H        `json:"hashname"`
+		Keys     cipherset.Keys    `json:"keys"`
+		Parts    cipherset.Parts   `json:"parts"`
+		Addrs    []transports.Addr `json:"paths"`
 	}{a.hashname, a.keys, a.parts, a.addrs}
 	return json.Marshal(&jsonAddr)
 }
 
 func (a *Addr) UnmarshalJSON(p []byte) error {
 	var jsonAddr struct {
-		Hashname hashname.H                `json:"hashname"`
-		Keys     cipherset.Keys            `json:"keys"`
-		Parts    cipherset.Parts           `json:"parts"`
-		Addrs    []transports.ResolvedAddr `json:"paths"`
+		Hashname hashname.H        `json:"hashname"`
+		Keys     cipherset.Keys    `json:"keys"`
+		Parts    cipherset.Parts   `json:"parts"`
+		Addrs    []transports.Addr `json:"paths"`
 	}
 	err := json.Unmarshal(p, &jsonAddr)
 	if err != nil {

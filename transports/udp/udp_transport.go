@@ -10,59 +10,88 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/transports"
 )
 
-type addr net.UDPAddr
-
 type Config struct {
-	Network           string // "udp", "udp4", "udp6"
-	Addr              string
-	EnablePortMapping bool
+	Network string // "udp4", "udp6"
+	Addr    string
+	Dest    string // CIDR format network range
+}
+
+type addr struct {
+	net string
+	net.UDPAddr
 }
 
 type transport struct {
 	net   string
 	laddr *net.UDPAddr
+	dest  *net.IPNet
 	c     *net.UDPConn
 }
 
 var (
-	_ transports.ResolvedAddr = (*addr)(nil)
-	_ transports.Transport    = (*transport)(nil)
+	_ transports.Addr      = (*addr)(nil)
+	_ transports.Transport = (*transport)(nil)
+	_ transports.Config    = Config{}
+)
+
+const (
+	UDPv4 = "udp4"
+	UDPv6 = "udp6"
 )
 
 func (c Config) Open() (transports.Transport, error) {
 	var (
-		addr *net.UDPAddr
-		err  error
+		ipnet *net.IPNet
+		addr  *net.UDPAddr
+		err   error
 	)
 
 	if c.Network == "" {
-		c.Network = "udp"
+		c.Network = UDPv4
 	}
 	if c.Addr == "" {
 		c.Addr = ":0"
 	}
-
-	addr, err = net.ResolveUDPAddr(c.Network, c.Addr)
-	if err != nil {
-		return nil, err
-	}
-
-	if c.Network == "udp" {
-		if addr.IP == nil {
-			// c.Network = "udp"
-		} else if addr.IP.To4() != nil {
-			c.Network = "udp4"
+	if c.Dest == "" {
+		if c.Network == UDPv4 {
+			c.Dest = "0.0.0.0/0"
 		} else {
-			c.Network = "udp6"
+			c.Dest = "::0/0"
 		}
 	}
 
-	if c.Network == "udp4" && addr.IP != nil && addr.IP.To4() == nil {
-		return nil, errors.New("udp: expected a IPv4 address")
+	if c.Network != UDPv4 && c.Network != UDPv6 {
+		return nil, errors.New("udp: Network must be either `udp4` or `udp6`")
 	}
 
-	if c.Network == "udp6" && addr.IP != nil && addr.IP.To4() != nil {
-		return nil, errors.New("udp: expected a IPv6 address")
+	{ // parse and verify source address
+		addr, err = net.ResolveUDPAddr(c.Network, c.Addr)
+		if err != nil {
+			return nil, err
+		}
+
+		if c.Network == UDPv4 && addr.IP != nil && addr.IP.To4() == nil {
+			return nil, errors.New("udp: expected a IPv4 address")
+		}
+
+		if c.Network == UDPv6 && addr.IP != nil && addr.IP.To4() != nil {
+			return nil, errors.New("udp: expected a IPv6 address")
+		}
+	}
+
+	{ // parse and verify destination network
+		_, ipnet, err = net.ParseCIDR(c.Dest)
+		if err != nil {
+			return nil, err
+		}
+
+		if c.Network == UDPv4 && ipnet.IP != nil && ipnet.IP.To4() == nil {
+			return nil, errors.New("udp: expected a IPv4 network")
+		}
+
+		if c.Network == UDPv6 && ipnet.IP != nil && ipnet.IP.To4() != nil {
+			return nil, errors.New("udp: expected a IPv6 network")
+		}
 	}
 
 	conn, err := net.ListenUDP(c.Network, addr)
@@ -72,27 +101,28 @@ func (c Config) Open() (transports.Transport, error) {
 
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
-	return &transport{net: c.Network, laddr: addr, c: conn}, nil
+	return &transport{c.Network, addr, ipnet, conn}, nil
 }
 
-func (t *transport) Networks() []string {
-	switch t.net {
-	case "udp":
-		return []string{"udp4", "udp6"}
-	case "udp4":
-		return []string{"udp4"}
-	case "udp6":
-		return []string{"udp6"}
-	default:
-		panic("unreachable")
+func (t *transport) CanHandleAddress(a transports.Addr) bool {
+	b, ok := a.(*addr)
+
+	if !ok || b == nil {
+		return false
 	}
+
+	if b.net != t.net {
+		return false
+	}
+
+	if !t.dest.Contains(b.IP) {
+		return false
+	}
+
+	return true
 }
 
-func (t *transport) DefaultMTU() int {
-	return 1450
-}
-
-func (t *transport) DecodeAddress(data []byte) (transports.ResolvedAddr, error) {
+func (t *transport) DecodeAddress(data []byte) (transports.Addr, error) {
 	var desc struct {
 		Type string `json:"type"`
 		IP   string `json:"ip"`
@@ -104,26 +134,30 @@ func (t *transport) DecodeAddress(data []byte) (transports.ResolvedAddr, error) 
 		return nil, transports.ErrInvalidAddr
 	}
 
+	if t.net == UDPv4 && desc.Type != UDPv4 {
+		return nil, transports.ErrInvalidAddr
+	}
+
+	if t.net == UDPv6 && desc.Type != UDPv6 {
+		return nil, transports.ErrInvalidAddr
+	}
+
 	ip := net.ParseIP(desc.IP)
-	if ip == nil {
+	if ip == nil || ip.IsUnspecified() {
 		return nil, transports.ErrInvalidAddr
 	}
 
-	if t.net == "udp4" && desc.Type != "udp4" {
+	if desc.Port <= 0 || desc.Port >= 65535 {
 		return nil, transports.ErrInvalidAddr
 	}
 
-	if t.net == "udp6" && desc.Type != "udp6" {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	return &addr{IP: ip, Port: desc.Port}, nil
+	return &addr{net: t.net, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
 }
 
-func (t *transport) LocalAddresses() []transports.ResolvedAddr {
+func (t *transport) LocalAddresses() []transports.Addr {
 	var (
 		port  int
-		addrs []transports.ResolvedAddr
+		addrs []transports.Addr
 	)
 
 	{
@@ -131,38 +165,28 @@ func (t *transport) LocalAddresses() []transports.ResolvedAddr {
 		port = a.Port
 		if !a.IP.IsUnspecified() {
 			switch t.net {
-			case "udp":
+
+			case UDPv4:
 				if v4 := a.IP.To4(); v4 != nil {
 					addrs = append(addrs, &addr{
-						IP:   v4,
-						Port: a.Port,
-						Zone: a.Zone,
+						net: t.net,
+						UDPAddr: net.UDPAddr{
+							IP:   v4,
+							Port: a.Port,
+							Zone: a.Zone,
+						},
 					})
 				}
 
+			case UDPv6:
 				if v4 := a.IP.To4(); v4 == nil {
 					addrs = append(addrs, &addr{
-						IP:   a.IP.To16(),
-						Port: a.Port,
-						Zone: a.Zone,
-					})
-				}
-
-			case "udp4":
-				if v4 := a.IP.To4(); v4 != nil {
-					addrs = append(addrs, &addr{
-						IP:   v4,
-						Port: a.Port,
-						Zone: a.Zone,
-					})
-				}
-
-			case "udp6":
-				if v4 := a.IP.To4(); v4 == nil {
-					addrs = append(addrs, &addr{
-						IP:   a.IP.To16(),
-						Port: a.Port,
-						Zone: a.Zone,
+						net: t.net,
+						UDPAddr: net.UDPAddr{
+							IP:   a.IP.To16(),
+							Port: a.Port,
+							Zone: a.Zone,
+						},
 					})
 				}
 
@@ -197,38 +221,28 @@ func (t *transport) LocalAddresses() []transports.ResolvedAddr {
 			}
 
 			switch t.net {
-			case "udp":
+
+			case UDPv4:
 				if v4 := ip.To4(); v4 != nil {
 					addrs = append(addrs, &addr{
-						IP:   v4,
-						Port: port,
-						Zone: zone,
+						net: t.net,
+						UDPAddr: net.UDPAddr{
+							IP:   ip.To4(),
+							Port: port,
+							Zone: zone,
+						},
 					})
 				}
 
+			case UDPv6:
 				if v4 := ip.To4(); v4 == nil {
 					addrs = append(addrs, &addr{
-						IP:   ip.To16(),
-						Port: port,
-						Zone: zone,
-					})
-				}
-
-			case "udp4":
-				if v4 := ip.To4(); v4 != nil {
-					addrs = append(addrs, &addr{
-						IP:   ip.To4(),
-						Port: port,
-						Zone: zone,
-					})
-				}
-
-			case "udp6":
-				if v4 := ip.To4(); v4 == nil {
-					addrs = append(addrs, &addr{
-						IP:   ip.To16(),
-						Port: port,
-						Zone: zone,
+						net: t.net,
+						UDPAddr: net.UDPAddr{
+							IP:   ip.To16(),
+							Port: port,
+							Zone: zone,
+						},
 					})
 				}
 
@@ -244,34 +258,37 @@ func (t *transport) Close() error {
 	return err
 }
 
-func (t *transport) Deliver(pkt []byte, to transports.ResolvedAddr) error {
-	n, err := t.c.WriteToUDP(pkt, (*net.UDPAddr)(to.(*addr)))
+func (t *transport) Deliver(pkt []byte, to transports.Addr) error {
+	a, ok := to.(*addr)
+	if !ok || a == nil || a.net != t.net {
+		return transports.ErrInvalidAddr
+	}
+
+	n, err := t.c.WriteToUDP(pkt, &a.UDPAddr)
 	if err != nil {
 		return err
 	}
+
 	if n != len(pkt) {
 		return io.ErrShortWrite
 	}
+
 	return nil
 }
 
-func (t *transport) Receive(b []byte) (int, transports.ResolvedAddr, error) {
+func (t *transport) Receive(b []byte) (int, transports.Addr, error) {
 	n, a, err := t.c.ReadFromUDP(b)
 	if err != nil {
 		if err.Error() == "use of closed network connection" {
-			return 0, nil, transports.ErrTransportClosed
+			return 0, nil, transports.ErrClosed
 		}
 		return 0, nil, err
 	}
-	return n, (*addr)(a), nil
+	return n, &addr{net: t.net, UDPAddr: *a}, nil
 }
 
 func (a *addr) Network() string {
-	if a.IP.To4() == nil {
-		return "udp6"
-	} else {
-		return "udp4"
-	}
+	return a.net
 }
 
 func (a *addr) MarshalJSON() ([]byte, error) {
@@ -280,21 +297,33 @@ func (a *addr) MarshalJSON() ([]byte, error) {
 		IP   string `json:"ip"`
 		Port int    `json:"port"`
 	}{
-		Type: a.Network(),
+		Type: a.net,
 		IP:   a.IP.String(),
 		Port: a.Port,
 	}
 	return json.Marshal(&desc)
 }
 
-func (a *addr) Less(b transports.ResolvedAddr) bool {
-	x := b.(*addr)
-	if bytes.Compare(a.IP.To16(), x.IP.To16()) < 0 {
+func (a *addr) Less(b transports.Addr) bool {
+	if a.net < b.Network() {
 		return true
+	} else if a.net > b.Network() {
+		return false
 	}
+
+	x := b.(*addr)
+	if i := bytes.Compare(a.IP.To16(), x.IP.To16()); i < 0 {
+		return true
+	} else if i > 0 {
+		return false
+	}
+
 	if a.Port < x.Port {
 		return true
+	} else if a.Port > x.Port {
+		return true
 	}
+
 	return false
 }
 

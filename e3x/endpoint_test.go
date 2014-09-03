@@ -8,6 +8,7 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
+	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
 )
 
@@ -20,17 +21,8 @@ func TestSimpleEndpoint(t *testing.T) {
 	kb, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
 
-	ta, err := udp.New("")
-	assert.NoError(err)
-
-	tb, err := udp.New("127.0.0.1:8081")
-	assert.NoError(err)
-
-	ea := New(cipherset.Keys{0x3a: ka})
-	eb := New(cipherset.Keys{0x3a: kb})
-
-	ea.AddTransport(ta)
-	eb.AddTransport(tb)
+	ea := New(cipherset.Keys{0x3a: ka}, mux.Config{udp.Config{}})
+	eb := New(cipherset.Keys{0x3a: kb}, mux.Config{udp.Config{}})
 
 	err = ea.Start()
 	assert.NoError(err)
@@ -38,10 +30,10 @@ func TestSimpleEndpoint(t *testing.T) {
 	err = eb.Start()
 	assert.NoError(err)
 
-	addrA, err := NewAddr(cipherset.Keys{0x3a: ka}, nil, ta.LocalAddresses())
+	addrA, err := ea.LocalAddr()
 	assert.NoError(err)
 
-	addrB, err := NewAddr(cipherset.Keys{0x3a: kb}, nil, tb.LocalAddresses())
+	addrB, err := eb.LocalAddr()
 	assert.NoError(err)
 
 	tracef("HELLO")
