@@ -2,6 +2,7 @@ package e3x
 
 import (
 	"encoding/binary"
+	"math/rand"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
@@ -125,7 +126,7 @@ func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 	if addr != nil {
 		addrs = append(addrs, addr)
 	} else {
-		addrs = e.addressBook.KnownAddresses()
+		addrs = e.addressBook.HandshakeAddresses()
 		e.addressBook.NextHandshakeEpoch()
 	}
 
@@ -160,6 +161,11 @@ func (e *exchange) reschedule_handshake() {
 	} else {
 		e.nextHandshake = e.nextHandshake * 2
 	}
+
+	if n := e.nextHandshake / 3; n > 0 {
+		e.nextHandshake -= rand.Intn(n)
+	}
+
 	e.tDeliverHandshake.ScheduleAfter(time.Duration(e.nextHandshake) * time.Second)
 }
 

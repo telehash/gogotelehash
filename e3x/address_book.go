@@ -51,6 +51,14 @@ func (book *addressBook) KnownAddresses() []transports.Addr {
 	return s
 }
 
+func (book *addressBook) HandshakeAddresses() []transports.Addr {
+	l := book.KnownAddresses()
+	if len(l) > 5 {
+		l = l[:5]
+	}
+	return l
+}
+
 func (book *addressBook) NextHandshakeEpoch() {
 	var changed bool
 

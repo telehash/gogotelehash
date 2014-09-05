@@ -8,6 +8,7 @@ import (
 	"net"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/transports/nat"
 )
 
 func init() {
@@ -35,6 +36,7 @@ type transport struct {
 
 var (
 	_ transports.Addr      = (*addr)(nil)
+	_ nat.NATableAddr      = (*addr)(nil)
 	_ transports.Transport = (*transport)(nil)
 	_ transports.Config    = Config{}
 )
@@ -330,4 +332,26 @@ func (a *addr) String() string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func (a *addr) InternalAddr() (proto string, ip net.IP, port int) {
+	if a == nil ||
+		a.IP.IsLoopback() ||
+		a.IP.IsMulticast() ||
+		a.IP.IsUnspecified() ||
+		a.IP.IsGlobalUnicast() ||
+		a.IP.IsInterfaceLocalMulticast() ||
+		a.IP.IsLinkLocalMulticast() ||
+		a.IP.IsLinkLocalUnicast() {
+		return "", nil, -1
+	}
+	return "udp", a.IP, a.Port
+}
+
+func (a *addr) MakeGlobal(ip net.IP, port int) transports.Addr {
+	if a == nil {
+		return nil
+	}
+
+	return &addr{a.net, net.UDPAddr{IP: ip, Port: port}}
 }

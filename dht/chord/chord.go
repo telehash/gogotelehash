@@ -1,6 +1,7 @@
 package chord
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"sync"
@@ -80,10 +81,12 @@ func (t *transport) completeVnode(vn *chord.Vnode) *completeVnode {
 		return nil
 	}
 
+	id := hex.EncodeToString(vn.Id)
+
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
-	c := &completeVnode{string(vn.Id), t.addressTable[hashname.H(vn.Host)]}
+	c := &completeVnode{id, t.addressTable[hashname.H(vn.Host)]}
 	return c
 }
 
@@ -95,8 +98,13 @@ func (t *transport) internalVnode(c *completeVnode) *chord.Vnode {
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
+	id, err := hex.DecodeString(c.Id)
+	if err != nil {
+		return nil
+	}
+
 	t.addressTable[c.Addr.Hashname()] = c.Addr
-	return &chord.Vnode{[]byte(c.Id), string(c.Addr.Hashname())}
+	return &chord.Vnode{id, string(c.Addr.Hashname())}
 }
 
 func (t *transport) completeVnodes(vn []*chord.Vnode) []*completeVnode {
@@ -109,8 +117,10 @@ func (t *transport) completeVnodes(vn []*chord.Vnode) []*completeVnode {
 
 	c := make([]*completeVnode, len(vn))
 	for i, a := range vn {
-		b := &completeVnode{string(a.Id), t.addressTable[hashname.H(a.Host)]}
-		c[i] = b
+		if a != nil {
+			b := &completeVnode{hex.EncodeToString(a.Id), t.addressTable[hashname.H(a.Host)]}
+			c[i] = b
+		}
 	}
 
 	return c
@@ -126,9 +136,15 @@ func (t *transport) internalVnodes(c []*completeVnode) []*chord.Vnode {
 
 	vn := make([]*chord.Vnode, len(c))
 	for i, a := range c {
-		t.addressTable[a.Addr.Hashname()] = a.Addr
-		b := &chord.Vnode{[]byte(a.Id), string(a.Addr.Hashname())}
-		vn[i] = b
+		if a != nil {
+			id, err := hex.DecodeString(a.Id)
+			if err != nil {
+				return nil
+			}
+			t.addressTable[a.Addr.Hashname()] = a.Addr
+			b := &chord.Vnode{id, string(a.Addr.Hashname())}
+			vn[i] = b
+		}
 	}
 
 	return vn
@@ -204,7 +220,7 @@ func (t *transport) handleListVnodes(ch *e3x.Channel) {
 	_, err = ch.ReadPacket()
 	if err != nil {
 		// log error
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 
@@ -215,9 +231,11 @@ func (t *transport) handleListVnodes(ch *e3x.Channel) {
 	err = json.NewEncoder(newStream(ch)).Encode(&res)
 	if err != nil {
 		// log error
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
+
+	// tracef("handle.ListVnodes() => %s", res)
 }
 
 // Ping a Vnode, check for liveness
@@ -274,7 +292,7 @@ func (t *transport) handlePing(ch *e3x.Channel) {
 	pkt, err = ch.ReadPacket()
 	if err != nil {
 		// log error
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 
@@ -291,7 +309,7 @@ func (t *transport) handlePing(ch *e3x.Channel) {
 	err = ch.WritePacket(pkt)
 	if err != nil {
 		// log error
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 }
@@ -333,7 +351,9 @@ func (t *transport) GetPredecessor(vn *chord.Vnode) (*chord.Vnode, error) {
 		return nil, err
 	}
 
-	tracef("GetPredecessor(Vnode(%q)) => Vnode(%q)", vn.String(), res.Id)
+	if res != nil {
+		// tracef("GetPredecessor(Vnode(%q)) => Vnode(%q)", vn.String(), res.Id)
+	}
 	return t.internalVnode(res), nil
 }
 
@@ -351,7 +371,7 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	pkt, err = ch.ReadPacket()
 	if err != nil {
 		// log error
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 
@@ -359,14 +379,14 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	rpc := t.lookupRPC(id)
 	if rpc == nil {
 		// log
-		tracef("error: %s", "no RPC")
+		// tracef("error: %s", "no RPC")
 		return
 	}
 
 	vnode, err = rpc.GetPredecessor()
 	if err != nil {
 		// log
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 
@@ -374,11 +394,13 @@ func (t *transport) handleGetPredecessor(ch *e3x.Channel) {
 	err = json.NewEncoder(newStream(ch)).Encode(&res)
 	if err != nil {
 		// log
-		tracef("error: %s", err)
+		// tracef("error: %s", err)
 		return
 	}
 
-	tracef("handle.GetPredecessor(Vnode(%q)) => Vnode(%q)", id, res.Id)
+	if res != nil {
+		// tracef("handle.GetPredecessor(Vnode(%q)) => Vnode(%q)", id, res.Id)
+	}
 }
 
 // Notify our successor of ourselves
@@ -423,7 +445,7 @@ func (t *transport) Notify(target, self *chord.Vnode) ([]*chord.Vnode, error) {
 		return nil, err
 	}
 
-	tracef("Notify(target:Vnode(%q), self:Vnode(%q)) => []Vnode(%v)", target.String(), self.String(), res)
+	// tracef("Notify(target:Vnode(%q), self:Vnode(%q)) => []Vnode(%v)", target.String(), self.String(), res)
 	return t.internalVnodes(res), nil
 }
 
@@ -446,21 +468,21 @@ func (t *transport) handleNotify(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
-		tracef("(Notify) error: %s", err)
+		// tracef("(Notify) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
-		tracef("(Notify) error: %s", "no RPC")
+		// tracef("(Notify) error: %s", "no RPC")
 		return
 	}
 
 	vnodes, err = rpc.Notify(t.internalVnode(req.Self))
 	if err != nil {
 		// log
-		tracef("(Notify) error: %s", err)
+		// tracef("(Notify) error: %s", err)
 		return
 	}
 
@@ -469,11 +491,11 @@ func (t *transport) handleNotify(ch *e3x.Channel) {
 	err = json.NewEncoder(stream).Encode(&res)
 	if err != nil {
 		// log
-		tracef("(Notify) error: %s", err)
+		// tracef("(Notify) error: %s", err)
 		return
 	}
 
-	tracef("handle.Notify(target:Vnode(%q), self:Vnode(%q)) => []Vnode(%v)", req.Target, req.Self.Id, res)
+	// tracef("handle.Notify(target:Vnode(%q), self:Vnode(%q)) => []Vnode(%v)", req.Target, req.Self.Id, res)
 }
 
 // Find a successor
@@ -492,7 +514,7 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 		}{vn.String(), n, k}
 	)
 
-	tracef("FindSuccessors(target:Vnode(%q))", vn.String())
+	// tracef("FindSuccessors(target:Vnode(%q))", vn.String())
 
 	addr = t.lookupAddr(hashname.H(vn.Host))
 	if addr == nil {
@@ -513,11 +535,13 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 
 	err = json.NewEncoder(stream).Encode(&req)
 	if err != nil {
+		// tracef("(FindSuccessors) error: %s", err)
 		return nil, err
 	}
 
 	err = json.NewDecoder(stream).Decode(&res)
 	if err != nil {
+		// tracef("(FindSuccessors) error: %s", err)
 		return nil, err
 	}
 
@@ -543,28 +567,24 @@ func (t *transport) handleFindSuccessors(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
-		tracef("(FindSuccessors) error: %s", err)
+		// tracef("(FindSuccessors) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
-	if rpc == nil {
-		// log
-		tracef("(FindSuccessors) error: no RPC %s", req.Target)
-		return
-	}
-
-	res, err = rpc.FindSuccessors(req.N, req.K)
-	if err != nil {
-		// log
-		tracef("(FindSuccessors) error: %s", err)
-		return
+	if rpc != nil {
+		res, err = rpc.FindSuccessors(req.N, req.K)
+		if err != nil {
+			// log
+			// tracef("(FindSuccessors) error: %s", err)
+			return
+		}
 	}
 
 	err = json.NewEncoder(stream).Encode(t.completeVnodes(res))
 	if err != nil {
 		// log
-		tracef("(FindSuccessors) error: %s", err)
+		// tracef("(FindSuccessors) error: %s", err)
 		return
 	}
 }
@@ -625,21 +645,21 @@ func (t *transport) handleClearPredecessor(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
-		tracef("(ClearPredecessor) error: %s", err)
+		// tracef("(ClearPredecessor) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
-		tracef("(ClearPredecessor) error: %s", "no RPC")
+		// tracef("(ClearPredecessor) error: %s", "no RPC")
 		return
 	}
 
 	err = rpc.ClearPredecessor(t.internalVnode(req.Self))
 	if err != nil {
 		// log
-		tracef("(ClearPredecessor) error: %s", err)
+		// tracef("(ClearPredecessor) error: %s", err)
 		return
 	}
 }
@@ -700,30 +720,34 @@ func (t *transport) handleSkipSuccessor(ch *e3x.Channel) {
 	err = json.NewDecoder(stream).Decode(&req)
 	if err != nil {
 		// log
-		tracef("(SkipSuccessor) error: %s", err)
+		// tracef("(SkipSuccessor) error: %s", err)
 		return
 	}
 
 	rpc := t.lookupRPC(req.Target)
 	if rpc == nil {
 		// log
-		tracef("(SkipSuccessor) error: %s", "no RPC")
+		// tracef("(SkipSuccessor) error: %s", "no RPC")
 		return
 	}
 
 	err = rpc.SkipSuccessor(t.internalVnode(req.Self))
 	if err != nil {
 		// log
-		tracef("(SkipSuccessor) error: %s", err)
+		// tracef("(SkipSuccessor) error: %s", err)
 		return
 	}
 }
 
 // Register for an RPC callbacks
 func (t *transport) Register(vn *chord.Vnode, rpc chord.VnodeRPC) {
-	tracef("Register(Vnode(%q), VnodeRPC(%p))", vn.String(), rpc)
+	// tracef("Register(Vnode(%q), VnodeRPC(%p))", vn.String(), rpc)
 	t.mtx.Lock()
 	defer t.mtx.Unlock()
 
 	t.localVnodes[vn.String()] = localRPC{vn, rpc}
+}
+
+func (c *completeVnode) String() string {
+	return c.Id
 }
