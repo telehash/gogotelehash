@@ -90,19 +90,37 @@ func (t *transport) Receive(b []byte) (int, transports.Addr, error) {
 }
 
 func (t *transport) run() {
+
+	var (
+		ticker    = time.NewTicker(30 * time.Second)
+		currEvent events.E
+	)
+
 	defer t.wg.Done()
-	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for {
+		var (
+			cEventIn  = t.cEventIn
+			cEventOut = t.cEventOut
+		)
+
+		if currEvent == nil {
+			cEventOut = nil
+		} else {
+			cEventIn = nil
+		}
+
 		select {
 
 		case <-t.cTerminate:
 			t.close()
 			return
 
-		case evt := <-t.cEventIn:
-			events.Emit(t.cEventOut, evt)
+		case evt := <-cEventIn:
+			currEvent = evt
+		case cEventOut <- currEvent:
+			currEvent = nil
 
 		case <-ticker.C:
 			m := t.refresh()
