@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 var ErrmuxerTerminated = errors.New("transports: manager is terminated")
@@ -30,6 +32,8 @@ type muxer struct {
 	cReceived       chan *opReceived
 	cLocalAddresses chan *opLocalAddresses
 	cTerminate      chan struct{}
+	cEventIn        chan events.E
+	cEventOut       chan<- events.E
 }
 
 type opDeliver struct {
@@ -54,9 +58,11 @@ type opLocalAddresses struct {
 	cRes chan []transports.Addr
 }
 
-func (c Config) Open() (transports.Transport, error) {
+func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 	m := &muxer{}
 
+	m.cEventOut = e
+	m.cEventIn = make(chan events.E)
 	m.cDeliver = make(chan *opDeliver)
 	m.cReceive = make(chan *opReceive)
 	m.cReceived = make(chan *opReceived)
@@ -64,7 +70,7 @@ func (c Config) Open() (transports.Transport, error) {
 	m.cTerminate = make(chan struct{})
 
 	for _, f := range c {
-		t, err := f.Open()
+		t, err := f.Open(m.cEventIn)
 		if err != nil {
 			return nil, err
 		}
@@ -123,6 +129,7 @@ func (m *muxer) close() {
 	close(m.cReceived)
 	close(m.cTerminate)
 	close(m.cLocalAddresses)
+	close(m.cEventIn)
 }
 
 func (m *muxer) run() {
@@ -160,6 +167,9 @@ func (m *muxer) run() {
 		case op := <-cReceived:
 			m.received(op)
 
+		case evt := <-m.cEventIn:
+			events.Emit(m.cEventOut, evt)
+
 		}
 	}
 }
@@ -169,18 +179,18 @@ func (m *muxer) run_receiver(t transports.Transport) {
 
 	for {
 		var (
-			buf = transports.GetBuffer()
+			buf = bufpool.GetBuffer()
 			op  opReceived
 		)
 
 		n, addr, err := t.Receive(buf)
 		if err == transports.ErrClosed {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			return
 		}
 		if err != nil {
 			// report error
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			continue
 		}
 
@@ -240,7 +250,7 @@ func (m *muxer) Receive(p []byte) (int, transports.Addr, error) {
 	<-op.cWait
 
 	if len(op.buf) > len(p) {
-		transports.PutBuffer(op.buf)
+		bufpool.PutBuffer(op.buf)
 		return 0, op.addr, io.ErrShortBuffer
 	}
 
@@ -248,7 +258,7 @@ func (m *muxer) Receive(p []byte) (int, transports.Addr, error) {
 	n := len(op.buf)
 
 	if op.buf != nil {
-		transports.PutBuffer(op.buf)
+		bufpool.PutBuffer(op.buf)
 	}
 
 	return n, op.addr, op.err

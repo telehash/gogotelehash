@@ -2,14 +2,20 @@ package transports
 
 import (
 	"errors"
-	"sync"
+	"fmt"
+
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 var ErrClosed = errors.New("use of closed network connection")
 var ErrInvalidAddr = errors.New("transports: invalid address")
 
+var (
+	_ events.E = (*NetworkChangeEvent)(nil)
+)
+
 type Config interface {
-	Open() (Transport, error)
+	Open(e chan<- events.E) (Transport, error)
 }
 
 type Transport interface {
@@ -29,26 +35,11 @@ type Addr interface {
 	Less(Addr) bool
 }
 
-const bufferSize = 64 * 1024
-
-var zeroBuffer = make([]byte, bufferSize)
-
-var bufferPool = sync.Pool{
-	New: func() interface{} { return make([]byte, bufferSize) },
+type NetworkChangeEvent struct {
+	Up   []Addr
+	Down []Addr
 }
 
-func GetBuffer() []byte {
-	buf := bufferPool.Get().([]byte)
-	return buf[:bufferSize]
-}
-
-func PutBuffer(buf []byte) {
-	if cap(buf) != bufferSize {
-		panic("invalid buffer return")
-	}
-
-	buf = buf[:bufferSize]
-	copy(buf, zeroBuffer)
-
-	bufferPool.Put(buf)
+func (e *NetworkChangeEvent) String() string {
+	return fmt.Sprintf("network changed: up: %s down: %s", e.Up, e.Down)
 }

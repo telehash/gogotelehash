@@ -11,12 +11,14 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 type channelTestSuite struct {
 	suite.Suite
-	A *Endpoint
-	B *Endpoint
+	A      *Endpoint
+	B      *Endpoint
+	events chan events.E
 }
 
 func TestChannels(t *testing.T) {
@@ -33,6 +35,9 @@ func (c *channelTestSuite) SetupTest() {
 		}
 	)
 
+	c.events = make(chan events.E)
+	go events.Log(nil, c.events)
+
 	ka, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
 
@@ -41,6 +46,9 @@ func (c *channelTestSuite) SetupTest() {
 
 	c.A = New(cipherset.Keys{0x3a: ka}, tc)
 	c.B = New(cipherset.Keys{0x3a: kb}, tc)
+
+	c.A.Subscribe(c.events)
+	c.B.Subscribe(c.events)
 
 	err = c.A.Start()
 	assert.NoError(err)
@@ -60,6 +68,8 @@ func (c *channelTestSuite) TearDownTest() {
 
 	err = c.B.Stop()
 	assert.NoError(err)
+
+	close(c.events)
 }
 
 func (s *channelTestSuite) TestPingPong() {

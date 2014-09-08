@@ -7,14 +7,14 @@ import (
 	"code.google.com/p/go.crypto/salsa20"
 
 	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 )
 
 func cloak(p []byte, key *[32]byte) ([]byte, error) {
-	defer transports.PutBuffer(p)
+	defer bufpool.PutBuffer(p)
 
 	var (
-		buf     = transports.GetBuffer()
+		buf     = bufpool.GetBuffer()
 		padding uint8
 		err     error
 	)
@@ -23,7 +23,7 @@ func cloak(p []byte, key *[32]byte) ([]byte, error) {
 	for buf[0] == 0 || buf[1] == 0 || buf[1] == 1 {
 		_, err = io.ReadFull(rand.Reader, buf[:9])
 		if err != nil {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			return nil, err
 		}
 	}
@@ -37,7 +37,7 @@ func cloak(p []byte, key *[32]byte) ([]byte, error) {
 		p = p[:nlen]
 		_, err = io.ReadFull(rand.Reader, p[olen:])
 		if err != nil {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			return nil, err
 		}
 	}
@@ -53,15 +53,15 @@ func decloak(p []byte, key *[32]byte) ([]byte, error) {
 		return p, nil
 	}
 
-	defer transports.PutBuffer(p)
+	defer bufpool.PutBuffer(p)
 
 	var (
-		buf     = transports.GetBuffer()
+		buf     = bufpool.GetBuffer()
 		padding uint8
 	)
 
 	if len(p) < 8 {
-		transports.PutBuffer(buf)
+		bufpool.PutBuffer(buf)
 		return nil, lob.ErrInvalidPacket
 	}
 
@@ -73,7 +73,7 @@ func decloak(p []byte, key *[32]byte) ([]byte, error) {
 		buf[0] = 0
 
 		if int(padding) > len(buf) {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			return nil, lob.ErrInvalidPacket
 		}
 
