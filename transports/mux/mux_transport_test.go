@@ -7,18 +7,22 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 func TestManagerWithoutTransports(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		c   = Config{}
-		tr  transports.Transport
-		err error
+		eventC = make(chan events.E)
+		c      = Config{}
+		tr     transports.Transport
+		err    error
 	)
 
-	tr, err = c.Open()
+	go events.Log(nil, eventC)
+
+	tr, err = c.Open(eventC)
 	assert.NoError(err)
 
 	err = tr.Close()
@@ -32,12 +36,15 @@ func TestManagerWithOneTransport(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		c   = Config{udp.Config{}}
-		tr  transports.Transport
-		err error
+		eventC = make(chan events.E)
+		c      = Config{udp.Config{}}
+		tr     transports.Transport
+		err    error
 	)
 
-	tr, err = c.Open()
+	go events.Log(nil, eventC)
+
+	tr, err = c.Open(eventC)
 	assert.NoError(err)
 
 	err = tr.Close()
@@ -48,19 +55,22 @@ func TestManagerDeliverReceive(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		buf = make([]byte, 1024)
-		ca  = Config{udp.Config{}}
-		cb  = Config{udp.Config{Addr: "127.0.0.1:0"}}
-		ta  transports.Transport
-		tb  transports.Transport
-		err error
+		eventC = make(chan events.E)
+		buf    = make([]byte, 1024)
+		ca     = Config{udp.Config{}}
+		cb     = Config{udp.Config{Addr: "127.0.0.1:0"}}
+		ta     transports.Transport
+		tb     transports.Transport
+		err    error
 	)
 
-	ta, err = ca.Open()
+	go events.Log(nil, eventC)
+
+	ta, err = ca.Open(eventC)
 	defer ta.Close()
 	assert.NoError(err)
 
-	tb, err = cb.Open()
+	tb, err = cb.Open(eventC)
 	defer tb.Close()
 	assert.NoError(err)
 

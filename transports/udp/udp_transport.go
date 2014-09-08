@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
 	"time"
 
@@ -164,6 +165,7 @@ func (t *transport) detect_network_changes() {
 		}
 
 		if !events.Emit(t.cEventOut, event) {
+			log.Printf("exit detect_network_changes()")
 			break
 		}
 	}

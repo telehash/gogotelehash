@@ -172,8 +172,6 @@ func (e *Endpoint) stop() error {
 
 	e.wg.Wait()
 
-	close(e.cEventIn)
-
 	return e.err
 }
 
@@ -187,6 +185,8 @@ func (e *Endpoint) run() {
 			op.Exec()
 
 		case <-e.cTerminate:
+			close(e.cEventIn)
+			e.cEventIn = nil
 			e.cTerminate <- struct{}{}
 			return
 

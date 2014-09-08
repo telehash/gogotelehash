@@ -3,6 +3,7 @@ package udp
 import (
 	"testing"
 
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,8 +17,11 @@ func TestLocalAddresses(t *testing.T) {
 		{Network: "udp6", Addr: ":0"},
 	}
 
+	var eventC = make(chan events.E)
+	go events.Log(nil, eventC)
+
 	for _, factory := range tab {
-		trans, err := factory.Open()
+		trans, err := factory.Open(eventC)
 		assert.NoError(err)
 
 		addrs := trans.LocalAddresses()

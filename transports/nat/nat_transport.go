@@ -26,19 +26,22 @@ type Config struct {
 }
 
 type transport struct {
+	wg          sync.WaitGroup
 	mtx         sync.Mutex
 	t           transports.Transport
 	mappedAddrs []transports.Addr
 	nat         nat.NAT
-	ticker      *time.Ticker
 	cEventIn    chan events.E
 	cEventOut   chan<- events.E
+	cTerminate  chan struct{}
+	err         error
 }
 
 func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 	nt := &transport{
-		cEventIn:  make(chan events.E),
-		cEventOut: e,
+		cEventIn:   make(chan events.E),
+		cEventOut:  e,
+		cTerminate: make(chan struct{}),
 	}
 
 	t, err := c.Config.Open(nt.cEventIn)
@@ -48,15 +51,22 @@ func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 
 	nt.t = t
 	nt.mappedAddrs = nt.refresh()
+	nt.wg.Add(1)
 	go nt.run()
 
 	return nt, nil
 }
 
 func (t *transport) Close() error {
-	t.ticker.Stop()
+	detectClosed(func() { t.cTerminate <- struct{}{} })
+	t.wg.Wait()
+	return t.err
+}
+
+func (t *transport) close() {
+	t.err = t.t.Close()
 	close(t.cEventIn)
-	return t.t.Close()
+	close(t.cTerminate)
 }
 
 func (t *transport) CanHandleAddress(addr transports.Addr) bool {
@@ -80,15 +90,21 @@ func (t *transport) Receive(b []byte) (int, transports.Addr, error) {
 }
 
 func (t *transport) run() {
-	t.ticker = time.NewTicker(30 * time.Second)
+	defer t.wg.Done()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 
+		case <-t.cTerminate:
+			t.close()
+			return
+
 		case evt := <-t.cEventIn:
 			events.Emit(t.cEventOut, evt)
 
-		case <-t.ticker.C:
+		case <-ticker.C:
 			m := t.refresh()
 			t.mtx.Lock()
 			t.mappedAddrs = m
@@ -177,4 +193,10 @@ func (t *transport) refresh() []transports.Addr {
 	}
 
 	return mappedAddrs
+}
+
+func detectClosed(f func()) (closed bool) {
+	defer func() { closed = recover() != nil }()
+	f()
+	return false
 }

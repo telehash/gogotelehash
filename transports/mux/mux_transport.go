@@ -32,8 +32,6 @@ type muxer struct {
 	cReceived       chan *opReceived
 	cLocalAddresses chan *opLocalAddresses
 	cTerminate      chan struct{}
-	cEventIn        chan events.E
-	cEventOut       chan<- events.E
 }
 
 type opDeliver struct {
@@ -61,8 +59,6 @@ type opLocalAddresses struct {
 func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 	m := &muxer{}
 
-	m.cEventOut = e
-	m.cEventIn = make(chan events.E)
 	m.cDeliver = make(chan *opDeliver)
 	m.cReceive = make(chan *opReceive)
 	m.cReceived = make(chan *opReceived)
@@ -70,7 +66,7 @@ func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 	m.cTerminate = make(chan struct{})
 
 	for _, f := range c {
-		t, err := f.Open(m.cEventIn)
+		t, err := f.Open(e)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +125,6 @@ func (m *muxer) close() {
 	close(m.cReceived)
 	close(m.cTerminate)
 	close(m.cLocalAddresses)
-	close(m.cEventIn)
 }
 
 func (m *muxer) run() {
@@ -166,9 +161,6 @@ func (m *muxer) run() {
 
 		case op := <-cReceived:
 			m.received(op)
-
-		case evt := <-m.cEventIn:
-			events.Emit(m.cEventOut, evt)
 
 		}
 	}
