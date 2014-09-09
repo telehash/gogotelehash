@@ -144,8 +144,6 @@ func (s *channelTestSuite) TestPingPongReliable() {
 	assert.NoError(err)
 	assert.NotNil(c)
 
-	defer c.Close()
-
 	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
 	assert.NoError(err)
 
@@ -155,6 +153,9 @@ func (s *channelTestSuite) TestPingPongReliable() {
 	if pkt != nil {
 		assert.Equal("pong", string(pkt.Body))
 	}
+
+	err = c.Close()
+	assert.NoError(err)
 }
 
 func (s *channelTestSuite) TestFloodReliable() {

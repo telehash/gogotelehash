@@ -15,7 +15,7 @@ var (
 )
 
 type Cipher interface {
-	DecodeKey(s string) (Key, error)
+	DecodeKey(pub, prv string) (Key, error)
 	GenerateKey() (Key, error)
 
 	DecryptMessage(localKey, remoteKey Key, p []byte) (uint32, []byte, error)
@@ -54,7 +54,8 @@ type Handshake interface {
 
 type Key interface {
 	String() string
-	Bytes() []byte
+	Public() []byte
+	Private() []byte
 	CanSign() bool
 	CanEncrypt() bool
 }

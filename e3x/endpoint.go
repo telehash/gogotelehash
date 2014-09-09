@@ -257,7 +257,7 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	}
 
 	token = handshake.Token()
-	hn, err = hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Bytes(), handshake.Parts())
+	hn, err = hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
 		return // DROP
 	}

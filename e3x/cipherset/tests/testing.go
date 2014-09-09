@@ -121,7 +121,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	seq, hb, err = c.DecryptHandshake(kb, box)
 	assert.NoError(err)
 	assert.NotNil(hb)
-	assert.Equal(ka.Bytes(), hb.PublicKey().Bytes())
+	assert.Equal(ka.Public(), hb.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
 	assert.Equal(1, seq)
 
@@ -152,7 +152,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	seq, ha, err = c.DecryptHandshake(ka, box)
 	assert.NoError(err)
 	assert.NotNil(ha)
-	assert.Equal(kb.Bytes(), ha.PublicKey().Bytes())
+	assert.Equal(kb.Public(), ha.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, ha.Parts())
 	assert.Equal(1, seq)
 

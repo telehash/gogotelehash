@@ -435,10 +435,10 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 				// tracef("W-BUF->DEL(%d)", i)
 				delete(c.writeBuffer, uint32(i))
 			}
-		}
 
-		if hasMiss {
-			c.process_missing_packets(miss)
+			if hasMiss {
+				c.process_missing_packets(ack, miss)
+			}
 		}
 	}
 
@@ -573,10 +573,14 @@ func (c *Channel) close(op *opCloseChannel) {
 }
 
 func (c *Channel) buildMissList() []uint32 {
-	var miss = make([]uint32, 0, 50)
+	var (
+		miss = make([]uint32, 0, 50)
+		last = c.iSeq
+	)
 	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
 		if _, p := c.readBuffer[uint32(i)]; !p {
-			miss = append(miss, uint32(i))
+			miss = append(miss, uint32(i-last))
+			last = i
 		}
 	}
 	if len(miss) > 100 {
@@ -585,15 +589,19 @@ func (c *Channel) buildMissList() []uint32 {
 	return miss
 }
 
-func (c *Channel) process_missing_packets(miss []uint32) {
+func (c *Channel) process_missing_packets(ack uint32, miss []uint32) {
 	var (
 		omiss       = c.buildMissList()
 		now         = time.Now()
 		one_sec_ago = now.Add(-1 * time.Second)
+		last        = ack
 	)
 
 	// tracef("MISS: %v", miss)
-	for _, seq := range miss {
+	for _, delta := range miss {
+		seq := last + delta
+		last = seq
+
 		e, f := c.writeBuffer[seq]
 		if !f || e == nil {
 			continue
