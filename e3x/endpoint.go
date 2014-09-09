@@ -8,6 +8,8 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
@@ -39,10 +41,13 @@ type Endpoint struct {
 	cDeliverPacket   chan *opDeliverPacket
 	cReceivePacket   chan *opReceivePacket
 	cCloseChannel    chan *opCloseChannel
+	cLookupAddr      chan *opLookupAddr
+	cEventIn         chan events.E
 	tokens           map[cipherset.Token]*exchange
 	hashnames        map[hashname.H]*exchange
 	scheduler        *scheduler.Scheduler
 	handlers         map[string]Handler
+	subscribers      events.Hub
 }
 
 type Handler interface {
@@ -64,8 +69,21 @@ type opDialExchange struct {
 	cErr chan error
 }
 
+type opLookupAddr struct {
+	hashname hashname.H
+	cAddr    chan *Addr
+}
+
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	return &Endpoint{keys: keys, transportConfig: tc, handlers: make(map[string]Handler)}
+}
+
+func (e *Endpoint) Subscribe(c chan<- events.E) {
+	e.subscribers.Subscribe(c)
+}
+
+func (e *Endpoint) Unsubscribe(c chan<- events.E) {
+	e.subscribers.Unubscribe(c)
 }
 
 func (e *Endpoint) AddHandler(typ string, h Handler) {
@@ -106,12 +124,14 @@ func (e *Endpoint) start() error {
 	e.cDeliverPacket = make(chan *opDeliverPacket)
 	e.cReceivePacket = make(chan *opReceivePacket)
 	e.cCloseChannel = make(chan *opCloseChannel)
+	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
+	e.cEventIn = make(chan events.E)
 
 	e.scheduler = scheduler.New()
 	e.scheduler.Start()
 
-	t, err := e.transportConfig.Open()
+	t, err := e.transportConfig.Open(e.cEventIn)
 	if err != nil {
 		e.err = err
 		return err
@@ -151,6 +171,7 @@ func (e *Endpoint) stop() error {
 	e.scheduler.Stop()
 
 	e.wg.Wait()
+
 	return e.err
 }
 
@@ -164,6 +185,8 @@ func (e *Endpoint) run() {
 			op.Exec()
 
 		case <-e.cTerminate:
+			close(e.cEventIn)
+			e.cEventIn = nil
 			e.cTerminate <- struct{}{}
 			return
 
@@ -185,6 +208,12 @@ func (e *Endpoint) run() {
 		case op := <-e.cCloseChannel:
 			op.ch.close(op)
 
+		case op := <-e.cLookupAddr:
+			e.lookup_addr(op)
+
+		case evt := <-e.cEventIn:
+			e.subscribers.Emit(evt)
+
 		}
 	}
 }
@@ -193,14 +222,14 @@ func (e *Endpoint) run_receiver() {
 	defer e.wg.Done()
 
 	for {
-		var buf = transports.GetBuffer()
+		var buf = bufpool.GetBuffer()
 		n, addr, err := e.transport.Receive(buf)
 		if err == transports.ErrClosed {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			break
 		}
 		if err != nil {
-			transports.PutBuffer(buf)
+			bufpool.PutBuffer(buf)
 			continue // report error
 		}
 
@@ -209,7 +238,7 @@ func (e *Endpoint) run_receiver() {
 }
 
 func (e *Endpoint) received(op opReceived) {
-	defer transports.PutBuffer(op.data)
+	defer bufpool.PutBuffer(op.data)
 
 	pkt, err := lob.Decode(op.data)
 	if err != nil {
@@ -279,9 +308,11 @@ func (e *Endpoint) received_handshake(op opReceived) {
 			ex.reschedule_handshake()
 			e.tokens[token] = ex
 			e.hashnames[hn] = ex
+			e.subscribers.Emit(&ExchangeOpenedEvent{hn, false})
 		} else if e.tokens[token] == nil {
 			ex.reset_expire()
 			e.tokens[token] = ex
+			e.subscribers.Emit(&ExchangeOpenedEvent{hn, true})
 		}
 	}
 }
@@ -342,6 +373,8 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 
 	x.hashname = op.addr.hashname
 	x.csid = csid
+	x.keys = op.addr.keys
+	x.parts = op.addr.parts
 
 	cipher, err = cipherset.NewState(csid, e.key_for_cs(csid))
 	if err != nil {
@@ -374,6 +407,41 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 
 func (e *Endpoint) key_for_cs(csid uint8) cipherset.Key {
 	return e.keys[csid]
+}
+
+func (e *Endpoint) Resolve(hn hashname.H) (*Addr, error) {
+	var (
+		addr *Addr
+	)
+
+	if addr == nil {
+		op := opLookupAddr{hashname: hn, cAddr: make(chan *Addr)}
+		e.cLookupAddr <- &op
+		addr = <-op.cAddr
+	}
+
+	if addr == nil {
+		return nil, ErrNoAddress
+	}
+
+	return addr, nil
+}
+
+func (e *Endpoint) lookup_addr(op *opLookupAddr) {
+	ex, found := e.hashnames[op.hashname]
+	if !found || ex == nil {
+		op.cAddr <- nil
+		return
+	}
+
+	addr, err := NewAddr(ex.knownKeys(), ex.knownParts(), ex.addressBook.KnownAddresses())
+	if err != nil {
+		tracef("error: %s", err)
+		op.cAddr <- nil
+		return
+	}
+
+	op.cAddr <- addr
 }
 
 func waitForError(c <-chan error) error {

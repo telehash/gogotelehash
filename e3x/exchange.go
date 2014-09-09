@@ -2,6 +2,7 @@ package e3x
 
 import (
 	"encoding/binary"
+	"math/rand"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
@@ -33,6 +34,8 @@ type exchange struct {
 	next_seq        uint32
 	token           cipherset.Token
 	hashname        hashname.H
+	keys            cipherset.Keys
+	parts           cipherset.Parts
 	csid            uint8
 	cipher          cipherset.State
 	qDial           []*opDialExchange
@@ -56,6 +59,14 @@ func newExchange(e *Endpoint) *exchange {
 	x.tBreak = e.scheduler.NewEvent(x.on_break)
 	x.tDeliverHandshake = e.scheduler.NewEvent(x.on_deliver_handshake)
 	return x
+}
+
+func (e *exchange) knownKeys() cipherset.Keys {
+	return e.keys
+}
+
+func (e *exchange) knownParts() cipherset.Parts {
+	return e.parts
 }
 
 func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handshake) bool {
@@ -93,8 +104,16 @@ func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handsha
 		return false
 	}
 
+	if e.keys == nil {
+		e.keys = cipherset.Keys{e.csid: handshake.PublicKey()}
+	}
+	if e.parts == nil {
+		e.parts = handshake.Parts()
+	}
+
 	if seq > e.last_seq {
 		e.deliver_handshake(seq, op.addr)
+		e.addressBook.AddAddress(op.addr)
 	} else {
 		e.addressBook.ReceivedHandshake(op.addr)
 	}
@@ -125,7 +144,7 @@ func (e *exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 	if addr != nil {
 		addrs = append(addrs, addr)
 	} else {
-		addrs = e.addressBook.KnownAddresses()
+		addrs = e.addressBook.HandshakeAddresses()
 		e.addressBook.NextHandshakeEpoch()
 	}
 
@@ -160,6 +179,11 @@ func (e *exchange) reschedule_handshake() {
 	} else {
 		e.nextHandshake = e.nextHandshake * 2
 	}
+
+	if n := e.nextHandshake / 3; n > 0 {
+		e.nextHandshake -= rand.Intn(n)
+	}
+
 	e.tDeliverHandshake.ScheduleAfter(time.Duration(e.nextHandshake) * time.Second)
 }
 
@@ -214,9 +238,11 @@ func (e *exchange) deliver_packet(pkt *lob.Packet) {
 		return
 	}
 
-	err = e.endpoint.deliver(pkt, e.addressBook.ActiveAddress())
+	addr := e.addressBook.ActiveAddress()
+
+	err = e.endpoint.deliver(pkt, addr)
 	if err != nil {
-		tracef("snd err=%s", err)
+		tracef("snd err=%s (to=%s)", err, addr)
 		// report?
 		return
 	}
@@ -245,6 +271,8 @@ func (e *exchange) expire(err error) {
 	for _, c := range e.channels {
 		c.on_close_deadline_reached()
 	}
+
+	e.endpoint.subscribers.Emit(&ExchangeClosedEvent{e.hashname, err})
 }
 
 func (e *exchange) getNextSeq() uint32 {

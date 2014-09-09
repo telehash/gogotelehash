@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net"
+	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/transports/nat"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 func init() {
@@ -27,14 +31,16 @@ type addr struct {
 }
 
 type transport struct {
-	net   string
-	laddr *net.UDPAddr
-	dest  *net.IPNet
-	c     *net.UDPConn
+	net       string
+	laddr     *net.UDPAddr
+	dest      *net.IPNet
+	c         *net.UDPConn
+	cEventOut chan<- events.E
 }
 
 var (
 	_ transports.Addr      = (*addr)(nil)
+	_ nat.NATableAddr      = (*addr)(nil)
 	_ transports.Transport = (*transport)(nil)
 	_ transports.Config    = Config{}
 )
@@ -44,7 +50,7 @@ const (
 	UDPv6 = "udp6"
 )
 
-func (c Config) Open() (transports.Transport, error) {
+func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 	var (
 		ipnet *net.IPNet
 		addr  *net.UDPAddr
@@ -106,7 +112,63 @@ func (c Config) Open() (transports.Transport, error) {
 
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
-	return &transport{c.Network, addr, ipnet, conn}, nil
+	t := &transport{c.Network, addr, ipnet, conn, e}
+
+	go t.detect_network_changes()
+
+	return t, nil
+}
+
+func (t *transport) detect_network_changes() {
+	var (
+		ticker = time.NewTicker(2 * time.Second)
+		prev   map[string]transports.Addr
+	)
+
+	defer ticker.Stop()
+
+	{
+		addrs := t.LocalAddresses()
+		prev = make(map[string]transports.Addr, len(addrs))
+		for _, a := range addrs {
+			prev[a.String()] = a
+		}
+
+		events.Emit(t.cEventOut, &transports.NetworkChangeEvent{Up: addrs})
+	}
+
+	for _ = range ticker.C {
+		var (
+			addrs = t.LocalAddresses()
+			next  = make(map[string]transports.Addr, len(addrs))
+			event = &transports.NetworkChangeEvent{}
+		)
+
+		for _, a := range addrs {
+			key := a.String()
+			next[key] = a
+			if b, p := prev[key]; !p || b == nil {
+				event.Up = append(event.Up, a)
+			}
+		}
+
+		for k, a := range prev {
+			if b, p := next[k]; !p || b == nil {
+				event.Down = append(event.Down, a)
+			}
+		}
+
+		prev = next
+
+		if len(event.Up) == 0 && len(event.Down) == 0 {
+			continue
+		}
+
+		if !events.Emit(t.cEventOut, event) {
+			log.Printf("exit detect_network_changes()")
+			break
+		}
+	}
 }
 
 func (t *transport) CanHandleAddress(a transports.Addr) bool {
@@ -215,6 +277,13 @@ func (t *transport) LocalAddresses() []transports.Addr {
 			case *net.IPNet:
 				ip = x.IP
 				zone = ""
+			}
+
+			if ip.IsMulticast() ||
+				ip.IsUnspecified() ||
+				ip.IsInterfaceLocalMulticast() ||
+				ip.IsLinkLocalMulticast() {
+				continue
 			}
 
 			switch t.net {
@@ -330,4 +399,24 @@ func (a *addr) String() string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func (a *addr) InternalAddr() (proto string, ip net.IP, port int) {
+	if a == nil ||
+		a.IP.IsLoopback() ||
+		a.IP.IsMulticast() ||
+		a.IP.IsUnspecified() ||
+		a.IP.IsInterfaceLocalMulticast() ||
+		a.IP.IsLinkLocalMulticast() {
+		return "", nil, -1
+	}
+	return "udp", a.IP, a.Port
+}
+
+func (a *addr) MakeGlobal(ip net.IP, port int) transports.Addr {
+	if a == nil {
+		return nil
+	}
+
+	return &addr{a.net, net.UDPAddr{IP: ip, Port: port}}
 }

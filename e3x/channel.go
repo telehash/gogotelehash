@@ -9,6 +9,7 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/util/events"
 	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
@@ -75,6 +76,7 @@ type Channel struct {
 	cCloseChannel      chan *opCloseChannel
 	fDeliverPacket     func(*lob.Packet)
 	fUnregisterChannel func(*Channel)
+	subscribers        *events.Hub // belongs to endpoint
 
 	readBuffer  map[uint32]*readBufferEntry
 	writeBuffer map[uint32]*writeBufferEntry
@@ -141,6 +143,10 @@ func newChannel(hn hashname.H, typ string, reliable bool, serverside bool) *Chan
 	}
 }
 
+func (c *Channel) RemoteHashname() hashname.H {
+	return c.hashname
+}
+
 func (c *Channel) register_with_scheduler(s *scheduler.Scheduler) {
 	c.tReadDeadline = s.NewEvent(c.on_read_deadline_reached)
 	c.tOpenDeadline = s.NewEvent(c.on_open_deadline_reached)
@@ -152,6 +158,7 @@ func (c *Channel) register_with_endpoint(e *Endpoint) {
 	c.cDeliverPacket = e.cDeliverPacket
 	c.cReceivePacket = e.cReceivePacket
 	c.cCloseChannel = e.cCloseChannel
+	c.subscribers = &e.subscribers
 }
 
 func (c *Channel) register_with_exchange(x *exchange) {
@@ -735,6 +742,7 @@ func (c *Channel) unregister() {
 	c.tOpenDeadline.Cancel()
 	c.tReadDeadline.Cancel()
 	c.fUnregisterChannel(c)
+	c.subscribers.Emit(&ChannelClosedEvent{c})
 }
 
 func (e *Endpoint) register_channel(op *opRegisterChannel) error {
@@ -761,6 +769,8 @@ func (x *exchange) register_channel(ch *Channel) error {
 	ch.register_with_exchange(x)
 	ch.register_with_endpoint(x.endpoint)
 	ch.register_with_scheduler(x.endpoint.scheduler)
+
+	x.endpoint.subscribers.Emit(&ChannelOpenedEvent{ch})
 
 	return nil
 }
