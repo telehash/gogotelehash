@@ -1,8 +1,11 @@
 package udp
 
 import (
+	"runtime"
 	"testing"
+	"time"
 
+	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/util/events"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,23 +20,35 @@ func TestLocalAddresses(t *testing.T) {
 		{Network: "udp6", Addr: ":0"},
 	}
 
-	var eventC = make(chan events.E)
-	go events.Log(nil, eventC)
+	{ // ensure we track the ticmer goroutine
+		t := time.NewTicker(50 * time.Second)
+		defer t.Stop()
+	}
+
+	var (
+		numgo = runtime.NumGoroutine()
+		e     = make(chan events.E)
+		w     chan transports.WriteOp
+		r     chan transports.ReadOp
+		done  <-chan struct{}
+	)
+	go events.Log(nil, e)
 
 	for _, factory := range tab {
-		trans, err := factory.Open(eventC)
+		trans, err := factory.Open()
 		assert.NoError(err)
+		assert.NotNil(trans)
 
-		addrs := trans.LocalAddresses()
-		assert.NotEmpty(addrs)
+		w = make(chan transports.WriteOp)
+		r = make(chan transports.ReadOp)
+		done = trans.Run(w, r, e)
 
-		t.Logf("addrs=%+v", addrs)
-
-		for _, addr := range addrs {
-			assert.True(trans.CanHandleAddress(addr), "should be able to handle addr: %s", addr)
-		}
-
-		err = trans.Close()
-		assert.NoError(err)
+		close(w)
+		<-done
 	}
+
+	close(e)
+	runtime.Gosched()
+
+	assert.Equal(numgo, runtime.NumGoroutine())
 }

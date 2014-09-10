@@ -1,17 +1,9 @@
 package mux
 
 import (
-	"errors"
-	"io"
-	"net"
-	"sync"
-
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
-
-var ErrmuxerTerminated = errors.New("transports: manager is terminated")
 
 var (
 	_ transports.Config    = Config{}
@@ -21,52 +13,14 @@ var (
 type Config []transports.Config
 
 type muxer struct {
-	wg  sync.WaitGroup
-	err error
-
 	transports []transports.Transport
-
-	cDeliver        chan *opDeliver
-	opReceive       *opReceive
-	cReceive        chan *opReceive
-	cReceived       chan *opReceived
-	cLocalAddresses chan *opLocalAddresses
-	cTerminate      chan struct{}
 }
 
-type opDeliver struct {
-	pkt  []byte
-	addr transports.Addr
-	cErr chan error
-}
-
-type opReceive struct {
-	buf   []byte
-	addr  transports.Addr
-	err   error
-	cWait chan struct{}
-}
-
-type opReceived struct {
-	pkt  []byte
-	addr transports.Addr
-}
-
-type opLocalAddresses struct {
-	cRes chan []transports.Addr
-}
-
-func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
+func (c Config) Open() (transports.Transport, error) {
 	m := &muxer{}
 
-	m.cDeliver = make(chan *opDeliver)
-	m.cReceive = make(chan *opReceive)
-	m.cReceived = make(chan *opReceived)
-	m.cLocalAddresses = make(chan *opLocalAddresses)
-	m.cTerminate = make(chan struct{})
-
 	for _, f := range c {
-		t, err := f.Open(e)
+		t, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
@@ -74,223 +28,66 @@ func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 		m.transports = append(m.transports, t)
 	}
 
-	// run the receivers
-	for _, t := range m.transports {
-		m.wg.Add(1)
-		go m.run_receiver(t)
-	}
-
-	m.wg.Add(1)
-	go m.run() // Run the main loop
-
 	return m, nil
 }
 
-func (m *muxer) CanHandleAddress(a transports.Addr) bool {
-	for _, t := range m.transports {
-		if t.CanHandleAddress(a) {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *muxer) Close() error {
-	if detectClosed(func() { m.cTerminate <- struct{}{} }) {
-		return transports.ErrClosed
-	}
-
-	// wait until terminated
-	m.wg.Wait()
-
-	return m.err
-}
-
-func (m *muxer) close() {
-	if m.opReceive != nil {
-		m.opReceive.err = transports.ErrClosed
-		m.opReceive.cWait <- struct{}{}
-		m.opReceive = nil
-	}
+func (m *muxer) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, e chan<- events.E) <-chan struct{} {
+	var (
+		done = make(chan struct{})
+		tws  = make([]chan transports.WriteOp, 0, len(m.transports))
+		tds  = make([]<-chan struct{}, 0, len(m.transports))
+	)
 
 	for _, t := range m.transports {
-		err := t.Close()
-		if err != nil && m.err == nil {
-			m.err = err
-		}
+		tw := make(chan transports.WriteOp)
+		td := t.Run(tw, r, e)
+		tws = append(tws, tw)
+		tds = append(tds, td)
 	}
 
-	close(m.cDeliver)
-	close(m.cReceive)
-	close(m.cReceived)
-	close(m.cTerminate)
-	close(m.cLocalAddresses)
+	go m.dispatch(w, tws)
+	go m.wait_for_done(done, tds)
+
+	return done
 }
 
-func (m *muxer) run() {
-	defer m.wg.Done()
-	defer m.close()
+func (m *muxer) dispatch(w <-chan transports.WriteOp, tws []chan transports.WriteOp) {
+	defer func() {
+		for _, tw := range tws {
+			close(tw)
+		}
+	}()
 
-	for {
-		var (
-			cReceive  = m.cReceive
-			cReceived = m.cReceived
-		)
+	var (
+		cErr chan error
+		sent bool
+	)
 
-		if m.opReceive != nil {
-			// waiting for packet
-			cReceive = nil
-		} else {
-			// waiting for receive call
-			cReceived = nil
+	for op := range w {
+		op.C, cErr = make(chan error), op.C
+		sent = false
+
+		for _, tw := range tws {
+			tw <- op
+			err := <-op.C
+			if err == transports.ErrInvalidAddr {
+				continue
+			}
+			cErr <- err
+			sent = true
+			break
 		}
 
-		select {
-
-		case <-m.cTerminate:
-			return
-
-		case op := <-m.cLocalAddresses:
-			op.cRes <- m.localAddresses()
-
-		case op := <-m.cDeliver:
-			op.cErr <- m.deliver(op)
-
-		case op := <-cReceive:
-			m.receive(op)
-
-		case op := <-cReceived:
-			m.received(op)
-
+		if !sent {
+			cErr <- transports.ErrInvalidAddr
 		}
 	}
 }
 
-func (m *muxer) run_receiver(t transports.Transport) {
-	defer m.wg.Done()
+func (m *muxer) wait_for_done(done chan struct{}, tds []<-chan struct{}) {
+	defer close(done)
 
-	for {
-		var (
-			buf = bufpool.GetBuffer()
-			op  opReceived
-		)
-
-		n, addr, err := t.Receive(buf)
-		if err == transports.ErrClosed {
-			bufpool.PutBuffer(buf)
-			return
-		}
-		if err != nil {
-			// report error
-			bufpool.PutBuffer(buf)
-			continue
-		}
-
-		op = opReceived{buf[:n], addr}
-		if detectClosed(func() { m.cReceived <- &op }) {
-			return
-		}
+	for _, td := range tds {
+		<-td
 	}
-}
-
-func (m *muxer) Deliver(pkt []byte, addr transports.Addr) error {
-	op := opDeliver{pkt, addr, make(chan error)}
-
-	if detectClosed(func() { m.cDeliver <- &op }) {
-		return transports.ErrClosed
-	}
-
-	return <-op.cErr
-}
-
-func (m *muxer) deliver(op *opDeliver) error {
-	// tracef("Deliver(%q)", op)
-
-	if op.addr == nil {
-		return net.UnknownNetworkError("no address")
-	}
-
-	var errs []error
-
-	for _, t := range m.transports {
-		if !t.CanHandleAddress(op.addr) {
-			continue
-		}
-
-		err := t.Deliver(op.pkt, op.addr)
-		if err != nil {
-			errs = append(errs, err)
-		} else {
-			return nil
-		}
-	}
-
-	if len(errs) == 0 {
-		return net.UnknownNetworkError(op.addr.String())
-	}
-
-	return errs[0]
-}
-
-func (m *muxer) Receive(p []byte) (int, transports.Addr, error) {
-	op := opReceive{buf: p, cWait: make(chan struct{})}
-
-	if detectClosed(func() { m.cReceive <- &op }) {
-		return 0, nil, transports.ErrClosed
-	}
-
-	<-op.cWait
-
-	if len(op.buf) > len(p) {
-		bufpool.PutBuffer(op.buf)
-		return 0, op.addr, io.ErrShortBuffer
-	}
-
-	copy(p, op.buf)
-	n := len(op.buf)
-
-	if op.buf != nil {
-		bufpool.PutBuffer(op.buf)
-	}
-
-	return n, op.addr, op.err
-}
-
-func (m *muxer) receive(op *opReceive) {
-	// tracef("Receive(%q)", op)
-
-	m.opReceive = op
-}
-
-func (m *muxer) received(op *opReceived) {
-	// tracef("Received(%q)", op)
-
-	m.opReceive.addr = op.addr
-	m.opReceive.buf = op.pkt
-	m.opReceive.cWait <- struct{}{}
-	m.opReceive = nil
-}
-
-func (m *muxer) LocalAddresses() []transports.Addr {
-	op := opLocalAddresses{make(chan []transports.Addr)}
-
-	if detectClosed(func() { m.cLocalAddresses <- &op }) {
-		return nil
-	}
-
-	return <-op.cRes
-}
-
-func (m *muxer) localAddresses() []transports.Addr {
-	var res []transports.Addr
-	for _, t := range m.transports {
-		res = append(res, t.LocalAddresses()...)
-	}
-	return res
-}
-
-func detectClosed(f func()) (closed bool) {
-	defer func() { closed = recover() != nil }()
-	f()
-	return false
 }

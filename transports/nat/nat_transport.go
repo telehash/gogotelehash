@@ -1,9 +1,8 @@
 package nat
 
 import (
-	"bytes"
+	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
@@ -17,6 +16,7 @@ var (
 )
 
 type NATableAddr interface {
+	transports.Addr
 	InternalAddr() (proto string, ip net.IP, port int)
 	MakeGlobal(ip net.IP, port int) transports.Addr
 }
@@ -26,177 +26,290 @@ type Config struct {
 }
 
 type transport struct {
-	wg          sync.WaitGroup
-	mtx         sync.Mutex
-	t           transports.Transport
-	mappedAddrs []transports.Addr
-	nat         nat.NAT
-	cEventIn    chan events.E
-	cEventOut   chan<- events.E
-	cTerminate  chan struct{}
-	err         error
+	t       transports.Transport
+	nat     nat.NAT
+	mapping map[string]transports.Addr
 }
 
-func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
-	nt := &transport{
-		cEventIn:   make(chan events.E),
-		cEventOut:  e,
-		cTerminate: make(chan struct{}),
-	}
-
-	t, err := c.Config.Open(nt.cEventIn)
+func (c Config) Open() (transports.Transport, error) {
+	t, err := c.Config.Open()
 	if err != nil {
 		return nil, err
 	}
 
-	nt.t = t
-	nt.mappedAddrs = nt.refresh()
-	nt.wg.Add(1)
-	go nt.run()
-
-	return nt, nil
+	return &transport{t: t}, nil
 }
 
-func (t *transport) Close() error {
-	detectClosed(func() { t.cTerminate <- struct{}{} })
-	t.wg.Wait()
-	return t.err
+func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, out chan<- events.E) <-chan struct{} {
+	var (
+		in   = make(chan events.E)
+		done = t.t.Run(w, r, in)
+	)
+
+	go t.run_mapper(done, in, out)
+
+	return done
 }
 
-func (t *transport) close() {
-	t.err = t.t.Close()
-	close(t.cEventIn)
-	close(t.cTerminate)
+func (t *transport) run_mapper(done <-chan struct{}, in <-chan events.E, out chan<- events.E) {
+	var (
+		closed bool
+	)
+
+	for !closed {
+		if t.nat == nil {
+			closed = t.run_discover_mode(done, in, out)
+		} else {
+			closed = t.run_mapping_mode(done, in, out)
+		}
+	}
 }
 
-func (t *transport) CanHandleAddress(addr transports.Addr) bool {
-	return t.t.CanHandleAddress(addr)
-}
-
-func (t *transport) LocalAddresses() []transports.Addr {
-	t.mtx.Lock()
-	m := t.mappedAddrs
-	t.mtx.Unlock()
-
-	return append(m, t.t.LocalAddresses()...)
-}
-
-func (t *transport) Deliver(pkt []byte, to transports.Addr) error {
-	return t.t.Deliver(pkt, to)
-}
-
-func (t *transport) Receive(b []byte) (int, transports.Addr, error) {
-	return t.t.Receive(b)
-}
-
-func (t *transport) run() {
-	defer t.wg.Done()
-	ticker := time.NewTicker(30 * time.Second)
+func (t *transport) run_discover_mode(done <-chan struct{}, in <-chan events.E, out chan<- events.E) bool {
+	var ticker = time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 
 	for {
 		select {
 
-		case <-t.cTerminate:
-			t.close()
-			return
+		case _, closed := <-done:
+			if closed {
+				return true // done
+			}
 
-		case evt := <-t.cEventIn:
-			events.Emit(t.cEventOut, evt)
+		case evt := <-in:
+			if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
+				t.discover_nat()
+				t.handle_event(x, out)
+			}
+			out <- evt
 
 		case <-ticker.C:
-			m := t.refresh()
-			t.mtx.Lock()
-			t.mappedAddrs = m
-			t.mtx.Unlock()
+			t.discover_nat()
 
 		}
+
+		if t.nat != nil {
+			return false // not done
+		}
 	}
+
+	panic("unreachable")
 }
 
-func (t *transport) refresh() []transports.Addr {
-	var (
-		mappedAddrs []transports.Addr
-	)
+func (t *transport) run_mapping_mode(done <-chan struct{}, in <-chan events.E, out chan<- events.E) bool {
+	var ticker = time.NewTicker(50 * time.Minute)
+	defer ticker.Stop()
 
-	if t.nat == nil {
-		n, err := nat.Discover()
-		if err != nil {
-			tracef("NAT: no gateway was found. (%s)", err)
-			return nil
+	t.mapping = make(map[string]transports.Addr)
+
+	for {
+		select {
+
+		case _, closed := <-done:
+			if closed {
+				return true // done
+			}
+
+		case evt := <-in:
+			if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
+				t.handle_event(x, out)
+			}
+			out <- evt
+
+		case <-ticker.C:
+			t.refresh_mapping(out)
+
 		}
-		t.nat = n
+
+		if t.nat == nil {
+			if len(t.mapping) > 0 {
+				evt := &transports.NetworkChangeEvent{}
+				for _, addr := range t.mapping {
+					evt.Down = append(evt.Down, addr)
+				}
+				out <- evt
+			}
+
+			t.mapping = nil
+			return false // not done
+		}
 	}
 
-	gateway_ip, err := t.nat.GetDeviceAddress()
+	panic("unreachable")
+}
+
+func (t *transport) discover_nat() {
+	nat, err := nat.Discover()
 	if err != nil {
-		tracef("NAT: gateway is broken (%s)", err)
-		t.nat = nil
-		return nil
+		return
 	}
+
+	_, err = nat.GetDeviceAddress()
+	if err != nil {
+		return
+	}
+
+	t.nat = nat
+}
+
+func (t *transport) handle_event(evt *transports.NetworkChangeEvent, out chan<- events.E) {
+	var (
+		down []transports.Addr
+		up   []transports.Addr
+	)
 
 	external_ip, err := t.nat.GetExternalAddress()
 	if err != nil {
-		tracef("NAT: gateway is broken (%s)", err)
 		t.nat = nil
-		return nil
+		return
 	}
 
 	internal_ip, err := t.nat.GetInternalAddress()
 	if err != nil {
-		tracef("NAT: gateway is broken (%s)", err)
 		t.nat = nil
-		return nil
+		return
 	}
 
-	internal_ip = internal_ip.To16()
-	tracef("NAT: Using gateway %s (internal=%s external=%s)", gateway_ip, internal_ip, external_ip)
-
-	for _, addr := range t.t.LocalAddresses() {
+	// unmap old addrs
+	for _, addr := range evt.Down {
 		nataddr, ok := addr.(NATableAddr)
 		if !ok {
-			tracef("NAT: not a nat address: %s", addr)
 			continue
 		}
 
 		proto, ip, internal_port := nataddr.InternalAddr()
 		if proto == "" || ip == nil || internal_port <= 0 {
-			tracef("NAT: not a nat address: %s", addr)
 			continue
 		}
 
-		if !bytes.Equal(ip.To16(), internal_ip) {
-			tracef("NAT: not a nat address: %s (internal=%s)", ip, internal_ip)
+		key := mappingKey(proto, ip, internal_port)
+		globaladdr := t.mapping[key]
+		if globaladdr != nil {
+			down = append(down, globaladdr)
+			delete(t.mapping, key)
+			t.nat.DeletePortMapping(proto, internal_port)
+		}
+	}
+
+	// map new addrs
+	for _, addr := range evt.Up {
+		nataddr, ok := addr.(NATableAddr)
+		if !ok {
 			continue
 		}
 
-		tracef("NAT: mapping %s", addr)
-		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Second)
+		proto, ip, internal_port := nataddr.InternalAddr()
+		if proto == "" || ip == nil || internal_port <= 0 {
+			continue
+		}
+
+		key := mappingKey(proto, ip, internal_port)
+		if t.mapping[key] != nil {
+			continue
+		}
+
+		if !ip.Equal(internal_ip) {
+			continue
+		}
+
+		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Minute)
 		if err != nil {
-			tracef("NAT: failed to map %s %d", internal_ip, internal_port)
 			continue
 		}
 
 		globaddr := nataddr.MakeGlobal(external_ip, external_port)
 		if globaddr == nil {
-			tracef("NAT: failed to map %s %d", internal_ip, internal_port)
-			t.nat.DeletePortMapping(proto, internal_port)
 			continue
 		}
 
-		tracef("NAT: mapped %s to %s", addr, globaddr)
-		mappedAddrs = append(mappedAddrs, globaddr)
+		t.mapping[key] = globaddr
+		up = append(up, globaddr)
 	}
 
-	if len(mappedAddrs) == 0 {
-		tracef("NAT: no mappable addresses")
+	if len(up) > 0 || len(down) > 0 {
+		out <- &transports.NetworkChangeEvent{
+			Up:   up,
+			Down: down,
+		}
 	}
-
-	return mappedAddrs
 }
 
-func detectClosed(f func()) (closed bool) {
-	defer func() { closed = recover() != nil }()
-	f()
-	return false
+func (t *transport) refresh_mapping(out chan<- events.E) {
+	var (
+		up       []transports.Addr
+		down     []transports.Addr
+		droplist []string
+	)
+
+	external_ip, err := t.nat.GetExternalAddress()
+	if err != nil {
+		t.nat = nil
+		return
+	}
+
+	internal_ip, err := t.nat.GetInternalAddress()
+	if err != nil {
+		t.nat = nil
+		return
+	}
+
+	// map new addrs
+	for key, addr := range t.mapping {
+		nataddr, ok := addr.(NATableAddr)
+		if !ok {
+			droplist = append(droplist, key)
+			down = append(down, addr)
+			continue
+		}
+
+		proto, ip, internal_port := nataddr.InternalAddr()
+		if proto == "" || ip == nil || internal_port <= 0 {
+			droplist = append(droplist, key)
+			down = append(down, addr)
+			continue
+		}
+
+		if !ip.Equal(internal_ip) {
+			droplist = append(droplist, key)
+			down = append(down, addr)
+			continue
+		}
+
+		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Minute)
+		if err != nil {
+			droplist = append(droplist, key)
+			down = append(down, addr)
+			continue
+		}
+
+		globaddr := nataddr.MakeGlobal(external_ip, external_port)
+		if globaddr == nil {
+			droplist = append(droplist, key)
+			down = append(down, addr)
+			continue
+		}
+
+		if !transports.EqualAddr(addr, globaddr) {
+			up = append(up, globaddr)
+			down = append(down, addr)
+		}
+
+		t.mapping[key] = globaddr
+	}
+
+	for _, key := range droplist {
+		delete(t.mapping, key)
+	}
+
+	if len(up) > 0 || len(down) > 0 {
+		out <- &transports.NetworkChangeEvent{
+			Up:   up,
+			Down: down,
+		}
+	}
+}
+
+func mappingKey(proto string, ip net.IP, internal_port int) string {
+	return fmt.Sprintf("%s:%s:%d", proto, ip, internal_port)
 }

@@ -1,16 +1,15 @@
 package udp
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"net"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/transports/nat"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
@@ -31,11 +30,10 @@ type addr struct {
 }
 
 type transport struct {
-	net       string
-	laddr     *net.UDPAddr
-	dest      *net.IPNet
-	c         *net.UDPConn
-	cEventOut chan<- events.E
+	net   string
+	laddr *net.UDPAddr
+	dest  *net.IPNet
+	c     *net.UDPConn
 }
 
 var (
@@ -50,7 +48,7 @@ const (
 	UDPv6 = "udp6"
 )
 
-func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
+func (c Config) Open() (transports.Transport, error) {
 	var (
 		ipnet *net.IPNet
 		addr  *net.UDPAddr
@@ -112,108 +110,161 @@ func (c Config) Open(e chan<- events.E) (transports.Transport, error) {
 
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
-	t := &transport{c.Network, addr, ipnet, conn, e}
-
-	go t.detect_network_changes()
-
-	return t, nil
+	return &transport{c.Network, addr, ipnet, conn}, nil
 }
 
-func (t *transport) detect_network_changes() {
+func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, e chan<- events.E) <-chan struct{} {
 	var (
-		ticker = time.NewTicker(2 * time.Second)
-		prev   map[string]transports.Addr
+		stop = make(chan struct{})
+		done = make(chan struct{})
 	)
 
+	go t.run_writer(w, stop)
+	go t.run_reader(r)
+	go t.run_network_change_detector(e, stop, done)
+
+	return done
+}
+
+func (t *transport) run_writer(w <-chan transports.WriteOp, done chan struct{}) {
+	defer func() {
+		t.c.Close()
+		close(done)
+	}()
+
+	for op := range w {
+		a, ok := op.Dst.(*addr)
+		if !ok || a == nil {
+			op.C <- transports.ErrInvalidAddr
+			continue
+		}
+
+		if a.net != t.net {
+			op.C <- transports.ErrInvalidAddr
+			continue
+		}
+
+		if !t.dest.Contains(a.IP) {
+			op.C <- transports.ErrInvalidAddr
+			continue
+		}
+
+		n, err := t.c.WriteToUDP(op.Msg, &a.UDPAddr)
+		if err != nil {
+			op.C <- err
+			continue
+		}
+
+		if n != len(op.Msg) {
+			op.C <- io.ErrShortWrite
+			continue
+		}
+
+		op.C <- nil
+	}
+}
+
+func (t *transport) run_reader(r chan<- transports.ReadOp) {
+	for {
+		b := bufpool.GetBuffer()
+
+		n, a, err := t.c.ReadFromUDP(b)
+		if err != nil {
+			if err.Error() == "use of closed network connection" {
+				return
+			}
+			// report error
+			// return 0, nil, err
+			continue
+		}
+
+		r <- transports.ReadOp{
+			Msg: b[:n],
+			Src: &addr{net: t.net, UDPAddr: *a},
+		}
+	}
+}
+
+func (t *transport) run_network_change_detector(e chan<- events.E, stop, done chan struct{}) {
+	var (
+		ticker = time.NewTicker(5 * time.Second)
+		prev   map[string]transports.Addr
+		event  *transports.NetworkChangeEvent
+	)
+
+	defer close(done)
 	defer ticker.Stop()
 
 	{
-		addrs := t.LocalAddresses()
+		addrs := t.local_addresses()
 		prev = make(map[string]transports.Addr, len(addrs))
 		for _, a := range addrs {
 			prev[a.String()] = a
 		}
 
-		events.Emit(t.cEventOut, &transports.NetworkChangeEvent{Up: addrs})
+		e <- &transports.NetworkChangeEvent{Up: addrs}
 	}
 
-	for _ = range ticker.C {
+	for {
 		var (
-			addrs = t.LocalAddresses()
-			next  = make(map[string]transports.Addr, len(addrs))
-			event = &transports.NetworkChangeEvent{}
+			c_timer  = ticker.C
+			c_events = e
 		)
 
-		for _, a := range addrs {
-			key := a.String()
-			next[key] = a
-			if b, p := prev[key]; !p || b == nil {
-				event.Up = append(event.Up, a)
-			}
+		if event == nil {
+			c_events = nil
+		} else {
+			c_timer = nil
 		}
 
-		for k, a := range prev {
-			if b, p := next[k]; !p || b == nil {
+		select {
+
+		case <-stop:
+			event = &transports.NetworkChangeEvent{}
+			for _, a := range prev {
 				event.Down = append(event.Down, a)
 			}
-		}
+			if len(event.Up) > 0 || len(event.Down) > 0 {
+				e <- event
+			}
+			return
 
-		prev = next
+		case c_events <- event:
+			event = nil
 
-		if len(event.Up) == 0 && len(event.Down) == 0 {
-			continue
-		}
+		case <-c_timer:
+			var (
+				addrs = t.local_addresses()
+				next  = make(map[string]transports.Addr, len(addrs))
+			)
 
-		if !events.Emit(t.cEventOut, event) {
-			log.Printf("exit detect_network_changes()")
-			break
+			event = &transports.NetworkChangeEvent{}
+
+			for _, a := range addrs {
+				key := a.String()
+				next[key] = a
+				if b, p := prev[key]; !p || b == nil {
+					event.Up = append(event.Up, a)
+				}
+			}
+
+			for k, a := range prev {
+				if b, p := next[k]; !p || b == nil {
+					event.Down = append(event.Down, a)
+				}
+			}
+
+			prev = next
+
+			if len(event.Up) == 0 && len(event.Down) == 0 {
+				event = nil
+			}
+
 		}
 	}
 }
 
-func (t *transport) CanHandleAddress(a transports.Addr) bool {
-	b, ok := a.(*addr)
-
-	if !ok || b == nil {
-		return false
-	}
-
-	if b.net != t.net {
-		return false
-	}
-
-	if !t.dest.Contains(b.IP) {
-		return false
-	}
-
-	return true
-}
-
-func decodeAddress(data []byte) (transports.Addr, error) {
-	var desc struct {
-		Type string `json:"type"`
-		IP   string `json:"ip"`
-		Port int    `json:"port"`
-	}
-
-	err := json.Unmarshal(data, &desc)
-	if err != nil {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	ip := net.ParseIP(desc.IP)
-	if ip == nil || ip.IsUnspecified() {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	if desc.Port <= 0 || desc.Port >= 65535 {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	return &addr{net: desc.Type, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
-}
-
-func (t *transport) LocalAddresses() []transports.Addr {
+func (t *transport) local_addresses() []transports.Addr {
 	var (
 		port  int
 		addrs []transports.Addr
@@ -319,42 +370,32 @@ func (t *transport) LocalAddresses() []transports.Addr {
 	return addrs
 }
 
-func (t *transport) Close() error {
-	err := t.c.Close()
-	return err
-}
-
-func (t *transport) Deliver(pkt []byte, to transports.Addr) error {
-	a, ok := to.(*addr)
-	if !ok || a == nil || a.net != t.net {
-		return transports.ErrInvalidAddr
-	}
-
-	n, err := t.c.WriteToUDP(pkt, &a.UDPAddr)
-	if err != nil {
-		return err
-	}
-
-	if n != len(pkt) {
-		return io.ErrShortWrite
-	}
-
-	return nil
-}
-
-func (t *transport) Receive(b []byte) (int, transports.Addr, error) {
-	n, a, err := t.c.ReadFromUDP(b)
-	if err != nil {
-		if err.Error() == "use of closed network connection" {
-			return 0, nil, transports.ErrClosed
-		}
-		return 0, nil, err
-	}
-	return n, &addr{net: t.net, UDPAddr: *a}, nil
-}
-
 func (a *addr) Network() string {
 	return a.net
+}
+
+func decodeAddress(data []byte) (transports.Addr, error) {
+	var desc struct {
+		Type string `json:"type"`
+		IP   string `json:"ip"`
+		Port int    `json:"port"`
+	}
+
+	err := json.Unmarshal(data, &desc)
+	if err != nil {
+		return nil, transports.ErrInvalidAddr
+	}
+
+	ip := net.ParseIP(desc.IP)
+	if ip == nil || ip.IsUnspecified() {
+		return nil, transports.ErrInvalidAddr
+	}
+
+	if desc.Port <= 0 || desc.Port >= 65535 {
+		return nil, transports.ErrInvalidAddr
+	}
+
+	return &addr{net: desc.Type, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
 }
 
 func (a *addr) MarshalJSON() ([]byte, error) {
@@ -370,27 +411,18 @@ func (a *addr) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&desc)
 }
 
-func (a *addr) Less(b transports.Addr) bool {
-	if a.net < b.Network() {
-		return true
-	} else if a.net > b.Network() {
+func (a *addr) Equal(x transports.Addr) bool {
+	b := x.(*addr)
+
+	if !a.IP.Equal(b.IP) {
 		return false
 	}
 
-	x := b.(*addr)
-	if i := bytes.Compare(a.IP.To16(), x.IP.To16()); i < 0 {
-		return true
-	} else if i > 0 {
+	if a.Port != b.Port {
 		return false
 	}
 
-	if a.Port < x.Port {
-		return true
-	} else if a.Port > x.Port {
-		return true
-	}
-
-	return false
+	return true
 }
 
 func (a *addr) String() string {
