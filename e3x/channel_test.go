@@ -3,6 +3,7 @@ package e3x
 import (
 	"io"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -55,6 +56,8 @@ func (c *channelTestSuite) SetupTest() {
 
 	err = c.B.Start()
 	assert.NoError(err)
+
+	time.Sleep(1 * time.Second)
 }
 
 func (c *channelTestSuite) TearDownTest() {

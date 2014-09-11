@@ -171,10 +171,9 @@ func (book *addressBook) updateActive() {
 
 func (book *addressBook) indexOf(addr transports.Addr) int {
 	for i, e := range book.known {
-		if e.Address.Less(addr) || addr.Less(e.Address) {
-			continue
+		if transports.EqualAddr(e.Address, addr) {
+			return i
 		}
-		return i
 	}
 	return -1
 }

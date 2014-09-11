@@ -37,6 +37,8 @@ func TestSimpleEndpoint(t *testing.T) {
 	err = eb.Start()
 	assert.NoError(err)
 
+	time.Sleep(1 * time.Second)
+
 	addrA, err := ea.LocalAddr()
 	assert.NoError(err)
 

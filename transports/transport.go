@@ -42,6 +42,39 @@ func EqualAddr(a, b Addr) bool {
 	return a.Equal(b)
 }
 
+type AddrSet []Addr
+
+func (a *AddrSet) Add(addr Addr) (added bool) {
+	if a.Index(addr) < 0 {
+		*a = append(*a, addr)
+		return true
+	}
+	return false
+}
+
+func (a *AddrSet) Remove(addr Addr) (removed bool) {
+	if idx := a.Index(addr); idx >= 0 {
+		s := *a
+		l := len(s)
+		if idx < l-1 {
+			copy(s[idx:], s[idx+1:])
+		}
+		*a = s[:l-1]
+		return true
+	}
+	return false
+}
+
+func (a *AddrSet) Index(addr Addr) int {
+	s := *a
+	for i, a := range s {
+		if EqualAddr(a, addr) {
+			return i
+		}
+	}
+	return -1
+}
+
 type NetworkChangeEvent struct {
 	Up   []Addr
 	Down []Addr
