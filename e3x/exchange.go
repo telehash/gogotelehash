@@ -232,7 +232,7 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 			return // drop (no handler)
 		}
 
-		c = newChannel(e.hashname, typ, hasSeq, true)
+		c = newChannel(e.hashname, typ, hasSeq, true, nil, nil)
 		c.id = cid
 		err = e.register_channel(c)
 		if err != nil {
@@ -286,11 +286,6 @@ func (e *exchange) expire(err error) {
 	// unregister
 	delete(e.endpoint.hashnames, e.hashname)
 	delete(e.endpoint.tokens, e.token)
-
-	// break channels
-	for _, c := range e.channels {
-		c.on_close_deadline_reached()
-	}
 
 	e.endpoint.subscribers.Emit(&ExchangeClosedEvent{e.hashname, err})
 }

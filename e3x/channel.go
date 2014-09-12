@@ -10,7 +10,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/util/events"
-	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
 type UnreachableEndpointError hashname.H
@@ -73,21 +72,22 @@ type Channel struct {
 
 	cChannelWrite  chan opChannelWrite
 	cChannelRead   chan opChannelRead
-	cExchangeWrite chan opExchangeWrite
-	cExchangeRead  chan opExchangeRead
+	cExchangeWrite chan<- opExchangeWrite
+	cExchangeRead  <-chan opExchangeRead
 	cChannelClose  chan opChannelClose
 
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
+	tReadDeadline  *time.Timer
+
+	subscribers *events.Hub // belongs to endpoint
 
 	// should be removed:
 	x                  *exchange
 	qClose             []*opChannelClose
 	fUnregisterChannel func(*Channel)
-	subscribers        *events.Hub // belongs to endpoint
 
-	tReadDeadline *scheduler.Event
-	lastSentAck   time.Time
+	lastSentAck time.Time
 }
 
 type opRegisterChannel struct {
@@ -121,39 +121,56 @@ type writeBufferEntry struct {
 	lastResend time.Time
 }
 
-func newChannel(hn hashname.H, typ string, reliable bool, serverside bool) *Channel {
+func newChannel(
+	hn hashname.H, typ string,
+	reliable bool, serverside bool,
+	w chan<- opExchangeWrite,
+	r <-chan opExchangeRead,
+) *Channel {
 	return &Channel{
-		hashname:      hn,
-		typ:           typ,
-		reliable:      reliable,
-		serverside:    serverside,
-		readBuffer:    make(map[uint32]*readBufferEntry, c_READ_BUFFER_SIZE),
-		writeBuffer:   make(map[uint32]*writeBufferEntry, c_WRITE_BUFFER_SIZE),
-		cChannelWrite: make(chan opChannelWrite),
-		cChannelRead:  make(chan opChannelRead),
-		cChannelClose: make(chan opChannelClose),
-		oSeq:          -1,
-		iBufferedSeq:  -1,
-		iSeenSeq:      -1,
-		iSeq:          -1,
-		oAckedSeq:     -1,
-		iAckedSeq:     -1,
+		hashname:       hn,
+		typ:            typ,
+		reliable:       reliable,
+		serverside:     serverside,
+		readBuffer:     make(map[uint32]*readBufferEntry, c_READ_BUFFER_SIZE),
+		writeBuffer:    make(map[uint32]*writeBufferEntry, c_WRITE_BUFFER_SIZE),
+		cChannelWrite:  make(chan opChannelWrite),
+		cChannelRead:   make(chan opChannelRead),
+		cChannelClose:  make(chan opChannelClose),
+		cExchangeWrite: w,
+		cExchangeRead:  r,
+		oSeq:           -1,
+		iBufferedSeq:   -1,
+		iSeenSeq:       -1,
+		iSeq:           -1,
+		oAckedSeq:      -1,
+		iAckedSeq:      -1,
 	}
 }
 
 func (c *Channel) run() {
 	defer func() {
+		c.tOpenDeadline.Stop()
+		c.tCloseDeadline.Stop()
+		c.tReadDeadline.Stop()
 		close(c.cChannelRead)
 		close(c.cChannelWrite)
+		close(c.cChannelClose)
+		tracef("Closed channel.")
 	}()
 
 	c.tOpenDeadline = time.NewTimer(60 * time.Second)
+	c.tCloseDeadline = time.NewTimer(60 * time.Second)
+	c.tCloseDeadline.Stop()
+	c.tReadDeadline = time.NewTimer(60 * time.Second)
+	c.tReadDeadline.Stop()
 
 	for {
 		var (
 			cChannelWrite = c.cChannelWrite
 			cChannelRead  = c.cChannelRead
 			cChannelClose = c.cChannelClose
+			opChannelRead opChannelRead
 		)
 
 		if c.block_write() {
@@ -162,6 +179,8 @@ func (c *Channel) run() {
 
 		if c.block_read() {
 			cChannelRead = nil
+		} else {
+			opChannelRead = c.peek_packet()
 		}
 
 		if c.block_close() {
@@ -173,14 +192,14 @@ func (c *Channel) run() {
 		case op := <-cChannelWrite:
 			c.deliver_packet(op)
 
-		case op, closed := <-c.cExchangeRead:
-			if closed {
+		case op, open := <-c.cExchangeRead:
+			if !open {
 				c.broken = true
-				return
+			} else {
+				c.received_packet(op.pkt)
 			}
-			c.received_packet(op.pkt)
 
-		case cChannelRead <- c.peek_packet():
+		case cChannelRead <- opChannelRead:
 			c.read_packet()
 
 		case op := <-cChannelClose:
@@ -190,16 +209,23 @@ func (c *Channel) run() {
 			c.broken = true
 			return
 
+		case <-c.tCloseDeadline.C:
+			c.broken = true
+			return
+
+		case <-c.tReadDeadline.C:
+			c.readDeadlineReached = true
+
+		}
+
+		if c.broken || c.readEnd && c.deliveredEnd && (!c.reliable || len(c.writeBuffer) == 0) {
+			break
 		}
 	}
 }
 
 func (c *Channel) RemoteHashname() hashname.H {
 	return c.hashname
-}
-
-func (c *Channel) register_with_scheduler(s *scheduler.Scheduler) {
-	c.tReadDeadline = s.NewEvent(c.on_read_deadline_reached)
 }
 
 func (c *Channel) register_with_endpoint(e *Endpoint) {
@@ -219,7 +245,7 @@ func (e *Endpoint) Dial(addr *Addr, typ string, reliable bool) (*Channel, error)
 		return nil, err
 	}
 
-	ch := newChannel(addr.hashname, typ, reliable, false)
+	ch := newChannel(addr.hashname, typ, reliable, false, nil, nil)
 
 	{ // register channel
 		op := opRegisterChannel{ch: ch, cErr: make(chan error)}
@@ -248,8 +274,8 @@ func (c *Channel) ReadPacket() (*lob.Packet, error) {
 		return nil, os.ErrInvalid
 	}
 
-	op, closed := <-c.cChannelRead
-	if closed {
+	op, ok := <-c.cChannelRead
+	if !ok {
 		return nil, io.EOF
 	}
 	if op.err != nil {
@@ -497,9 +523,6 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 	if !hasSeq {
 		// tracef("ReceivePacket() => drop // no seq")
 		// drop: is not a valid packet
-		if hasAck {
-			c.process_close_queue()
-		}
 		return
 	}
 
@@ -536,8 +559,6 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 
 	// tracef("ReceivePacket() => buffered")
 	c.readBuffer[seq] = &readBufferEntry{pkt, seq, end}
-
-	c.process_close_queue()
 }
 
 func (c *Channel) block_close() bool {
@@ -586,41 +607,6 @@ func (c *Channel) close(op opChannelClose) {
 		}
 	}
 
-	// flush all pending reads
-	if op.receive == nil {
-		op.receive = &opReceivePacket{c, nil, false, make(chan error, 1)}
-	}
-	for {
-		c.receive_packet(op.receive)
-
-		err := <-op.receive.cErr
-		if err == errDeferred {
-			// tracef("Close() => receive `end` deferred")
-			c.qClose = append(c.qClose, op)
-			op.cErr <- errDeferred
-			return
-		}
-		if err == io.EOF {
-			// tracef("Close() => received `end`")
-			break
-		}
-		if err != nil {
-			// tracef("Close() => receive `end` err: %s", err)
-			op.cErr <- err
-			return
-		}
-	}
-
-	if c.reliable && len(c.writeBuffer) > 0 {
-		// tracef("Close() // write buffer not empty")
-		c.qClose = append(c.qClose, op)
-		op.cErr <- errDeferred
-		return
-	}
-
-	// tracef("Close() // closed")
-
-	c.unregister()
 	op.cErr <- nil
 }
 
@@ -728,31 +714,10 @@ func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
 	// tracef("ACK(%d)", c.iSeq)
 }
 
-func (c *Channel) on_read_deadline_reached() {
-	c.readDeadlineReached = true
-	c.process_close_queue()
-}
-
-func (c *Channel) on_close_deadline_reached() {
-	c.broken = true
-	c.process_close_queue()
-	c.unregister()
-}
-
-func (c *Channel) process_close_queue() {
-	var (
-		q = c.qClose
-	)
-	c.qClose = nil
-
-	for _, op := range q {
-		c.close(op)
-	}
-}
-
 func (c *Channel) unregister() {
-	c.tOpenDeadline.Cancel()
-	c.tReadDeadline.Cancel()
+	c.tOpenDeadline.Stop()
+	c.tCloseDeadline.Stop()
+	c.tReadDeadline.Stop()
 	c.fUnregisterChannel(c)
 	c.subscribers.Emit(&ChannelClosedEvent{c})
 }
@@ -780,7 +745,6 @@ func (x *exchange) register_channel(ch *Channel) error {
 
 	ch.register_with_exchange(x)
 	ch.register_with_endpoint(x.endpoint)
-	ch.register_with_scheduler(x.endpoint.scheduler)
 
 	x.endpoint.subscribers.Emit(&ChannelOpenedEvent{ch})
 

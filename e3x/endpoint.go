@@ -39,18 +39,17 @@ type Endpoint struct {
 	cDialExchange    chan *opDialExchange
 	cRegisterChannel chan *opRegisterChannel
 	cExchangeWrite   chan opExchangeWrite
-	// cReceivePacket   chan *opReceivePacket
-	// cCloseChannel   chan *opCloseChannel
-	cLookupAddr     chan *opLookupAddr
-	cTransportRead  chan transports.ReadOp
-	cTransportWrite chan transports.WriteOp
-	cTransportDone  <-chan struct{}
-	cEventIn        chan events.E
-	tokens          map[cipherset.Token]*exchange
-	hashnames       map[hashname.H]*exchange
-	scheduler       *scheduler.Scheduler
-	handlers        map[string]Handler
-	subscribers     events.Hub
+	cExchangeRead    chan opExchangeRead
+	cLookupAddr      chan *opLookupAddr
+	cTransportRead   chan transports.ReadOp
+	cTransportWrite  chan transports.WriteOp
+	cTransportDone   <-chan struct{}
+	cEventIn         chan events.E
+	tokens           map[cipherset.Token]*exchange
+	hashnames        map[hashname.H]*exchange
+	scheduler        *scheduler.Scheduler
+	handlers         map[string]Handler
+	subscribers      events.Hub
 }
 
 type Handler interface {
@@ -123,8 +122,7 @@ func (e *Endpoint) start() error {
 	e.cDialExchange = make(chan *opDialExchange)
 	e.cRegisterChannel = make(chan *opRegisterChannel)
 	e.cExchangeWrite = make(chan opExchangeWrite)
-	e.cReceivePacket = make(chan *opReceivePacket)
-	e.cCloseChannel = make(chan *opCloseChannel)
+	e.cExchangeRead = make(chan opExchangeRead)
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportWrite = make(chan transports.WriteOp)
@@ -205,12 +203,6 @@ func (e *Endpoint) run() {
 
 		case op := <-e.cExchangeWrite:
 			op.x.deliver_packet(op)
-
-		case op := <-e.cReceivePacket:
-			op.ch.receive_packet(op)
-
-		case op := <-e.cCloseChannel:
-			op.ch.close(op)
 
 		case op := <-e.cLookupAddr:
 			e.lookup_addr(op)
