@@ -30,15 +30,6 @@ func (err *BrokenChannelError) Error() string {
 	return fmt.Sprintf("e3x: broken channel (type=%s id=%d hashname=%s)", err.typ, err.id, err.hn)
 }
 
-type ChannelState uint8
-
-const (
-	OpeningChannelState ChannelState = iota
-	OpenChannelState
-	EndedChannelState
-	BrokenChannelState
-)
-
 const (
 	c_READ_BUFFER_SIZE  = 100
 	c_WRITE_BUFFER_SIZE = 100
@@ -70,24 +61,22 @@ type Channel struct {
 	readBuffer  map[uint32]*readBufferEntry
 	writeBuffer map[uint32]*writeBufferEntry
 
-	cChannelWrite  chan opChannelWrite
-	cChannelRead   chan opChannelRead
+	// owned channels
+	cChannelWrite chan opChannelWrite
+	cChannelRead  chan opChannelRead
+	cChannelClose chan opChannelClose
+	cDone         chan struct{}
+
+	// lended channels
 	cExchangeWrite chan<- opExchangeWrite
 	cExchangeRead  <-chan opExchangeRead
-	cChannelClose  chan opChannelClose
+	cEventsOut     chan<- events.E
+	cEventsIn      <-chan events.E
 
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
 	tReadDeadline  *time.Timer
-
-	subscribers *events.Hub // belongs to endpoint
-
-	// should be removed:
-	x                  *exchange
-	qClose             []*opChannelClose
-	fUnregisterChannel func(*Channel)
-
-	lastSentAck time.Time
+	lastSentAck    time.Time
 }
 
 type opRegisterChannel struct {
@@ -126,6 +115,8 @@ func newChannel(
 	reliable bool, serverside bool,
 	w chan<- opExchangeWrite,
 	r <-chan opExchangeRead,
+	ei <-chan events.E,
+	eo chan<- events.E,
 ) *Channel {
 	return &Channel{
 		hashname:       hn,
@@ -137,8 +128,11 @@ func newChannel(
 		cChannelWrite:  make(chan opChannelWrite),
 		cChannelRead:   make(chan opChannelRead),
 		cChannelClose:  make(chan opChannelClose),
+		cDone:          make(chan struct{}),
 		cExchangeWrite: w,
 		cExchangeRead:  r,
+		cEventsIn:      ei,
+		cEventsOut:     eo,
 		oSeq:           -1,
 		iBufferedSeq:   -1,
 		iSeenSeq:       -1,
@@ -150,13 +144,15 @@ func newChannel(
 
 func (c *Channel) run() {
 	defer func() {
+		close(c.cDone)
 		c.tOpenDeadline.Stop()
 		c.tCloseDeadline.Stop()
 		c.tReadDeadline.Stop()
 		close(c.cChannelRead)
 		close(c.cChannelWrite)
 		close(c.cChannelClose)
-		tracef("Closed channel.")
+
+		c.cEventsOut <- &ChannelClosedEvent{c}
 	}()
 
 	c.tOpenDeadline = time.NewTimer(60 * time.Second)
@@ -164,6 +160,8 @@ func (c *Channel) run() {
 	c.tCloseDeadline.Stop()
 	c.tReadDeadline = time.NewTimer(60 * time.Second)
 	c.tReadDeadline.Stop()
+
+	c.cEventsOut <- &ChannelOpenedEvent{c}
 
 	for {
 		var (
@@ -188,6 +186,9 @@ func (c *Channel) run() {
 		}
 
 		select {
+
+		// case evt := <-c.cEventsIn:
+		//   panic("no events")
 
 		case op := <-cChannelWrite:
 			c.deliver_packet(op)
@@ -228,24 +229,14 @@ func (c *Channel) RemoteHashname() hashname.H {
 	return c.hashname
 }
 
-func (c *Channel) register_with_endpoint(e *Endpoint) {
-	c.subscribers = &e.subscribers
-}
-
-func (c *Channel) register_with_exchange(x *exchange) {
-	c.cExchangeWrite = x.cExchangeWrite
-	c.cExchangeRead = x.cExchangeRead
-	c.fUnregisterChannel = x.unregister_channel
-	c.x = x
-}
-
 func (e *Endpoint) Dial(addr *Addr, typ string, reliable bool) (*Channel, error) {
 	err := e.DialExchange(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	ch := newChannel(addr.hashname, typ, reliable, false, nil, nil)
+	ch := newChannel(addr.hashname, typ, reliable, false, nil, nil, nil, nil)
+	panic("Fix this")
 
 	{ // register channel
 		op := opRegisterChannel{ch: ch, cErr: make(chan error)}
@@ -265,8 +256,12 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	}
 
 	op := opChannelWrite{pkt, make(chan error)}
-	c.cChannelWrite <- op
-	return waitForError(op.cErr)
+	select {
+	case c.cChannelWrite <- op:
+	case <-c.cDone:
+		return io.ErrUnexpectedEOF
+	}
+	return <-op.cErr
 }
 
 func (c *Channel) ReadPacket() (*lob.Packet, error) {
@@ -290,7 +285,11 @@ func (c *Channel) Close() error {
 	}
 
 	op := opChannelClose{make(chan error)}
-	c.cChannelClose <- op
+	select {
+	case c.cChannelClose <- op:
+	case <-c.cDone:
+		return io.ErrUnexpectedEOF
+	}
 	return <-op.cErr
 }
 
@@ -365,7 +364,7 @@ func (c *Channel) deliver_packet(op opChannelWrite) {
 		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, time.Time{}}
 	}
 
-	c.cExchangeWrite <- opExchangeWrite{c.x, pkt, op.cErr}
+	c.cExchangeWrite <- opExchangeWrite{pkt, op.cErr}
 	// tracef("WritePacket() => sent")
 
 	if c.oSeq == 0 && c.serverside {
@@ -598,12 +597,21 @@ func (c *Channel) close(op opChannelClose) {
 
 		c.deliver_packet(opDeliver)
 
-		err := <-opDeliver.cErr
-		if err != nil {
-			// tracef("Close() => deliver `end` err: %s", err)
+		select {
+
+		case <-c.tCloseDeadline.C:
 			c.broken = true
-			op.cErr <- err
+			op.cErr <- &BrokenChannelError{c.hashname, c.typ, c.id}
 			return
+
+		case err := <-opDeliver.cErr:
+			if err != nil {
+				// tracef("Close() => deliver `end` err: %s", err)
+				c.broken = true
+				op.cErr <- err
+				return
+			}
+
 		}
 	}
 
@@ -654,7 +662,7 @@ func (c *Channel) process_missing_packets(ack uint32, miss []uint32) {
 		e.pkt.Header().SetUint32Slice("miss", omiss)
 		e.lastResend = now
 
-		c.cExchangeWrite <- opExchangeWrite{c.x, e.pkt, nil}
+		c.cExchangeWrite <- opExchangeWrite{e.pkt, nil}
 	}
 }
 
@@ -692,7 +700,7 @@ func (c *Channel) deliver_ack() {
 	pkt := &lob.Packet{}
 	pkt.Header().SetUint32("c", c.id)
 	c.apply_ack_headers(pkt)
-	c.cExchangeWrite <- opExchangeWrite{c.x, pkt, nil}
+	c.cExchangeWrite <- opExchangeWrite{pkt, nil}
 }
 
 func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
@@ -712,73 +720,4 @@ func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
 	c.lastSentAck = time.Now()
 
 	// tracef("ACK(%d)", c.iSeq)
-}
-
-func (c *Channel) unregister() {
-	c.tOpenDeadline.Stop()
-	c.tCloseDeadline.Stop()
-	c.tReadDeadline.Stop()
-	c.fUnregisterChannel(c)
-	c.subscribers.Emit(&ChannelClosedEvent{c})
-}
-
-func (e *Endpoint) register_channel(op *opRegisterChannel) error {
-	x := e.hashnames[op.ch.hashname]
-	if x == nil || x.state != openedExchangeState {
-		return UnreachableEndpointError(op.ch.hashname)
-	}
-
-	return x.register_channel(op.ch)
-}
-
-func (x *exchange) register_channel(ch *Channel) error {
-	var wasIdle = len(x.channels) == 0
-
-	if ch.id == 0 {
-		ch.id = x.nextChannelId()
-	}
-	x.channels[ch.id] = ch
-
-	if wasIdle {
-		x.tExpire.Cancel()
-	}
-
-	ch.register_with_exchange(x)
-	ch.register_with_endpoint(x.endpoint)
-
-	x.endpoint.subscribers.Emit(&ChannelOpenedEvent{ch})
-
-	return nil
-}
-
-func (x *exchange) unregister_channel(ch *Channel) {
-	delete(x.channels, ch.id)
-
-	if len(x.channels) == 0 {
-		x.tExpire.ScheduleAfter(2 * time.Minute)
-	}
-}
-
-func (x *exchange) nextChannelId() uint32 {
-	id := x.next_channel_id
-
-	if id == 0 {
-		// zero is not valid
-		id++
-	}
-
-	if x.cipher.IsHigh() {
-		// must be odd
-		if id%2 == 0 {
-			id++
-		}
-	} else {
-		// must be even
-		if id%2 == 1 {
-			id++
-		}
-	}
-
-	x.next_channel_id = id + 2
-	return id
 }

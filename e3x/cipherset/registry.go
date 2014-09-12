@@ -37,16 +37,16 @@ func DecodeKey(csid uint8, pub, prv string) (Key, error) {
 		if err != nil {
 			return nil, ErrInvalidKey
 		}
-		return opaqueKey{pubKey, prvKey}, nil
+		return opaqueKey{csid, pubKey, prvKey}, nil
 	}
 
 	return c.DecodeKey(pub, prv)
 }
 
-func DecryptMessage(csid uint8, localKey, remoteKey Key, p []byte) (uint32, []byte, error) {
+func DecryptMessage(csid uint8, localKey, remoteKey Key, p []byte) ([]byte, error) {
 	c := ciphers[csid]
 	if c == nil {
-		return 0, nil, ErrUnknownCSID
+		return nil, ErrUnknownCSID
 	}
 
 	return c.DecryptMessage(localKey, remoteKey, p)

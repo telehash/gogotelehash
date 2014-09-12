@@ -38,15 +38,13 @@ type Endpoint struct {
 	cTerminate       chan struct{}
 	cDialExchange    chan *opDialExchange
 	cRegisterChannel chan *opRegisterChannel
-	cExchangeWrite   chan opExchangeWrite
-	cExchangeRead    chan opExchangeRead
 	cLookupAddr      chan *opLookupAddr
 	cTransportRead   chan transports.ReadOp
 	cTransportWrite  chan transports.WriteOp
 	cTransportDone   <-chan struct{}
 	cEventIn         chan events.E
-	tokens           map[cipherset.Token]*exchange
-	hashnames        map[hashname.H]*exchange
+	tokens           map[cipherset.Token]*exchangeEntry
+	hashnames        map[hashname.H]*exchangeEntry
 	scheduler        *scheduler.Scheduler
 	handlers         map[string]Handler
 	subscribers      events.Hub
@@ -73,6 +71,12 @@ type opDialExchange struct {
 type opLookupAddr struct {
 	hashname hashname.H
 	cAddr    chan *Addr
+}
+
+type exchangeEntry struct {
+	x              *exchange
+	cReadPacket    chan transports.ReadOp
+	cReadHandshake chan opHandshakeRead
 }
 
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
@@ -117,12 +121,10 @@ func (e *Endpoint) start() error {
 		panic("e3x: Endpoint cannot be started more than once")
 	}
 
-	e.tokens = make(map[cipherset.Token]*exchange)
-	e.hashnames = make(map[hashname.H]*exchange)
+	e.tokens = make(map[cipherset.Token]*exchangeEntry)
+	e.hashnames = make(map[hashname.H]*exchangeEntry)
 	e.cDialExchange = make(chan *opDialExchange)
 	e.cRegisterChannel = make(chan *opRegisterChannel)
-	e.cExchangeWrite = make(chan opExchangeWrite)
-	e.cExchangeRead = make(chan opExchangeRead)
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportWrite = make(chan transports.WriteOp)
@@ -201,8 +203,8 @@ func (e *Endpoint) run() {
 		case op := <-e.cRegisterChannel:
 			op.cErr <- e.register_channel(op)
 
-		case op := <-e.cExchangeWrite:
-			op.x.deliver_packet(op)
+		// case op := <-e.cExchangeWrite:
+		// 	op.x.deliver_packet(op)
 
 		case op := <-e.cLookupAddr:
 			e.lookup_addr(op)
@@ -248,6 +250,7 @@ func (e *Endpoint) received(op opReceived) {
 
 func (e *Endpoint) received_handshake(op opReceived) {
 	var (
+		x         *exchange
 		handshake cipherset.Handshake
 		token     cipherset.Token
 		hn        hashname.H
@@ -277,29 +280,45 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	}
 
 	// find / create exchange
-	ex, found := e.hashnames[hn]
+	entry, found := e.hashnames[hn]
 	if !found {
-		ex = newExchange(e)
-		ex.hashname = hn
-		ex.token = token
+		cReadPacket := make(chan transports.ReadOp)
+		cReadHandshake := make(chan opHandshakeRead)
+		x = newExchange(hn, token, e.cTransportWrite, cReadPacket, cReadHandshake)
+		entry = &exchangeEntry{
+			cReadPacket:    cReadPacket,
+			cReadHandshake: cReadHandshake,
+			x:              x,
+		}
+
+		e.tokens[token] = entry
+		e.hashnames[hn] = entry
+
+		go x.run()
+	} else {
+		if e.tokens[token] == nil {
+			e.tokens[token] = entry
+		}
+
+		x = entry.x
 	}
 
-	valid := ex.received_handshake(op, handshake)
+	entry.cReadHandshake <- opHandshakeRead{handshake, op.Src}
+	// valid := x.received_handshake(op, handshake)
 	// tracef("ReceivedHandshake(%s) => %v", op.addr, valid)
 
-	if valid {
-		if !found {
-			ex.reset_expire()
-			ex.reschedule_handshake()
-			e.tokens[token] = ex
-			e.hashnames[hn] = ex
-			e.subscribers.Emit(&ExchangeOpenedEvent{hn, false})
-		} else if e.tokens[token] == nil {
-			ex.reset_expire()
-			e.tokens[token] = ex
-			e.subscribers.Emit(&ExchangeOpenedEvent{hn, true})
-		}
-	}
+	// if valid {
+	//   if !found {
+	//     ex.reset_expire()
+	//     ex.reschedule_handshake()
+	//     e.tokens[token] = ex
+	//     e.hashnames[hn] = ex
+	//     e.subscribers.Emit(&ExchangeOpenedEvent{hn, false})
+	//   } else if e.tokens[token] == nil {
+	//     ex.reset_expire()
+	//     e.subscribers.Emit(&ExchangeOpenedEvent{hn, true})
+	//   }
+	// }
 }
 
 func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.Addr) {
@@ -313,13 +332,13 @@ func (e *Endpoint) received_packet(pkt *lob.Packet, addr transports.Addr) {
 	}
 
 	copy(token[:], pkt.Body[:16])
-	x := e.tokens[token]
-	if x == nil {
+	c := e.tokens[token]
+	if c == nil {
 		// tracef("drop no token")
 		return // drop
 	}
 
-	x.received_packet(pkt)
+	c.cReadPacket <- transports.ReadOp{pkt.Body, addr}
 }
 
 func (e *Endpoint) deliver(pkt *lob.Packet, addr transports.Addr) error {
@@ -384,7 +403,6 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 		return err
 	}
 
-	x.state = dialingExchangeState
 	x.reset_break()
 	x.reset_expire()
 	e.hashnames[op.addr.hashname] = x
@@ -415,11 +433,13 @@ func (e *Endpoint) Resolve(hn hashname.H) (*Addr, error) {
 }
 
 func (e *Endpoint) lookup_addr(op *opLookupAddr) {
-	ex, found := e.hashnames[op.hashname]
-	if !found || ex == nil {
+	entry, found := e.hashnames[op.hashname]
+	if !found || entry == nil {
 		op.cAddr <- nil
 		return
 	}
+
+	ex := entry.x
 
 	addr, err := NewAddr(ex.knownKeys(), ex.knownParts(), ex.addressBook.KnownAddresses())
 	if err != nil {
@@ -429,6 +449,15 @@ func (e *Endpoint) lookup_addr(op *opLookupAddr) {
 	}
 
 	op.cAddr <- addr
+}
+
+func (e *Endpoint) register_channel(op *opRegisterChannel) error {
+	x := e.hashnames[op.ch.hashname]
+	if x == nil || x.state != openedExchangeState {
+		return UnreachableEndpointError(op.ch.hashname)
+	}
+
+	return x.register_channel(op.ch)
 }
 
 func waitForError(c <-chan error) error {

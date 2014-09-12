@@ -28,7 +28,6 @@ func (s *cipherTestSuite) TestMessage() {
 		ka  cipherset.Key
 		kb  cipherset.Key
 		sa  cipherset.State
-		seq uint32
 		box []byte
 		msg []byte
 		err error
@@ -59,15 +58,14 @@ func (s *cipherTestSuite) TestMessage() {
 	assert.True(sa.CanDecryptHandshake())
 	assert.False(sa.NeedsRemoteKey())
 
-	box, err = sa.EncryptMessage(1, []byte("Hello World!"))
+	box, err = sa.EncryptMessage([]byte("Hello World!"))
 	assert.NoError(err)
 	assert.NotNil(box)
 
-	seq, msg, err = c.DecryptMessage(kb, ka, box)
+	msg, err = c.DecryptMessage(kb, ka, box)
 	assert.NoError(err)
 	assert.NotNil(msg)
 	assert.Equal([]byte("Hello World!"), msg)
-	assert.Equal(1, seq)
 }
 
 func (s *cipherTestSuite) TestHandshake() {

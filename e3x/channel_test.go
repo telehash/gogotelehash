@@ -86,14 +86,18 @@ func (s *channelTestSuite) TestBasicUnrealiable() {
 		c      *Channel
 		w      = make(chan opExchangeWrite, 1)
 		r      = make(chan opExchangeRead, 1)
+		ei     = make(chan events.E)
+		eo     = make(chan events.E)
 		pkt    *lob.Packet
 		err    error
 	)
 
+	go events.Log(nil, eo)
+
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", false, false,
-		w, r)
+		w, r, ei, eo)
 	go c.run()
 
 	go func() {
@@ -139,14 +143,18 @@ func (s *channelTestSuite) TestBasicRealiable() {
 		c      *Channel
 		w      = make(chan opExchangeWrite, 1)
 		r      = make(chan opExchangeRead, 1)
+		ei     = make(chan events.E)
+		eo     = make(chan events.E)
 		pkt    *lob.Packet
 		err    error
 	)
 
+	go events.Log(nil, eo)
+
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", true, false,
-		w, r)
+		w, r, ei, eo)
 	go c.run()
 
 	go func() {
@@ -155,7 +163,7 @@ func (s *channelTestSuite) TestBasicRealiable() {
 		assert.NotNil(op.pkt)
 		if op.pkt != nil {
 			seq, _ := op.pkt.Header().GetInt("seq")
-			assert.Equal(1, seq)
+			assert.Equal(0, seq)
 			assert.Equal("ping", string(op.pkt.Body))
 		}
 
@@ -165,7 +173,7 @@ func (s *channelTestSuite) TestBasicRealiable() {
 	assert.NoError(err)
 
 	pkt = &lob.Packet{Body: []byte("pong")}
-	pkt.Header().SetUint32("seq", 1)
+	pkt.Header().SetUint32("seq", 0)
 	r <- opExchangeRead{pkt, nil}
 
 	pkt, err = c.ReadPacket()
@@ -180,9 +188,26 @@ func (s *channelTestSuite) TestBasicRealiable() {
 
 		assert.NotNil(op.pkt)
 		if op.pkt != nil {
+			var (
+				_, hasSeq   = op.pkt.Header().GetInt("seq")
+				ack, hasAck = op.pkt.Header().GetInt("ack")
+			)
+			assert.False(hasSeq)
+			assert.True(hasAck)
+			assert.Equal(0, ack)
+		}
+
+		op.cErr <- nil
+	}()
+
+	go func() {
+		op := <-w
+
+		assert.NotNil(op.pkt)
+		if op.pkt != nil {
 			seq, _ := op.pkt.Header().GetInt("seq")
 			end, _ := op.pkt.Header().GetBool("end")
-			assert.Equal(2, seq)
+			assert.Equal(1, seq)
 			assert.True(end)
 		}
 

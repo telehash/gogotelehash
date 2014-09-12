@@ -1,7 +1,6 @@
 package e3x
 
 import (
-	"encoding/binary"
 	"math/rand"
 	"time"
 
@@ -9,7 +8,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
 type BrokenExchange hashname.H
@@ -29,7 +27,6 @@ const (
 
 type exchange struct {
 	state           exchangeState
-	endpoint        *Endpoint
 	last_seq        uint32
 	next_seq        uint32
 	token           cipherset.Token
@@ -43,17 +40,26 @@ type exchange struct {
 	channels        map[uint32]*Channel
 	addressBook     *addressBook
 
+	// owned channels
 	cExchangeWrite chan opExchangeWrite
 	cExchangeRead  chan opExchangeRead
+	cDone          chan struct{}
+
+	// lended channels
+	cTransportWrite chan<- transports.WriteOp
+	cEndpointRead   <-chan transports.ReadOp
+	cHandshakeRead  <-chan opHandshakeRead
 
 	nextHandshake     int
-	tExpire           *scheduler.Event
-	tBreak            *scheduler.Event
-	tDeliverHandshake *scheduler.Event
+	tExpire           *time.Timer
+	tBreak            *time.Timer
+	tDeliverHandshake *time.Timer
+
+	// should be removed
+	endpoint *Endpoint
 }
 
 type opExchangeWrite struct {
-	x    *exchange
 	pkt  *lob.Packet
 	cErr chan error
 }
@@ -63,17 +69,78 @@ type opExchangeRead struct {
 	err error
 }
 
-func newExchange(e *Endpoint) *exchange {
+type opHandshakeRead struct {
+	handshake cipherset.Handshake
+	src       transports.Addr
+}
+
+func newExchange(
+	hashname hashname.H,
+	token cipherset.Token,
+	w chan<- transports.WriteOp,
+	r <-chan transports.ReadOp,
+	rHandshake <-chan opExchangeReadHandshake,
+) *exchange {
 	x := &exchange{
-		endpoint:       e,
-		channels:       make(map[uint32]*Channel),
-		addressBook:    newAddressBook(),
-		cExchangeWrite: e.cExchangeWrite,
+		hashname:        hashname,
+		token:           token,
+		channels:        make(map[uint32]*Channel),
+		addressBook:     newAddressBook(),
+		cExchangeWrite:  make(chan opExchangeWrite),
+		cExchangeRead:   make(chan opExchangeRead),
+		cDone:           make(chan struct{}),
+		cTransportWrite: w,
+		cEndpointRead:   r,
+		cHandshakeRead:  rHandshake,
 	}
-	x.tExpire = e.scheduler.NewEvent(x.on_expire)
-	x.tBreak = e.scheduler.NewEvent(x.on_break)
-	x.tDeliverHandshake = e.scheduler.NewEvent(x.on_deliver_handshake)
+	// x.tExpire = e.scheduler.NewEvent(x.on_expire)
+	// x.tBreak = e.scheduler.NewEvent(x.on_break)
+	// x.tDeliverHandshake = e.scheduler.NewEvent(x.on_deliver_handshake)
 	return x
+}
+
+func (x *exchange) run() {
+	defer func() {
+		close(x.cDone)
+		x.tBreak.Stop()
+		x.tExpire.Stop()
+		x.tDeliverHandshake.Stop()
+		close(x.cExchangeWrite)
+		close(x.cExchangeRead)
+	}()
+
+	x.tBreak = time.NewTimer(2 * 60 * time.Second)
+	x.tExpire = time.NewTimer(60 * time.Second)
+	x.tExpire.Stop()
+	x.tDeliverHandshake = time.NewTimer(60 * time.Second)
+	x.tDeliverHandshake.Stop()
+
+	x.state = dialingExchangeState
+	x.deliver_handshake(0, nil)
+
+	for {
+		var (
+			cExchangeWrite = x.cExchangeWrite
+			cExchangeRead  = x.cExchangeRead
+		)
+
+		select {
+
+		case op := <-cExchangeWrite:
+			x.deliver_packet(op)
+
+		case op := <-x.cEndpointRead:
+			x.received_packet(op)
+
+		case op := <-x.cHandshakeRead:
+			x.received_handshake(op)
+
+		}
+
+		if x.state == expiredExchangeState {
+			return
+		}
+	}
 }
 
 func (e *exchange) knownKeys() cipherset.Keys {
@@ -84,12 +151,12 @@ func (e *exchange) knownParts() cipherset.Parts {
 	return e.parts
 }
 
-func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handshake) bool {
+func (e *exchange) received_handshake(op opHandshakeRead) bool {
 	// tracef("receiving_handshake(%p) pkt=%v", e, op.pkt)
 
 	var (
-		csid = op.pkt.Head[0]
-		seq  = binary.BigEndian.Uint32(op.pkt.Body[:4])
+		csid = op.handshake.CSID()
+		seq  = op.handshake.At()
 		err  error
 	)
 
@@ -115,22 +182,22 @@ func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handsha
 		return false
 	}
 
-	if !e.cipher.ApplyHandshake(handshake) {
+	if !e.cipher.ApplyHandshake(op.handshake) {
 		return false
 	}
 
 	if e.keys == nil {
-		e.keys = cipherset.Keys{e.csid: handshake.PublicKey()}
+		e.keys = cipherset.Keys{e.csid: op.handshake.PublicKey()}
 	}
 	if e.parts == nil {
-		e.parts = handshake.Parts()
+		e.parts = op.handshake.Parts()
 	}
 
 	if seq > e.last_seq {
-		e.deliver_handshake(seq, op.Src)
-		e.addressBook.AddAddress(op.Src)
+		e.deliver_handshake(seq, op.src)
+		e.addressBook.AddAddress(op.src)
 	} else {
-		e.addressBook.ReceivedHandshake(op.Src)
+		e.addressBook.ReceivedHandshake(op.src)
 	}
 
 	e.state = openedExchangeState
@@ -199,11 +266,16 @@ func (e *exchange) reschedule_handshake() {
 		e.nextHandshake -= rand.Intn(n)
 	}
 
-	e.tDeliverHandshake.ScheduleAfter(time.Duration(e.nextHandshake) * time.Second)
+	e.tDeliverHandshake.Reset(time.Duration(e.nextHandshake) * time.Second)
 }
 
-func (e *exchange) received_packet(pkt *lob.Packet) {
-	pkt, err := e.cipher.DecryptPacket(pkt)
+func (e *exchange) received_packet(op transports.ReadOp) {
+	pkt, err := lob.Decode(op.Msg)
+	if err != nil {
+		return // drop
+	}
+
+	pkt, err = e.cipher.DecryptPacket(pkt)
 	if err != nil {
 		return // drop
 	}
@@ -232,7 +304,8 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 			return // drop (no handler)
 		}
 
-		c = newChannel(e.hashname, typ, hasSeq, true, nil, nil)
+		c = newChannel(e.hashname, typ, hasSeq, true, nil, nil, nil, nil)
+		panic("fix this")
 		c.id = cid
 		err = e.register_channel(c)
 		if err != nil {
@@ -271,23 +344,19 @@ func (e *exchange) deliver_packet(op opExchangeWrite) {
 }
 
 func (e *exchange) expire(err error) {
-	if e.state == expiredExchangeState {
-		return
-	}
-
 	tracef("expire(%p, %q)", e, err)
 	e.state = expiredExchangeState
 
-	// cancel schedule
-	e.tExpire.Cancel()
-	e.tBreak.Cancel()
-	e.tDeliverHandshake.Cancel()
+	// // cancel schedule
+	// e.tExpire.Cancel()
+	// e.tBreak.Cancel()
+	// e.tDeliverHandshake.Cancel()
 
-	// unregister
-	delete(e.endpoint.hashnames, e.hashname)
-	delete(e.endpoint.tokens, e.token)
+	// // unregister
+	// delete(e.endpoint.hashnames, e.hashname)
+	// delete(e.endpoint.tokens, e.token)
 
-	e.endpoint.subscribers.Emit(&ExchangeClosedEvent{e.hashname, err})
+	// e.endpoint.subscribers.Emit(&ExchangeClosedEvent{e.hashname, err})
 }
 
 func (e *exchange) getNextSeq() uint32 {
@@ -319,10 +388,10 @@ func (e *exchange) getNextSeq() uint32 {
 }
 
 func (e *exchange) reset_expire() {
-	if false /* has channels*/ {
-		e.tExpire.Cancel()
+	if len(e.channels) > 0 {
+		e.tExpire.Stop()
 	} else {
-		e.tExpire.ScheduleAfter(2 * time.Minute)
+		e.tExpire.Reset(2 * 60 * time.Second)
 	}
 }
 
@@ -331,7 +400,7 @@ func (e *exchange) on_expire() {
 }
 
 func (e *exchange) reset_break() {
-	e.tBreak.ScheduleAfter(2 * time.Minute)
+	e.tBreak.Reset(2 * 60 * time.Second)
 }
 
 func (e *exchange) on_break() {
@@ -340,4 +409,42 @@ func (e *exchange) on_break() {
 
 func (e *exchange) on_deliver_handshake() {
 	e.deliver_handshake(0, nil)
+}
+
+func (x *exchange) register_channel(ch *Channel) error {
+	if ch.id == 0 {
+		ch.id = x.nextChannelId()
+	}
+	x.channels[ch.id] = ch
+	x.reset_expire()
+	return nil
+}
+
+func (x *exchange) unregister_channel(ch *Channel) {
+	delete(x.channels, ch.id)
+	x.reset_expire()
+}
+
+func (x *exchange) nextChannelId() uint32 {
+	id := x.next_channel_id
+
+	if id == 0 {
+		// zero is not valid
+		id++
+	}
+
+	if x.cipher.IsHigh() {
+		// must be odd
+		if id%2 == 0 {
+			id++
+		}
+	} else {
+		// must be even
+		if id%2 == 1 {
+			id++
+		}
+	}
+
+	x.next_channel_id = id + 2
+	return id
 }

@@ -258,7 +258,10 @@ func (p Keys) ApplyToHeader(h lob.Header) {
 	}
 }
 
-type opaqueKey struct{ pub, prv []byte }
+type opaqueKey struct {
+	csid     uint8
+	pub, prv []byte
+}
 
 func (o opaqueKey) String() string {
 	return base32.EncodeToString(o.pub)
@@ -278,4 +281,8 @@ func (o opaqueKey) CanSign() bool {
 
 func (o opaqueKey) CanEncrypt() bool {
 	return false
+}
+
+func (o opaqueKey) CSID() uint8 {
+	return o.csid
 }
