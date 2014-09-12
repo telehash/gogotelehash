@@ -69,7 +69,7 @@ func FromKeys(keys cipherset.Keys) (H, error) {
 	)
 
 	for id, key := range keys {
-		hash.Write(key.Bytes())
+		hash.Write(key.Public())
 		hash.Sum(buf[:0])
 		hash.Reset()
 
@@ -87,7 +87,7 @@ func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
 	)
 
 	for id, key := range keys {
-		hash.Write(key.Bytes())
+		hash.Write(key.Public())
 		hash.Sum(buf[:0])
 		hash.Reset()
 

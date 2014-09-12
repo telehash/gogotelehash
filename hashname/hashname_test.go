@@ -74,7 +74,7 @@ func mustHex(s string) []byte {
 }
 
 func mustKey(id uint8, s string) cipherset.Key {
-	k, err := cipherset.DecodeKey(id, s)
+	k, err := cipherset.DecodeKey(id, s, "")
 	if err != nil {
 		panic(err)
 	}

@@ -43,17 +43,32 @@ type exchange struct {
 	channels        map[uint32]*Channel
 	addressBook     *addressBook
 
+	cExchangeWrite chan opExchangeWrite
+	cExchangeRead  chan opExchangeRead
+
 	nextHandshake     int
 	tExpire           *scheduler.Event
 	tBreak            *scheduler.Event
 	tDeliverHandshake *scheduler.Event
 }
 
+type opExchangeWrite struct {
+	x    *exchange
+	pkt  *lob.Packet
+	cErr chan error
+}
+
+type opExchangeRead struct {
+	pkt *lob.Packet
+	err error
+}
+
 func newExchange(e *Endpoint) *exchange {
 	x := &exchange{
-		endpoint:    e,
-		channels:    make(map[uint32]*Channel),
-		addressBook: newAddressBook(),
+		endpoint:       e,
+		channels:       make(map[uint32]*Channel),
+		addressBook:    newAddressBook(),
+		cExchangeWrite: e.cExchangeWrite,
 	}
 	x.tExpire = e.scheduler.NewEvent(x.on_expire)
 	x.tBreak = e.scheduler.NewEvent(x.on_break)
@@ -112,10 +127,10 @@ func (e *exchange) received_handshake(op opReceived, handshake cipherset.Handsha
 	}
 
 	if seq > e.last_seq {
-		e.deliver_handshake(seq, op.addr)
-		e.addressBook.AddAddress(op.addr)
+		e.deliver_handshake(seq, op.Src)
+		e.addressBook.AddAddress(op.Src)
 	} else {
-		e.addressBook.ReceivedHandshake(op.addr)
+		e.addressBook.ReceivedHandshake(op.Src)
 	}
 
 	e.state = openedExchangeState
@@ -217,7 +232,7 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 			return // drop (no handler)
 		}
 
-		c = newChannel(e.hashname, typ, hasSeq, true)
+		c = newChannel(e.hashname, typ, hasSeq, true, nil, nil)
 		c.id = cid
 		err = e.register_channel(c)
 		if err != nil {
@@ -230,11 +245,12 @@ func (e *exchange) received_packet(pkt *lob.Packet) {
 	c.received_packet(pkt)
 }
 
-func (e *exchange) deliver_packet(pkt *lob.Packet) {
-	pkt, err := e.cipher.EncryptPacket(pkt)
+func (e *exchange) deliver_packet(op opExchangeWrite) {
+	pkt, err := e.cipher.EncryptPacket(op.pkt)
 	if err != nil {
-		tracef("snd err=%s", err)
-		// report?
+		if op.cErr != nil {
+			op.cErr <- err
+		}
 		return
 	}
 
@@ -242,11 +258,15 @@ func (e *exchange) deliver_packet(pkt *lob.Packet) {
 
 	err = e.endpoint.deliver(pkt, addr)
 	if err != nil {
-		tracef("snd err=%s (to=%s)", err, addr)
-		// report?
+		if op.cErr != nil {
+			op.cErr <- err
+		}
 		return
 	}
 
+	if op.cErr != nil {
+		op.cErr <- nil
+	}
 	return
 }
 
@@ -266,11 +286,6 @@ func (e *exchange) expire(err error) {
 	// unregister
 	delete(e.endpoint.hashnames, e.hashname)
 	delete(e.endpoint.tokens, e.token)
-
-	// break channels
-	for _, c := range e.channels {
-		c.on_close_deadline_reached()
-	}
 
 	e.endpoint.subscribers.Emit(&ExchangeClosedEvent{e.hashname, err})
 }

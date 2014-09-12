@@ -13,6 +13,7 @@ var ErrInvalidKeys = errors.New("chipherset: invalid keys")
 var ErrInvalidParts = errors.New("chipherset: invalid parts")
 
 type Keys map[uint8]Key
+type PrivateKeys Keys
 type Parts map[uint8]string
 
 func SelectCSID(a, b Keys) uint8 {
@@ -55,15 +56,9 @@ func KeysFromJSON(i interface{}) (Keys, error) {
 			return nil, ErrInvalidKeys
 		}
 
-		key, err := DecodeKey(csid[0], s)
+		key, err := DecodeKey(csid[0], s, "")
 		if err != nil {
-			keyData, err := base32.DecodeString(s)
-			if err != nil {
-				return nil, ErrInvalidKeys
-			}
-
-			key = opaqueKey(keyData)
-			err = nil
+			return nil, err
 		}
 
 		y[csid[0]] = key
@@ -71,46 +66,6 @@ func KeysFromJSON(i interface{}) (Keys, error) {
 
 	return y, nil
 }
-
-// func PartsFromJSON(i interface{}) (Parts, error) {
-//   if i == nil {
-//     return nil, nil
-//   }
-
-//   x, ok := i.(map[string]interface{})
-//   if !ok {
-//     return nil, ErrInvalidParts
-//   }
-
-//   if x == nil || len(x) == 0 {
-//     return nil, nil
-//   }
-
-//   y := make(Parts, len(x))
-//   for k, v := range x {
-//     if len(k) != 2 {
-//       return nil, ErrInvalidParts
-//     }
-
-//     s, ok := v.(string)
-//     if !ok || s == "" {
-//       return nil, ErrInvalidParts
-//     }
-
-//     csid, err := hex.DecodeString(k)
-//     if err != nil {
-//       return nil, ErrInvalidParts
-//     }
-
-//     if len(s) != 52 {
-//       return nil, ErrInvalidParts
-//     }
-
-//     y[csid[0]] = s
-//   }
-
-//   return y, nil
-// }
 
 func PartsFromHeader(h lob.Header) (Parts, error) {
 	if h == nil || len(h) == 0 {
@@ -185,15 +140,68 @@ func (k *Keys) UnmarshalJSON(data []byte) error {
 			return ErrInvalidKeys
 		}
 
-		key, err := DecodeKey(csid[0], s)
+		key, err := DecodeKey(csid[0], s, "")
 		if err != nil {
-			keyData, err := base32.DecodeString(s)
-			if err != nil {
-				return ErrInvalidKeys
-			}
+			return err
+		}
 
-			key = opaqueKey(keyData)
-			err = nil
+		y[csid[0]] = key
+	}
+
+	return nil
+}
+
+func (p PrivateKeys) MarshalJSON() ([]byte, error) {
+	type pair struct {
+		Pub string `json:"pub,omitempty"`
+		Prv string `json:"prv,omitempty"`
+	}
+
+	m := make(map[string]pair, len(p))
+	for k, v := range p {
+		m[hex.EncodeToString([]byte{k})] = pair{
+			Pub: base32.EncodeToString(v.Public()),
+			Prv: base32.EncodeToString(v.Private()),
+		}
+	}
+
+	return json.Marshal(m)
+}
+
+func (k *PrivateKeys) UnmarshalJSON(data []byte) error {
+	type pair struct {
+		Pub string `json:"pub,omitempty"`
+		Prv string `json:"prv,omitempty"`
+	}
+
+	var (
+		x   map[string]pair
+		err = json.Unmarshal(data, &x)
+	)
+
+	if err != nil {
+		return err
+	}
+
+	y := make(PrivateKeys, len(x))
+	*k = y
+	for k, p := range x {
+		if len(k) != 2 {
+			return ErrInvalidKeys
+		}
+
+		if p.Pub == "" {
+			return ErrInvalidKeys
+		}
+
+		csid, err := hex.DecodeString(k)
+		if err != nil {
+			return ErrInvalidKeys
+		}
+
+		key, err := DecodeKey(csid[0], p.Pub, p.Prv)
+		if err != nil {
+			return err
 		}
 
 		y[csid[0]] = key
@@ -250,14 +258,18 @@ func (p Keys) ApplyToHeader(h lob.Header) {
 	}
 }
 
-type opaqueKey []byte
+type opaqueKey struct{ pub, prv []byte }
 
 func (o opaqueKey) String() string {
-	return base32.EncodeToString(o)
+	return base32.EncodeToString(o.pub)
 }
 
-func (o opaqueKey) Bytes() []byte {
-	return o
+func (o opaqueKey) Public() []byte {
+	return o.pub
+}
+
+func (o opaqueKey) Private() []byte {
+	return o.prv
 }
 
 func (o opaqueKey) CanSign() bool {

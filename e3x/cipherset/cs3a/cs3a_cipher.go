@@ -50,17 +50,37 @@ func (h *handshake) PublicKey() cipherset.Key {
 	return h.key
 }
 
-func (c *cipher) DecodeKey(s string) (cipherset.Key, error) {
-	data, err := base32.DecodeString(s)
-	if err != nil {
-		return nil, cipherset.ErrInvalidKey
+func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
+	var (
+		pubKey *[32]byte
+		prvKey *[32]byte
+	)
+
+	if pub != "" {
+		data, err := base32.DecodeString(pub)
+		if err != nil {
+			return nil, cipherset.ErrInvalidKey
+		}
+		if len(data) != 32 {
+			return nil, cipherset.ErrInvalidKey
+		}
+		pubKey = new([32]byte)
+		copy((*pubKey)[:], data)
 	}
-	if len(data) != 32 {
-		return nil, cipherset.ErrInvalidKey
+
+	if prv != "" {
+		data, err := base32.DecodeString(prv)
+		if err != nil {
+			return nil, cipherset.ErrInvalidKey
+		}
+		if len(data) != 32 {
+			return nil, cipherset.ErrInvalidKey
+		}
+		prvKey = new([32]byte)
+		copy((*prvKey)[:], data)
 	}
-	k := new([32]byte)
-	copy((*k)[:], data)
-	return &key{pub: k}, nil
+
+	return &key{pub: pubKey, prv: prvKey}, nil
 }
 
 func (c *cipher) GenerateKey() (cipherset.Key, error) {
@@ -420,7 +440,7 @@ func (s *state) EncryptMessage(seq uint32, in []byte) ([]byte, error) {
 }
 
 func (s *state) EncryptHandshake(seq uint32, compact cipherset.Parts) ([]byte, error) {
-	pkt := &lob.Packet{Body: s.localKey.Bytes()}
+	pkt := &lob.Packet{Body: s.localKey.Public()}
 	compact.ApplyToHeader(pkt.Header())
 	data, err := lob.Encode(pkt)
 	if err != nil {
@@ -564,13 +584,23 @@ func generateKey() (*key, error) {
 	return makeKey(prv, pub), nil
 }
 
-func (k *key) Bytes() []byte {
+func (k *key) Public() []byte {
 	if k == nil || k.pub == nil {
 		return nil
 	}
 
 	buf := make([]byte, 32)
 	copy(buf, (*k.pub)[:])
+	return buf
+}
+
+func (k *key) Private() []byte {
+	if k == nil || k.prv == nil {
+		return nil
+	}
+
+	buf := make([]byte, 32)
+	copy(buf, (*k.prv)[:])
 	return buf
 }
 

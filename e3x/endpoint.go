@@ -33,15 +33,17 @@ type Endpoint struct {
 	keys            cipherset.Keys
 	transportConfig transports.Config
 	transport       transports.Transport
+	localAddresses  transports.AddrSet
 
 	cTerminate       chan struct{}
-	cReceived        chan opReceived
 	cDialExchange    chan *opDialExchange
 	cRegisterChannel chan *opRegisterChannel
-	cDeliverPacket   chan *opDeliverPacket
-	cReceivePacket   chan *opReceivePacket
-	cCloseChannel    chan *opCloseChannel
+	cExchangeWrite   chan opExchangeWrite
+	cExchangeRead    chan opExchangeRead
 	cLookupAddr      chan *opLookupAddr
+	cTransportRead   chan transports.ReadOp
+	cTransportWrite  chan transports.WriteOp
+	cTransportDone   <-chan struct{}
 	cEventIn         chan events.E
 	tokens           map[cipherset.Token]*exchange
 	hashnames        map[hashname.H]*exchange
@@ -59,9 +61,8 @@ type HandlerFunc func(ch *Channel)
 func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 
 type opReceived struct {
-	pkt  *lob.Packet
-	data []byte
-	addr transports.Addr
+	pkt *lob.Packet
+	transports.ReadOp
 }
 
 type opDialExchange struct {
@@ -91,7 +92,7 @@ func (e *Endpoint) AddHandler(typ string, h Handler) {
 }
 
 func (e *Endpoint) LocalAddr() (*Addr, error) {
-	return NewAddr(e.keys, nil, e.transport.LocalAddresses())
+	return NewAddr(e.keys, nil, e.localAddresses)
 }
 
 func (e *Endpoint) Start() error {
@@ -118,28 +119,26 @@ func (e *Endpoint) start() error {
 
 	e.tokens = make(map[cipherset.Token]*exchange)
 	e.hashnames = make(map[hashname.H]*exchange)
-	e.cReceived = make(chan opReceived)
 	e.cDialExchange = make(chan *opDialExchange)
 	e.cRegisterChannel = make(chan *opRegisterChannel)
-	e.cDeliverPacket = make(chan *opDeliverPacket)
-	e.cReceivePacket = make(chan *opReceivePacket)
-	e.cCloseChannel = make(chan *opCloseChannel)
+	e.cExchangeWrite = make(chan opExchangeWrite)
+	e.cExchangeRead = make(chan opExchangeRead)
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
+	e.cTransportWrite = make(chan transports.WriteOp)
+	e.cTransportRead = make(chan transports.ReadOp)
 	e.cEventIn = make(chan events.E)
 
 	e.scheduler = scheduler.New()
 	e.scheduler.Start()
 
-	t, err := e.transportConfig.Open(e.cEventIn)
+	t, err := e.transportConfig.Open()
 	if err != nil {
 		e.err = err
 		return err
 	}
 	e.transport = t
-
-	e.wg.Add(1)
-	go e.run_receiver()
+	e.cTransportDone = t.Run(e.cTransportWrite, e.cTransportRead, e.cEventIn)
 
 	e.wg.Add(1)
 	go e.run()
@@ -159,8 +158,6 @@ func (e *Endpoint) stop() error {
 	case e.cTerminate <- struct{}{}:
 	default:
 	}
-
-	e.err = e.transport.Close()
 
 	if e.state == RunningEndpointState {
 		e.state = TerminatedEndpointState
@@ -184,63 +181,51 @@ func (e *Endpoint) run() {
 		case op := <-e.scheduler.C:
 			op.Exec()
 
-		case <-e.cTerminate:
+		case <-e.cTransportDone:
+			close(e.cTransportRead)
 			close(e.cEventIn)
+			e.cTransportRead = nil
+			e.cTransportWrite = nil
 			e.cEventIn = nil
-			e.cTerminate <- struct{}{}
 			return
+
+		case <-e.cTerminate:
+			close(e.cTransportWrite)
 
 		case op := <-e.cDialExchange:
 			op.cErr <- e.dial(op)
 
-		case op := <-e.cReceived:
-			e.received(op)
+		case op := <-e.cTransportRead:
+			e.received(opReceived{nil, op})
 
 		case op := <-e.cRegisterChannel:
 			op.cErr <- e.register_channel(op)
 
-		case op := <-e.cDeliverPacket:
-			op.ch.deliver_packet(op)
-
-		case op := <-e.cReceivePacket:
-			op.ch.receive_packet(op)
-
-		case op := <-e.cCloseChannel:
-			op.ch.close(op)
+		case op := <-e.cExchangeWrite:
+			op.x.deliver_packet(op)
 
 		case op := <-e.cLookupAddr:
 			e.lookup_addr(op)
 
 		case evt := <-e.cEventIn:
+			if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
+				for _, addr := range x.Up {
+					e.localAddresses.Add(addr)
+				}
+				for _, addr := range x.Down {
+					e.localAddresses.Remove(addr)
+				}
+			}
 			e.subscribers.Emit(evt)
 
 		}
 	}
 }
 
-func (e *Endpoint) run_receiver() {
-	defer e.wg.Done()
-
-	for {
-		var buf = bufpool.GetBuffer()
-		n, addr, err := e.transport.Receive(buf)
-		if err == transports.ErrClosed {
-			bufpool.PutBuffer(buf)
-			break
-		}
-		if err != nil {
-			bufpool.PutBuffer(buf)
-			continue // report error
-		}
-
-		e.cReceived <- opReceived{nil, buf[:n], addr}
-	}
-}
-
 func (e *Endpoint) received(op opReceived) {
-	defer bufpool.PutBuffer(op.data)
+	defer bufpool.PutBuffer(op.Msg)
 
-	pkt, err := lob.Decode(op.data)
+	pkt, err := lob.Decode(op.Msg)
 	if err != nil {
 		// drop
 		return
@@ -254,7 +239,7 @@ func (e *Endpoint) received(op opReceived) {
 	}
 
 	if len(pkt.Head) == 0 {
-		e.received_packet(pkt, op.addr)
+		e.received_packet(pkt, op.Src)
 		return
 	}
 
@@ -286,7 +271,7 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	}
 
 	token = handshake.Token()
-	hn, err = hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Bytes(), handshake.Parts())
+	hn, err = hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
 		return // DROP
 	}
@@ -343,7 +328,9 @@ func (e *Endpoint) deliver(pkt *lob.Packet, addr transports.Addr) error {
 		return err
 	}
 
-	return e.transport.Deliver(data, addr)
+	op := transports.WriteOp{data, addr, make(chan error)}
+	e.cTransportWrite <- op
+	return <-op.C
 }
 
 func (e *Endpoint) DialExchange(addr *Addr) error {

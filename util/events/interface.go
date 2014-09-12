@@ -43,6 +43,50 @@ func Log(out *log.Logger, in <-chan E) {
 	}
 }
 
+func Split(in <-chan E) (a, b <-chan E) {
+	A := make(chan E)
+	B := make(chan E)
+	go func() {
+		for e := range in {
+			A <- e
+			B <- e
+		}
+		close(A)
+		close(B)
+	}()
+	return A, B
+}
+
+func Join(a, b <-chan E) (out <-chan E) {
+	Out := make(chan E)
+
+	go func() {
+		for a != nil || b != nil {
+			select {
+
+			case e, open := <-a:
+				if !open {
+					a = nil
+				} else {
+					Out <- e
+				}
+
+			case e, open := <-b:
+				if !open {
+					b = nil
+				} else {
+					Out <- e
+				}
+
+			}
+		}
+
+		close(Out)
+	}()
+
+	return Out
+}
+
 func (h *Hub) Emit(in E) {
 	h.mtx.RLock()
 	FanOut(h.l, in)
