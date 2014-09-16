@@ -74,9 +74,8 @@ type opLookupAddr struct {
 }
 
 type exchangeEntry struct {
-	x              *exchange
-	cReadPacket    chan transports.ReadOp
-	cReadHandshake chan opHandshakeRead
+	x           *exchange
+	cReadPacket chan transports.ReadOp
 }
 
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
@@ -283,12 +282,10 @@ func (e *Endpoint) received_handshake(op opReceived) {
 	entry, found := e.hashnames[hn]
 	if !found {
 		cReadPacket := make(chan transports.ReadOp)
-		cReadHandshake := make(chan opHandshakeRead)
-		x = newExchange(hn, token, e.cTransportWrite, cReadPacket, cReadHandshake)
+		x = newExchange(hn, token, e.cTransportWrite, cReadPacket)
 		entry = &exchangeEntry{
-			cReadPacket:    cReadPacket,
-			cReadHandshake: cReadHandshake,
-			x:              x,
+			cReadPacket: cReadPacket,
+			x:           x,
 		}
 
 		e.tokens[token] = entry
@@ -303,7 +300,9 @@ func (e *Endpoint) received_handshake(op opReceived) {
 		x = entry.x
 	}
 
-	entry.cReadHandshake <- opHandshakeRead{handshake, op.Src}
+	panic("TODO")
+	// entry.cReadHandshake <- opHandshakeRead{handshake, op.Src}
+
 	// valid := x.received_handshake(op, handshake)
 	// tracef("ReceivedHandshake(%s) => %v", op.addr, valid)
 
@@ -359,7 +358,8 @@ func (e *Endpoint) DialExchange(addr *Addr) error {
 }
 
 func (e *Endpoint) dial(op *opDialExchange) error {
-	if x, found := e.hashnames[op.addr.hashname]; found {
+	if entry, found := e.hashnames[op.addr.hashname]; found {
+		x := entry.x
 		if x.state == dialingExchangeState {
 			x.qDial = append(x.qDial, op)
 			return errDeferred
@@ -372,9 +372,16 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 
 	var (
 		csid   = cipherset.SelectCSID(e.keys, op.addr.keys)
-		x      = newExchange(e)
 		cipher cipherset.State
-		err    error
+
+		cReadPacket = make(chan transports.ReadOp)
+		x           = newExchange(op.addr.hashname, cipherset.ZeroToken, e.cTransportWrite, cReadPacket)
+		entry       = &exchangeEntry{
+			cReadPacket: cReadPacket,
+			x:           x,
+		}
+
+		err error
 	)
 
 	x.hashname = op.addr.hashname
@@ -405,7 +412,7 @@ func (e *Endpoint) dial(op *opDialExchange) error {
 
 	x.reset_break()
 	x.reset_expire()
-	e.hashnames[op.addr.hashname] = x
+	e.hashnames[op.addr.hashname] = entry
 	x.qDial = append(x.qDial, op)
 	return errDeferred
 }
@@ -452,8 +459,13 @@ func (e *Endpoint) lookup_addr(op *opLookupAddr) {
 }
 
 func (e *Endpoint) register_channel(op *opRegisterChannel) error {
-	x := e.hashnames[op.ch.hashname]
-	if x == nil || x.state != openedExchangeState {
+	entry := e.hashnames[op.ch.hashname]
+	if entry == nil {
+		return UnreachableEndpointError(op.ch.hashname)
+	}
+
+	x := entry.x
+	if x.state != openedExchangeState {
 		return UnreachableEndpointError(op.ch.hashname)
 	}
 

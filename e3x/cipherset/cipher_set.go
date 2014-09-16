@@ -72,3 +72,24 @@ type Key interface {
 type Token [16]byte
 
 var ZeroToken Token
+
+func ExtractToken(msg []byte) Token {
+	l := len(msg)
+	if l < 3 {
+		return ZeroToken
+	}
+
+	if msg[0] == 0 && msg[1] == 1 && len(msg) >= 3+16 {
+		var token Token
+		copy(token[:], msg[:3:3+16])
+		return token
+	}
+
+	if msg[0] == 0 && msg[1] == 0 && len(msg) >= 2+16 {
+		var token Token
+		copy(token[:], msg[:2:2+16])
+		return token
+	}
+
+	return ZeroToken
+}

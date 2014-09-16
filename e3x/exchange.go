@@ -48,7 +48,6 @@ type exchange struct {
 	// lended channels
 	cTransportWrite chan<- transports.WriteOp
 	cEndpointRead   <-chan transports.ReadOp
-	cHandshakeRead  <-chan opHandshakeRead
 
 	nextHandshake     int
 	tExpire           *time.Timer
@@ -79,7 +78,6 @@ func newExchange(
 	token cipherset.Token,
 	w chan<- transports.WriteOp,
 	r <-chan transports.ReadOp,
-	rHandshake <-chan opExchangeReadHandshake,
 ) *exchange {
 	x := &exchange{
 		hashname:        hashname,
@@ -91,7 +89,6 @@ func newExchange(
 		cDone:           make(chan struct{}),
 		cTransportWrite: w,
 		cEndpointRead:   r,
-		cHandshakeRead:  rHandshake,
 	}
 	// x.tExpire = e.scheduler.NewEvent(x.on_expire)
 	// x.tBreak = e.scheduler.NewEvent(x.on_break)
@@ -121,7 +118,7 @@ func (x *exchange) run() {
 	for {
 		var (
 			cExchangeWrite = x.cExchangeWrite
-			cExchangeRead  = x.cExchangeRead
+			// cExchangeRead  = x.cExchangeRead
 		)
 
 		select {
@@ -130,10 +127,11 @@ func (x *exchange) run() {
 			x.deliver_packet(op)
 
 		case op := <-x.cEndpointRead:
-			x.received_packet(op)
-
-		case op := <-x.cHandshakeRead:
-			x.received_handshake(op)
+			if len(op.Msg) >= 3 && op.Msg[1] == 1 {
+				x.received_handshake(op)
+			} else {
+				x.received_packet(op)
+			}
 
 		}
 
@@ -151,15 +149,37 @@ func (e *exchange) knownParts() cipherset.Parts {
 	return e.parts
 }
 
-func (e *exchange) received_handshake(op opHandshakeRead) bool {
+func (e *exchange) received_handshake(op transports.ReadOp) bool {
 	// tracef("receiving_handshake(%p) pkt=%v", e, op.pkt)
 
 	var (
-		csid = op.handshake.CSID()
-		seq  = op.handshake.At()
-		err  error
+		pkt       *lob.Packet
+		handshake cipherset.Handshake
+		csid      uint8
+		seq       uint32
+		err       error
 	)
 
+	if len(op.Msg) < 3 {
+		return false
+	}
+
+	pkt, err = lob.Decode(op.Msg)
+	if err != nil {
+		return false
+	}
+
+	if len(pkt.Head) != 1 {
+		return false
+	}
+	csid = uint8(pkt.Head[0])
+
+	_, handshake, err = cipherset.DecryptHandshake(csid, e.endpoint.key_for_cs(csid), pkt.Body)
+	if err != nil {
+		return false
+	}
+
+	seq = handshake.At()
 	if seq < e.last_seq {
 		return false
 	}
@@ -182,22 +202,22 @@ func (e *exchange) received_handshake(op opHandshakeRead) bool {
 		return false
 	}
 
-	if !e.cipher.ApplyHandshake(op.handshake) {
+	if !e.cipher.ApplyHandshake(handshake) {
 		return false
 	}
 
 	if e.keys == nil {
-		e.keys = cipherset.Keys{e.csid: op.handshake.PublicKey()}
+		e.keys = cipherset.Keys{e.csid: handshake.PublicKey()}
 	}
 	if e.parts == nil {
-		e.parts = op.handshake.Parts()
+		e.parts = handshake.Parts()
 	}
 
 	if seq > e.last_seq {
-		e.deliver_handshake(seq, op.src)
-		e.addressBook.AddAddress(op.src)
+		e.deliver_handshake(seq, op.Src)
+		e.addressBook.AddAddress(op.Src)
 	} else {
-		e.addressBook.ReceivedHandshake(op.src)
+		e.addressBook.ReceivedHandshake(op.Src)
 	}
 
 	e.state = openedExchangeState
@@ -447,4 +467,8 @@ func (x *exchange) nextChannelId() uint32 {
 
 	x.next_channel_id = id + 2
 	return id
+}
+
+func (e *exchange) done() <-chan struct{} {
+	return e.cDone
 }
