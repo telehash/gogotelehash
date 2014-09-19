@@ -14,6 +14,10 @@ import (
 )
 
 func TestSimpleEndpoint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is a long running test.")
+	}
+
 	assert := assert.New(t)
 
 	eventC := make(chan events.E)
@@ -46,13 +50,13 @@ func TestSimpleEndpoint(t *testing.T) {
 	assert.NoError(err)
 
 	tracef("HELLO")
-	err = ea.DialExchange(addrB)
+	_, err = ea.Dial(addrB)
 	assert.NoError(err)
 
-	err = ea.DialExchange(addrB)
+	_, err = ea.Dial(addrB)
 	assert.NoError(err)
 
-	err = eb.DialExchange(addrA)
+	_, err = eb.Dial(addrA)
 	assert.NoError(err)
 
 	time.Sleep(2*time.Minute + 10*time.Second)

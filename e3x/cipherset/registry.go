@@ -52,10 +52,10 @@ func DecryptMessage(csid uint8, localKey, remoteKey Key, p []byte) ([]byte, erro
 	return c.DecryptMessage(localKey, remoteKey, p)
 }
 
-func DecryptHandshake(csid uint8, localKey Key, p []byte) (uint32, Handshake, error) {
+func DecryptHandshake(csid uint8, localKey Key, p []byte) (Handshake, error) {
 	c := ciphers[csid]
 	if c == nil {
-		return 0, nil, ErrUnknownCSID
+		return nil, ErrUnknownCSID
 	}
 
 	return c.DecryptHandshake(localKey, p)

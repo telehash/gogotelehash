@@ -9,7 +9,6 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 type UnreachableEndpointError hashname.H
@@ -65,23 +64,18 @@ type Channel struct {
 	cChannelWrite chan opChannelWrite
 	cChannelRead  chan opChannelRead
 	cChannelClose chan opChannelClose
+	cClosing      chan struct{}
 	cDone         chan struct{}
 
 	// lended channels
 	cExchangeWrite chan<- opExchangeWrite
 	cExchangeRead  <-chan opExchangeRead
-	cEventsOut     chan<- events.E
-	cEventsIn      <-chan events.E
+	cUnregister    chan<- opChannelUnregister
 
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
 	tReadDeadline  *time.Timer
 	lastSentAck    time.Time
-}
-
-type opRegisterChannel struct {
-	ch   *Channel
-	cErr chan error
 }
 
 type opChannelWrite struct {
@@ -96,6 +90,11 @@ type opChannelRead struct {
 
 type opChannelClose struct {
 	cErr chan error
+}
+
+type opChannelUnregister struct {
+	channelId uint32
+	c         *Channel
 }
 
 type readBufferEntry struct {
@@ -115,8 +114,7 @@ func newChannel(
 	reliable bool, serverside bool,
 	w chan<- opExchangeWrite,
 	r <-chan opExchangeRead,
-	ei <-chan events.E,
-	eo chan<- events.E,
+	unregister chan<- opChannelUnregister,
 ) *Channel {
 	return &Channel{
 		hashname:       hn,
@@ -128,11 +126,11 @@ func newChannel(
 		cChannelWrite:  make(chan opChannelWrite),
 		cChannelRead:   make(chan opChannelRead),
 		cChannelClose:  make(chan opChannelClose),
+		cClosing:       make(chan struct{}),
 		cDone:          make(chan struct{}),
 		cExchangeWrite: w,
 		cExchangeRead:  r,
-		cEventsIn:      ei,
-		cEventsOut:     eo,
+		cUnregister:    unregister,
 		oSeq:           -1,
 		iBufferedSeq:   -1,
 		iSeenSeq:       -1,
@@ -152,7 +150,9 @@ func (c *Channel) run() {
 		close(c.cChannelWrite)
 		close(c.cChannelClose)
 
-		c.cEventsOut <- &ChannelClosedEvent{c}
+		if c.cUnregister != nil {
+			c.cUnregister <- opChannelUnregister{c.id, c}
+		}
 	}()
 
 	c.tOpenDeadline = time.NewTimer(60 * time.Second)
@@ -160,8 +160,6 @@ func (c *Channel) run() {
 	c.tCloseDeadline.Stop()
 	c.tReadDeadline = time.NewTimer(60 * time.Second)
 	c.tReadDeadline.Stop()
-
-	c.cEventsOut <- &ChannelOpenedEvent{c}
 
 	for {
 		var (
@@ -183,6 +181,20 @@ func (c *Channel) run() {
 
 		if c.block_close() {
 			cChannelClose = nil
+		}
+
+		if c.serverside {
+			tracef("S> TICK block(w=%v r=%v c=%v)",
+				cChannelWrite == nil,
+				cChannelRead == nil,
+				cChannelClose == nil,
+			)
+		} else {
+			tracef("C> TICK block(w=%v r=%v c=%v)",
+				cChannelWrite == nil,
+				cChannelRead == nil,
+				cChannelClose == nil,
+			)
 		}
 
 		select {
@@ -229,25 +241,13 @@ func (c *Channel) RemoteHashname() hashname.H {
 	return c.hashname
 }
 
-func (e *Endpoint) Dial(addr *Addr, typ string, reliable bool) (*Channel, error) {
-	err := e.DialExchange(addr)
+func (e *Endpoint) Open(addr *Addr, typ string, reliable bool) (*Channel, error) {
+	x, err := e.Dial(addr)
 	if err != nil {
 		return nil, err
 	}
 
-	ch := newChannel(addr.hashname, typ, reliable, false, nil, nil, nil, nil)
-	panic("Fix this")
-
-	{ // register channel
-		op := opRegisterChannel{ch: ch, cErr: make(chan error)}
-		e.cRegisterChannel <- &op
-		err := <-op.cErr
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return ch, nil
+	return x.Open(typ, reliable)
 }
 
 func (c *Channel) WritePacket(pkt *lob.Packet) error {
@@ -357,6 +357,12 @@ func (c *Channel) deliver_packet(op opChannelWrite) {
 	end, _ := pkt.Header().GetBool("end")
 	if end {
 		c.deliveredEnd = true
+
+		if !c.closing {
+			c.tCloseDeadline = time.NewTimer(60 * time.Second)
+			c.closing = true
+			close(c.cClosing)
+		}
 	}
 
 	if c.reliable {
@@ -588,6 +594,7 @@ func (c *Channel) close(op opChannelClose) {
 	if !c.closing {
 		c.tCloseDeadline = time.NewTimer(60 * time.Second)
 		c.closing = true
+		close(c.cClosing)
 	}
 
 	if !c.deliveredEnd {
@@ -676,10 +683,10 @@ func (c *Channel) maybe_deliver_ack() {
 	}
 
 	if c.iSeq < 0 {
-		return // nothin to ack
+		return // nothing to ack
 	}
 
-	if c.iSeq-c.iAckedSeq > 30 {
+	if c.iSeq-c.iAckedSeq >= 30 {
 		shouldAck = true
 	}
 
@@ -700,7 +707,8 @@ func (c *Channel) deliver_ack() {
 	pkt := &lob.Packet{}
 	pkt.Header().SetUint32("c", c.id)
 	c.apply_ack_headers(pkt)
-	c.cExchangeWrite <- opExchangeWrite{pkt, nil}
+	go func() { c.cExchangeWrite <- opExchangeWrite{pkt, nil} }()
+	tracef("ACK serverside=%v hdr=%v", c.serverside, pkt.Header())
 }
 
 func (c *Channel) apply_ack_headers(pkt *lob.Packet) {

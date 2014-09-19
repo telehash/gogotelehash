@@ -81,7 +81,6 @@ func (s *cipherTestSuite) TestHandshake() {
 		sb  cipherset.State
 		ha  cipherset.Handshake
 		hb  cipherset.Handshake
-		seq uint32
 		box []byte
 		err error
 		ok  bool
@@ -116,12 +115,12 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.NoError(err)
 	assert.NotNil(box)
 
-	seq, hb, err = c.DecryptHandshake(kb, box)
+	hb, err = c.DecryptHandshake(kb, box)
 	assert.NoError(err)
 	assert.NotNil(hb)
 	assert.Equal(ka.Public(), hb.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
-	assert.Equal(1, seq)
+	assert.Equal(1, hb.At())
 
 	sb, err = c.NewState(kb)
 	assert.NoError(err)
@@ -140,19 +139,16 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.True(sb.CanDecryptHandshake())
 	assert.False(sb.NeedsRemoteKey())
 
-	tb := sb.RemoteToken()
-	assert.Equal(box[4:4+16], tb[:])
-
 	box, err = sb.EncryptHandshake(1, cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"})
 	assert.NoError(err)
 	assert.NotNil(box)
 
-	seq, ha, err = c.DecryptHandshake(ka, box)
+	ha, err = c.DecryptHandshake(ka, box)
 	assert.NoError(err)
 	assert.NotNil(ha)
 	assert.Equal(kb.Public(), ha.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, ha.Parts())
-	assert.Equal(1, seq)
+	assert.Equal(1, ha.At())
 
 	ok = sa.ApplyHandshake(ha)
 	assert.True(ok)
@@ -196,13 +192,13 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	box, err = sa.EncryptHandshake(1, nil)
 	assert.NoError(err)
-	_, hb, err = c.DecryptHandshake(kb, box)
+	hb, err = c.DecryptHandshake(kb, box)
 	assert.NoError(err)
 	ok = sb.ApplyHandshake(hb)
 	assert.True(ok)
 	box, err = sb.EncryptHandshake(1, nil)
 	assert.NoError(err)
-	_, ha, err = c.DecryptHandshake(ka, box)
+	ha, err = c.DecryptHandshake(ka, box)
 	assert.NoError(err)
 	ok = sa.ApplyHandshake(ha)
 	assert.True(ok)

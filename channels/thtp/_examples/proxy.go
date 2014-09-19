@@ -61,7 +61,7 @@ func main() {
 		log.Printf("peerAddr:\n%s", peerAddrJSON)
 	}
 
-	err = e.DialExchange(peerAddr)
+	err = e.Dial(peerAddr)
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

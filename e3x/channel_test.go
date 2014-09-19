@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
@@ -16,88 +17,65 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
-type channelTestSuite struct {
-	suite.Suite
-	A      *Endpoint
-	B      *Endpoint
-	events chan events.E
+func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
+	with_endpoint(t, func(a *Endpoint) {
+		with_endpoint(t, func(b *Endpoint) {
+			time.Sleep(1 * time.Second)
+			f(a, b)
+		})
+	})
 }
 
-func TestChannels(t *testing.T) {
-	suite.Run(t, &channelTestSuite{})
-}
-
-func (c *channelTestSuite) SetupTest() {
-	return
-
+func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 	var (
-		assert = c.Assertions
-		err    error
-		tc     = mux.Config{
+		err     error
+		key     cipherset.Key
+		e       *Endpoint
+		cEvents = make(chan events.E)
+		tc      = mux.Config{
 			udp.Config{Network: "udp4"},
 			udp.Config{Network: "udp6"},
 		}
 	)
 
-	c.events = make(chan events.E)
-	go events.Log(nil, c.events)
+	go events.Log(nil, cEvents)
 
-	ka, err := cipherset.GenerateKey(0x3a)
-	assert.NoError(err)
+	key, err = cipherset.GenerateKey(0x3a)
+	require.NoError(t, err)
+	require.NotNil(t, key)
 
-	kb, err := cipherset.GenerateKey(0x3a)
-	assert.NoError(err)
+	e = New(cipherset.Keys{0x3a: key}, tc)
+	require.NotNil(t, e)
 
-	c.A = New(cipherset.Keys{0x3a: ka}, tc)
-	c.B = New(cipherset.Keys{0x3a: kb}, tc)
+	e.Subscribe(cEvents)
 
-	c.A.Subscribe(c.events)
-	c.B.Subscribe(c.events)
+	err = e.Start()
+	require.NoError(t, err)
 
-	err = c.A.Start()
-	assert.NoError(err)
+	defer func() {
+		err = e.Stop()
+		require.NoError(t, err)
 
-	err = c.B.Start()
-	assert.NoError(err)
+		close(cEvents)
+	}()
 
-	time.Sleep(1 * time.Second)
+	f(e)
 }
 
-func (c *channelTestSuite) TearDownTest() {
-	return
-
+func TestBasicUnrealiable(t *testing.T) {
 	var (
-		assert = c.Assertions
-		err    error
-	)
-
-	err = c.A.Stop()
-	assert.NoError(err)
-
-	err = c.B.Stop()
-	assert.NoError(err)
-
-	close(c.events)
-}
-
-func (s *channelTestSuite) TestBasicUnrealiable() {
-	var (
-		assert = s.Assertions
+		assert = assert.New(t)
 		c      *Channel
 		w      = make(chan opExchangeWrite, 1)
 		r      = make(chan opExchangeRead, 1)
-		ei     = make(chan events.E)
-		eo     = make(chan events.E)
 		pkt    *lob.Packet
 		err    error
 	)
 
-	go events.Log(nil, eo)
-
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", false, false,
-		w, r, ei, eo)
+		w, r, nil)
 	go c.run()
 
 	go func() {
@@ -137,24 +115,20 @@ func (s *channelTestSuite) TestBasicUnrealiable() {
 	assert.NoError(err)
 }
 
-func (s *channelTestSuite) TestBasicRealiable() {
+func TestBasicRealiable(t *testing.T) {
 	var (
-		assert = s.Assertions
+		assert = assert.New(t)
 		c      *Channel
 		w      = make(chan opExchangeWrite, 1)
 		r      = make(chan opExchangeRead, 1)
-		ei     = make(chan events.E)
-		eo     = make(chan events.E)
 		pkt    *lob.Packet
 		err    error
 	)
 
-	go events.Log(nil, eo)
-
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", true, false,
-		w, r, ei, eo)
+		w, r, nil)
 	go c.run()
 
 	go func() {
@@ -217,165 +191,167 @@ func (s *channelTestSuite) TestBasicRealiable() {
 	assert.NoError(err)
 }
 
-func (s *channelTestSuite) TestPingPong() {
-	return // SKIP
-
-	var (
-		assert = s.Assertions
-		A      = s.A
-		B      = s.B
-		c      *Channel
-		addr   *Addr
-		pkt    *lob.Packet
-		err    error
-	)
-
-	A.AddHandler("ping", HandlerFunc(func(c *Channel) {
+func TestPingPong(t *testing.T) {
+	with_two_endpoints(t, func(A, B *Endpoint) {
 		var (
-			err error
+			assert = assert.New(t)
+			c      *Channel
+			addr   *Addr
+			pkt    *lob.Packet
+			err    error
 		)
 
-		defer c.Close()
+		A.AddHandler("ping", HandlerFunc(func(c *Channel) {
+			var (
+				err error
+			)
 
-		pkt, err = c.ReadPacket()
+			defer c.Close()
+
+			pkt, err = c.ReadPacket()
+			assert.NoError(err)
+			if assert.NotNil(pkt) {
+				assert.Equal("ping", string(pkt.Body))
+
+				err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+				assert.NoError(err)
+			}
+		}))
+
+		addr, err = A.LocalAddr()
 		assert.NoError(err)
-		assert.NotNil(pkt)
-		assert.Equal("ping", string(pkt.Body))
 
-		err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+		c, err = B.Open(addr, "ping", false)
 		assert.NoError(err)
-	}))
+		if assert.NotNil(c) {
+			defer c.Close()
 
-	addr, err = A.LocalAddr()
-	s.T().Logf("A.LocalAddr => %v", addr.addrs)
-	assert.NoError(err)
+			err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
+			assert.NoError(err)
 
-	c, err = B.Dial(addr, "ping", false)
-	assert.NoError(err)
-	assert.NotNil(c)
-
-	defer c.Close()
-
-	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
-	assert.NoError(err)
-
-	pkt, err = c.ReadPacket()
-	assert.NoError(err)
-	assert.NotNil(pkt)
-	if pkt != nil {
-		assert.Equal("pong", string(pkt.Body))
-	}
+			pkt, err = c.ReadPacket()
+			assert.NoError(err)
+			if assert.NotNil(pkt) {
+				assert.Equal("pong", string(pkt.Body))
+			}
+		}
+	})
 }
 
-func (s *channelTestSuite) TestPingPongReliable() {
-	return // SKIP
-
-	var (
-		assert = s.Assertions
-		A      = s.A
-		B      = s.B
-		c      *Channel
-		addr   *Addr
-		pkt    *lob.Packet
-		err    error
-	)
-
-	A.AddHandler("ping", HandlerFunc(func(c *Channel) {
+func TestPingPongReliable(t *testing.T) {
+	with_two_endpoints(t, func(A, B *Endpoint) {
 		var (
-			err error
+			assert = assert.New(t)
+			c      *Channel
+			addr   *Addr
+			pkt    *lob.Packet
+			err    error
 		)
 
-		defer c.Close()
+		A.AddHandler("ping", HandlerFunc(func(c *Channel) {
+			var (
+				err error
+			)
 
-		pkt, err = c.ReadPacket()
+			defer c.Close()
+
+			pkt, err = c.ReadPacket()
+			assert.NoError(err)
+			if assert.NotNil(pkt) {
+				assert.Equal("ping", string(pkt.Body))
+
+				err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+				assert.NoError(err)
+			}
+		}))
+
+		addr, err = A.LocalAddr()
 		assert.NoError(err)
-		assert.NotNil(pkt)
-		assert.Equal("ping", string(pkt.Body))
 
-		err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+		c, err = B.Open(addr, "ping", true)
 		assert.NoError(err)
-	}))
+		if assert.NotNil(c) {
 
-	addr, err = A.LocalAddr()
-	assert.NoError(err)
+			err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
+			assert.NoError(err)
 
-	c, err = B.Dial(addr, "ping", true)
-	assert.NoError(err)
-	assert.NotNil(c)
+			pkt, err = c.ReadPacket()
+			assert.NoError(err)
+			if assert.NotNil(pkt) {
+				assert.Equal("pong", string(pkt.Body))
+			}
 
-	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
-	assert.NoError(err)
-
-	pkt, err = c.ReadPacket()
-	assert.NoError(err)
-	assert.NotNil(pkt)
-	if pkt != nil {
-		assert.Equal("pong", string(pkt.Body))
-	}
-
-	err = c.Close()
-	assert.NoError(err)
-}
-
-func (s *channelTestSuite) TestFloodReliable() {
-	return // SKIP
-
-	var (
-		assert = s.Assertions
-		A      = s.A
-		B      = s.B
-		c      *Channel
-		addr   *Addr
-		pkt    *lob.Packet
-		err    error
-	)
-
-	A.AddHandler("flood", HandlerFunc(func(c *Channel) {
-		var (
-			err error
-		)
-
-		defer c.Close()
-
-		pkt, err = c.ReadPacket()
-		assert.NoError(err)
-		assert.NotNil(pkt)
-
-		for i := 0; i < 1000000; i++ {
-			pkt := &lob.Packet{}
-			pkt.Header().SetInt("flood_id", i)
-			err = c.WritePacket(pkt)
+			err = c.Close()
 			assert.NoError(err)
 		}
-	}))
+	})
+}
 
-	addr, err = A.LocalAddr()
-	assert.NoError(err)
-
-	c, err = B.Dial(addr, "flood", true)
-	assert.NoError(err)
-	assert.NotNil(c)
-
-	defer c.Close()
-
-	err = c.WritePacket(&lob.Packet{})
-	assert.NoError(err)
-
-	lastId := -1
-	for {
-		pkt, err = c.ReadPacket()
-		if err == io.EOF {
-			break
-		}
-		assert.NoError(err)
-		assert.NotNil(pkt)
-		if err != nil {
-			break
-		}
-		if pkt != nil {
-			id, _ := pkt.Header().GetInt("flood_id")
-			assert.True(lastId < id)
-			lastId = id
-		}
+func TestFloodReliable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this is a long running test.")
 	}
+
+	with_two_endpoints(t, func(A, B *Endpoint) {
+		var (
+			assert = assert.New(t)
+			c      *Channel
+			addr   *Addr
+			pkt    *lob.Packet
+			err    error
+		)
+
+		A.AddHandler("flood", HandlerFunc(func(c *Channel) {
+			var (
+				err error
+			)
+
+			defer c.Close()
+
+			pkt, err = c.ReadPacket()
+			assert.NoError(err)
+			assert.NotNil(pkt)
+			tracef("S> RX open")
+
+			for i := 0; i < 1000000; i++ {
+				pkt := &lob.Packet{}
+				pkt.Header().SetInt("flood_id", i)
+				err = c.WritePacket(pkt)
+				assert.NoError(err)
+				tracef("S> TX %d", i)
+			}
+		}))
+
+		addr, err = A.LocalAddr()
+		assert.NoError(err)
+
+		c, err = B.Open(addr, "flood", true)
+		assert.NoError(err)
+		assert.NotNil(c)
+
+		defer c.Close()
+
+		err = c.WritePacket(&lob.Packet{})
+		assert.NoError(err)
+		tracef("C> TX open")
+
+		lastId := -1
+		for {
+			pkt, err = c.ReadPacket()
+			if err == io.EOF {
+				break
+			}
+			assert.NoError(err)
+			assert.NotNil(pkt)
+			if err != nil {
+				break
+			}
+			if pkt != nil {
+				id, _ := pkt.Header().GetInt("flood_id")
+				assert.True(lastId < id)
+				lastId = id
+				tracef("C> RX %d", id)
+			}
+		}
+	})
 }

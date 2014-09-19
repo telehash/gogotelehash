@@ -28,18 +28,10 @@ func init() {
 type cipher struct{}
 
 type handshake struct {
-	token   *cipherset.Token
 	key     *key
 	lineKey *key
 	parts   cipherset.Parts
 	at      uint32
-}
-
-func (h *handshake) Token() cipherset.Token {
-	if h.token == nil {
-		return cipherset.ZeroToken
-	}
-	return *h.token
 }
 
 func (h *handshake) Parts() cipherset.Parts {
@@ -101,12 +93,12 @@ func (c *cipher) NewState(localKey cipherset.Key) (cipherset.State, error) {
 }
 
 func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]byte, error) {
-	if len(p) < 4+32+16 {
+	if len(p) < 32+4+16 {
 		return nil, cipherset.ErrInvalidMessage
 	}
 
 	var (
-		ctLen         = len(p) - (4 + 32 + 16)
+		ctLen         = len(p) - (32 + 4 + 16)
 		out           = make([]byte, ctLen)
 		localKey_, _  = localKey.(*key)
 		remoteKey_, _ = remoteKey.(*key)
@@ -123,10 +115,10 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 		return nil, cipherset.ErrInvalidState
 	}
 
-	copy(nonce[:], p[:4])
-	copy(remoteLineKey[:], p[4:4+32])
-	copy(mac[:], p[4+32+ctLen:])
-	ciphertext = p[4+32 : 4+32+ctLen]
+	copy(remoteLineKey[:], p[:32])
+	copy(nonce[:], p[32:32+4])
+	copy(mac[:], p[32+4+ctLen:])
+	ciphertext = p[32+4 : 32+4+ctLen]
 
 	{ // make macKey
 		box.Precompute(&macKey, remoteKey_.pub, localKey_.prv)
@@ -135,12 +127,12 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 			sha = sha256.New()
 		)
 
-		sha.Write(p[:4])
+		sha.Write(p[32 : 32+4])
 		sha.Write(macKey[:])
 		sha.Sum(macKey[:0])
 	}
 
-	if !poly1305.Verify(&mac, p[4:4+32+ctLen], &macKey) {
+	if !poly1305.Verify(&mac, p[:32+4+ctLen], &macKey) {
 		return nil, cipherset.ErrInvalidMessage
 	}
 
@@ -156,13 +148,13 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 	return out, nil
 }
 
-func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (uint32, cipherset.Handshake, error) {
-	if len(p) < 4+32+16 {
-		return 0, nil, cipherset.ErrInvalidMessage
+func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.Handshake, error) {
+	if len(p) < 32+4+16 {
+		return nil, cipherset.ErrInvalidMessage
 	}
 
 	var (
-		ctLen         = len(p) - (4 + 32 + 16)
+		ctLen         = len(p) - (32 + 4 + 16)
 		out           = make([]byte, ctLen)
 		handshake     = &handshake{}
 		localKey_, _  = localKey.(*key)
@@ -179,13 +171,13 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (uint32, cip
 	)
 
 	if localKey_ == nil {
-		return 0, nil, cipherset.ErrInvalidState
+		return nil, cipherset.ErrInvalidState
 	}
 
-	copy(nonce[:], p[:4])
-	copy(remoteLineKey[:], p[4:4+32])
-	copy(mac[:], p[4+32+ctLen:])
-	ciphertext = p[4+32 : 4+32+ctLen]
+	copy(remoteLineKey[:], p[:32])
+	copy(nonce[:], p[32:32+4])
+	copy(mac[:], p[32+4+ctLen:])
+	ciphertext = p[32+4 : 32+4+ctLen]
 
 	// make agreedKey
 	box.Precompute(&agreedKey, &remoteLineKey, localKey_.prv)
@@ -193,38 +185,36 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (uint32, cip
 	// decode BODY
 	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
 	if !ok {
-		return 0, nil, cipherset.ErrInvalidMessage
+		return nil, cipherset.ErrInvalidMessage
 	}
 
 	{ // decode inner
 		inner, err := lob.Decode(out)
 		if err != nil {
-			return 0, nil, cipherset.ErrInvalidMessage
+			return nil, cipherset.ErrInvalidMessage
 		}
 
 		at, hasAt = inner.Header().GetUint32("at")
 		if !hasAt {
-			return 0, nil, cipherset.ErrInvalidMessage
+			return nil, cipherset.ErrInvalidMessage
 		}
 
 		delete(inner.Header(), "at")
 
 		parts, err := cipherset.PartsFromHeader(inner.Header())
 		if err != nil {
-			return 0, nil, cipherset.ErrInvalidMessage
+			return nil, cipherset.ErrInvalidMessage
 		}
 
 		if len(inner.Body) != 32 {
-			return 0, nil, cipherset.ErrInvalidMessage
+			return nil, cipherset.ErrInvalidMessage
 		}
 		copy(remoteKey[:], inner.Body)
 
 		handshake.at = at
 		handshake.key = makeKey(nil, &remoteKey)
 		handshake.lineKey = makeKey(nil, &remoteLineKey)
-		handshake.token = new(cipherset.Token)
 		handshake.parts = parts
-		copy((*handshake.token)[:], remoteLineKey[:16])
 	}
 
 	{ // make macKey
@@ -234,16 +224,16 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (uint32, cip
 			sha = sha256.New()
 		)
 
-		sha.Write(p[:4])
+		sha.Write(p[32 : 32+4])
 		sha.Write(macKey[:])
 		sha.Sum(macKey[:0])
 	}
 
-	if !poly1305.Verify(&mac, p[4:4+32+ctLen], &macKey) {
-		return 0, nil, cipherset.ErrInvalidMessage
+	if !poly1305.Verify(&mac, p[:32+4+ctLen], &macKey) {
+		return nil, cipherset.ErrInvalidMessage
 	}
 
-	return at, handshake, nil
+	return handshake, nil
 }
 
 type state struct {
@@ -309,13 +299,15 @@ func (s *state) update() {
 	// make local token
 	if s.localToken == nil && s.localLineKey != nil {
 		s.localToken = new(cipherset.Token)
-		copy((*s.localToken)[:], (*s.localLineKey.pub)[:])
+		sha := sha256.Sum256((*s.localLineKey.pub)[:16])
+		copy((*s.localToken)[:], sha[:16])
 	}
 
 	// make remote token
 	if s.remoteToken == nil && s.remoteLineKey != nil {
 		s.remoteToken = new(cipherset.Token)
-		copy((*s.remoteToken)[:], (*s.remoteLineKey.pub)[:])
+		sha := sha256.Sum256((*s.remoteLineKey.pub)[:16])
+		copy((*s.remoteToken)[:], sha[:16])
 	}
 
 	// generate line keys
@@ -424,7 +416,7 @@ func (s *state) CanDecryptPacket() bool {
 
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	var (
-		out       = make([]byte, 4+32+len(in)+box.Overhead+16)
+		out       = make([]byte, 32+4+len(in)+box.Overhead+16)
 		agreedKey [32]byte
 		ctLen     int
 	)
@@ -433,22 +425,22 @@ func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 		panic("unable to encrypt message")
 	}
 
-	// copy the nonce
-	copy(out[:4], s.nonce[:4])
-
 	// copy public senderLineKey
-	copy(out[4:4+32], (*s.localLineKey.pub)[:])
+	copy(out[:32], (*s.localLineKey.pub)[:])
+
+	// copy the nonce
+	copy(out[32:32+4], s.nonce[:4])
 
 	// make the agreedKey
 	box.Precompute(&agreedKey, s.remoteKey.pub, s.localLineKey.prv)
 
 	// encrypt p
-	ctLen = len(box.SealAfterPrecomputation(out[4+32:4+32], in, s.nonce, &agreedKey))
+	ctLen = len(box.SealAfterPrecomputation(out[32+4:32+4], in, s.nonce, &agreedKey))
 
 	// Sign message
-	s.sign(out[4+32+ctLen:], s.nonce[:4], out[4:4+32+ctLen])
+	s.sign(out[32+4+ctLen:], s.nonce[:4], out[:32+4+ctLen])
 
-	return out[:4+32+ctLen+16], nil
+	return out[:32+4+ctLen+16], nil
 }
 
 func (s *state) EncryptHandshake(at uint32, compact cipherset.Parts) ([]byte, error) {
@@ -468,10 +460,6 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 	)
 
 	if hs == nil {
-		return false
-	}
-
-	if s.remoteToken != nil && *s.remoteToken != *hs.token {
 		return false
 	}
 

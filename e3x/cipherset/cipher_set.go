@@ -1,6 +1,7 @@
 package cipherset
 
 import (
+	"crypto/sha256"
 	"errors"
 
 	"bitbucket.org/simonmenke/go-telehash/lob"
@@ -21,7 +22,7 @@ type Cipher interface {
 	GenerateKey() (Key, error)
 
 	DecryptMessage(localKey, remoteKey Key, p []byte) ([]byte, error)
-	DecryptHandshake(localKey Key, p []byte) (uint32, Handshake, error)
+	DecryptHandshake(localKey Key, p []byte) (Handshake, error)
 
 	NewState(localKey Key) (State, error)
 }
@@ -40,7 +41,6 @@ type State interface {
 	CanDecryptPacket() bool
 
 	IsHigh() bool
-	RemoteToken() Token
 
 	EncryptMessage(in []byte) ([]byte, error)
 	EncryptHandshake(at uint32, compact Parts) ([]byte, error)
@@ -54,7 +54,6 @@ type Handshake interface {
 	CSID() uint8
 
 	At() uint32
-	Token() Token
 	PublicKey() Key // The sender public key
 	Parts() Parts   // The sender parts
 }
@@ -74,22 +73,19 @@ type Token [16]byte
 var ZeroToken Token
 
 func ExtractToken(msg []byte) Token {
-	l := len(msg)
-	if l < 3 {
+	var (
+		token Token
+		l     = len(msg)
+	)
+
+	if l >= 3+16 && msg[0] == 0 && msg[1] == 1 {
+		sha := sha256.Sum256(msg[3 : 3+16])
+		copy(token[:], sha[:16])
+	} else if l >= 2+16 && msg[0] == 0 && msg[1] == 0 {
+		copy(token[:], msg[2:2+16])
+	} else {
 		return ZeroToken
 	}
 
-	if msg[0] == 0 && msg[1] == 1 && len(msg) >= 3+16 {
-		var token Token
-		copy(token[:], msg[:3:3+16])
-		return token
-	}
-
-	if msg[0] == 0 && msg[1] == 0 && len(msg) >= 2+16 {
-		var token Token
-		copy(token[:], msg[:2:2+16])
-		return token
-	}
-
-	return ZeroToken
+	return token
 }

@@ -15,8 +15,7 @@ var (
 )
 
 type ExchangeOpenedEvent struct {
-	Hashname  hashname.H
-	Initiator bool
+	Hashname hashname.H
 }
 
 type ExchangeClosedEvent struct {
@@ -33,7 +32,7 @@ type ChannelClosedEvent struct {
 }
 
 func (e *ExchangeOpenedEvent) String() string {
-	return fmt.Sprintf("exchange opened: %s (initiator=%v)", e.Hashname, e.Initiator)
+	return fmt.Sprintf("exchange opened: %s", e.Hashname)
 }
 
 func (e *ExchangeClosedEvent) String() string {
