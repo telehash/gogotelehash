@@ -120,7 +120,7 @@ func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp,
 	)
 
 	go t.run_writer(w, stop)
-	go t.run_reader(r)
+	go t.run_reader(r, stop)
 	go t.run_network_change_detector(e, stop, done)
 
 	return done
@@ -164,7 +164,7 @@ func (t *transport) run_writer(w <-chan transports.WriteOp, done chan struct{}) 
 	}
 }
 
-func (t *transport) run_reader(r chan<- transports.ReadOp) {
+func (t *transport) run_reader(r chan<- transports.ReadOp, stop <-chan struct{}) {
 	for {
 		b := bufpool.GetBuffer()
 
@@ -178,9 +178,10 @@ func (t *transport) run_reader(r chan<- transports.ReadOp) {
 			continue
 		}
 
-		r <- transports.ReadOp{
-			Msg: b[:n],
-			Src: &addr{net: t.net, UDPAddr: *a},
+		select {
+		case r <- transports.ReadOp{Msg: b[:n], Src: &addr{net: t.net, UDPAddr: *a}}:
+		case <-stop:
+			return
 		}
 	}
 }

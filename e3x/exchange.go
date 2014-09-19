@@ -14,9 +14,9 @@ import (
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
 
-type BrokenExchange hashname.H
+type BrokenExchangeError hashname.H
 
-func (err BrokenExchange) Error() string {
+func (err BrokenExchangeError) Error() string {
 	return "e3x: broken exchange " + string(err)
 }
 
@@ -87,8 +87,7 @@ type opHandshakeRead struct {
 }
 
 type channelEntry struct {
-	c             *Channel
-	cExchangeRead chan opExchangeRead
+	c *Channel
 }
 
 func newExchange(
@@ -447,32 +446,26 @@ func (e *Exchange) received_packet(op transports.ReadOp) {
 			return // drop (no handler)
 		}
 
-		var (
-			cExchangeRead = make(chan opExchangeRead)
-		)
-
 		c = newChannel(
 			e.remoteAddr.Hashname(),
 			typ,
 			hasSeq,
 			true,
 			e.cExchangeWrite,
-			cExchangeRead,
 			e.cUnregisterChannel,
 		)
 		c.id = cid
 
-		entry = &channelEntry{c, cExchangeRead}
+		entry = &channelEntry{c}
 
 		e.channels[c.id] = entry
 		e.reset_expire()
 		e.subscribers.Emit(&ChannelOpenedEvent{c})
-		go c.run()
 
 		go h.ServeTelehash(c)
 	}
 
-	entry.cExchangeRead <- opExchangeRead{pkt, nil}
+	entry.c.received_packet(pkt)
 }
 
 func (e *Exchange) deliver_packet(op opExchangeWrite) {
@@ -574,7 +567,7 @@ func (e *Exchange) reset_break() {
 }
 
 func (e *Exchange) on_break() {
-	e.expire(BrokenExchange(e.remoteAddr.Hashname()))
+	e.expire(BrokenExchangeError(e.remoteAddr.Hashname()))
 }
 
 func (x *Exchange) unregister_channel(ch *Channel) {
@@ -631,7 +624,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	case x.cExchangeMakeChannel <- &op:
 		// continue
 	case <-x.cDone:
-		return nil, BrokenExchange(x.remoteAddr.Hashname())
+		return nil, BrokenExchangeError(x.remoteAddr.Hashname())
 	}
 
 	select {
@@ -642,15 +635,14 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 			return op.c, nil
 		}
 	case <-x.cDone:
-		return nil, BrokenExchange(x.remoteAddr.Hashname())
+		return nil, BrokenExchangeError(x.remoteAddr.Hashname())
 	}
 }
 
 func (x *Exchange) open_channel(op *opExchangeMakeChannel) {
 	var (
-		cExchangeRead = make(chan opExchangeRead)
-		c             *Channel
-		entry         *channelEntry
+		c     *Channel
+		entry *channelEntry
 	)
 
 	c = newChannel(
@@ -659,16 +651,14 @@ func (x *Exchange) open_channel(op *opExchangeMakeChannel) {
 		op.reliable,
 		false,
 		x.cExchangeWrite,
-		cExchangeRead,
 		x.cUnregisterChannel,
 	)
 	c.id = x.nextChannelId()
 
-	entry = &channelEntry{c, cExchangeRead}
+	entry = &channelEntry{c}
 	x.channels[c.id] = entry
 	x.reset_expire()
 	x.subscribers.Emit(&ChannelOpenedEvent{c})
-	go c.run()
 
 	op.c = c
 	op.cErr <- nil
