@@ -41,6 +41,7 @@ type Channel struct {
 	cndWrite *sync.Cond
 	cndClose *sync.Cond
 
+	x          exchangeI
 	serverside bool
 	id         uint32
 	typ        string
@@ -67,19 +68,15 @@ type Channel struct {
 	readBuffer  map[uint32]*readBufferEntry
 	writeBuffer map[uint32]*writeBufferEntry
 
-	// lended channels
-	cExchangeWrite chan<- opExchangeWrite
-	cUnregister    chan<- opChannelUnregister
-
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
 	tReadDeadline  *time.Timer
 	lastSentAck    time.Time
 }
 
-type opChannelUnregister struct {
-	channelId uint32
-	c         *Channel
+type exchangeI interface {
+	deliver_packet(pkt *lob.Packet) error
+	unregister_channel(channelId uint32)
 }
 
 type readBufferEntry struct {
@@ -97,24 +94,22 @@ type writeBufferEntry struct {
 func newChannel(
 	hn hashname.H, typ string,
 	reliable bool, serverside bool,
-	w chan<- opExchangeWrite,
-	unregister chan<- opChannelUnregister,
+	x exchangeI,
 ) *Channel {
 	c := &Channel{
-		hashname:       hn,
-		typ:            typ,
-		reliable:       reliable,
-		serverside:     serverside,
-		readBuffer:     make(map[uint32]*readBufferEntry, c_READ_BUFFER_SIZE),
-		writeBuffer:    make(map[uint32]*writeBufferEntry, c_WRITE_BUFFER_SIZE),
-		cExchangeWrite: w,
-		cUnregister:    unregister,
-		oSeq:           -1,
-		iBufferedSeq:   -1,
-		iSeenSeq:       -1,
-		iSeq:           -1,
-		oAckedSeq:      -1,
-		iAckedSeq:      -1,
+		x:            x,
+		hashname:     hn,
+		typ:          typ,
+		reliable:     reliable,
+		serverside:   serverside,
+		readBuffer:   make(map[uint32]*readBufferEntry, c_READ_BUFFER_SIZE),
+		writeBuffer:  make(map[uint32]*writeBufferEntry, c_WRITE_BUFFER_SIZE),
+		oSeq:         -1,
+		iBufferedSeq: -1,
+		iSeenSeq:     -1,
+		iSeq:         -1,
+		oAckedSeq:    -1,
+		iAckedSeq:    -1,
 	}
 
 	c.cndRead = sync.NewCond(&c.mtx)
@@ -228,9 +223,7 @@ func (c *Channel) write(pkt *lob.Packet) error {
 		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, time.Time{}}
 	}
 
-	cErr := make(chan error)
-	c.cExchangeWrite <- opExchangeWrite{pkt, cErr}
-	err := <-cErr
+	err := c.x.deliver_packet(pkt)
 	if err != nil {
 		return err
 	}
@@ -608,7 +601,7 @@ func (c *Channel) process_missing_packets(ack uint32, miss []uint32) {
 		e.pkt.Header().SetUint32Slice("miss", omiss)
 		e.lastResend = now
 
-		c.cExchangeWrite <- opExchangeWrite{e.pkt, make(chan error, 1)}
+		c.x.deliver_packet(e.pkt)
 	}
 }
 
@@ -646,7 +639,7 @@ func (c *Channel) deliver_ack() {
 	pkt := &lob.Packet{}
 	pkt.Header().SetUint32("c", c.id)
 	c.apply_ack_headers(pkt)
-	c.cExchangeWrite <- opExchangeWrite{pkt, make(chan error, 1)}
+	c.x.deliver_packet(pkt)
 	tracef("ACK serverside=%v hdr=%v", c.serverside, pkt.Header())
 }
 
@@ -661,7 +654,9 @@ func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
 	}
 
 	pkt.Header().SetUint32("ack", uint32(c.iSeq))
-	pkt.Header().SetUint32Slice("miss", c.buildMissList())
+	if l := c.buildMissList(); len(l) > 0 {
+		pkt.Header().SetUint32Slice("miss", c.buildMissList())
+	}
 
 	c.iAckedSeq = c.iSeq
 	c.lastSentAck = time.Now()

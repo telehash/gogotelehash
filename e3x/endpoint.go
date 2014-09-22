@@ -35,7 +35,7 @@ type Endpoint struct {
 	localAddresses  transports.AddrSet
 
 	cTerminate      chan struct{}
-	cDial           chan *opDial
+	cMakeExchange   chan *opMakeExchange
 	cLookupAddr     chan *opLookupAddr
 	cTransportRead  chan transports.ReadOp
 	cTransportWrite chan transports.WriteOp
@@ -61,7 +61,7 @@ type opReceived struct {
 	transports.ReadOp
 }
 
-type opDial struct {
+type opMakeExchange struct {
 	addr *Addr
 	x    *Exchange
 	cErr chan error
@@ -73,8 +73,7 @@ type opLookupAddr struct {
 }
 
 type exchangeEntry struct {
-	x           *Exchange
-	cReadPacket chan transports.ReadOp
+	x *Exchange
 }
 
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
@@ -121,7 +120,7 @@ func (e *Endpoint) start() error {
 
 	e.tokens = make(map[cipherset.Token]*exchangeEntry)
 	e.hashnames = make(map[hashname.H]*exchangeEntry)
-	e.cDial = make(chan *opDial)
+	e.cMakeExchange = make(chan *opMakeExchange)
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportWrite = make(chan transports.WriteOp)
@@ -197,7 +196,7 @@ func (e *Endpoint) run() {
 			}
 			close(e.cTransportWrite)
 
-		case op := <-e.cDial:
+		case op := <-e.cMakeExchange:
 			e.dial(op)
 
 		case op := <-e.cTransportRead:
@@ -259,16 +258,15 @@ func (e *Endpoint) received(op transports.ReadOp) {
 
 func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	var (
-		entry       *exchangeEntry
-		x           *Exchange
-		localAddr   *Addr
-		csid        uint8
-		localKey    cipherset.Key
-		handshake   cipherset.Handshake
-		token       cipherset.Token
-		hn          hashname.H
-		cReadPacket chan transports.ReadOp
-		err         error
+		entry     *exchangeEntry
+		x         *Exchange
+		localAddr *Addr
+		csid      uint8
+		localKey  cipherset.Key
+		handshake cipherset.Handshake
+		token     cipherset.Token
+		hn        hashname.H
+		err       error
 	)
 
 	token = cipherset.ExtractToken(op.Msg)
@@ -280,7 +278,7 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	entry = e.tokens[token]
 	if entry != nil {
 		tracef("received_handshake() => found token %x", token)
-		entry.cReadPacket <- op
+		entry.x.received(op)
 		tracef("received_handshake() => done %x", token)
 		return
 	}
@@ -315,23 +313,20 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	if entry != nil {
 		tracef("received_handshake() => found hashname %x %s", token, hn)
 		e.tokens[token] = entry
-		entry.cReadPacket <- op
+		entry.x.received(op)
 		tracef("received_handshake() => done %x", token)
 		return
 	}
 
-	cReadPacket = make(chan transports.ReadOp)
-
 	x, err = newExchange(localAddr, nil, handshake, token,
-		e.cTransportWrite, cReadPacket, e.cEventIn, e.handlers)
+		e.cTransportWrite, e.cEventIn, e.handlers)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
 		return // drop
 	}
 
 	entry = &exchangeEntry{
-		x:           x,
-		cReadPacket: cReadPacket,
+		x: x,
 	}
 
 	go x.run()
@@ -339,7 +334,7 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	tracef("received_handshake() => registered %x %s", token, hn)
 	e.hashnames[hn] = entry
 	e.tokens[token] = entry
-	cReadPacket <- op
+	x.received(op)
 	tracef("received_handshake() => done %x", token)
 }
 
@@ -358,26 +353,26 @@ func (e *Endpoint) received_packet(op transports.ReadOp) {
 		return // drop
 	}
 
-	entry.cReadPacket <- op
+	entry.x.received(op)
 }
 
 func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
-	op := opDial{addr, nil, make(chan error)}
-	e.cDial <- &op
+	op := opMakeExchange{addr, nil, make(chan error)}
+	e.cMakeExchange <- &op
 	err := <-op.cErr
 	if err != nil {
 		return nil, err
 	}
 
-	select {
-	case <-op.x.open():
-		return op.x, nil
-	case <-op.x.done():
-		return nil, BrokenExchange(op.x.remoteAddr.Hashname())
+	err = op.x.dial()
+	if err != nil {
+		return nil, err
 	}
+
+	return op.x, nil
 }
 
-func (e *Endpoint) dial(op *opDial) {
+func (e *Endpoint) dial(op *opMakeExchange) {
 	if entry, found := e.hashnames[op.addr.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil
@@ -385,10 +380,9 @@ func (e *Endpoint) dial(op *opDial) {
 	}
 
 	var (
-		cReadPacket = make(chan transports.ReadOp)
-		entry       = &exchangeEntry{cReadPacket: cReadPacket}
-		localAddr   *Addr
-		x           *Exchange
+		entry     = &exchangeEntry{}
+		localAddr *Addr
+		x         *Exchange
 
 		err error
 	)
@@ -400,7 +394,7 @@ func (e *Endpoint) dial(op *opDial) {
 	}
 
 	x, err = newExchange(localAddr, op.addr, nil, cipherset.ZeroToken,
-		e.cTransportWrite, cReadPacket, e.cEventIn, e.handlers)
+		e.cTransportWrite, e.cEventIn, e.handlers)
 	if err != nil {
 		op.cErr <- err
 		return

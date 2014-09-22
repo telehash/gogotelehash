@@ -66,26 +66,28 @@ func TestBasicUnrealiable(t *testing.T) {
 	var (
 		assert = assert.New(t)
 		c      *Channel
-		w      = make(chan opExchangeWrite, 1)
+		x      MockExchange
 		pkt    *lob.Packet
 		err    error
 	)
 
+	{ // mock
+		pkt = &lob.Packet{Body: []byte("ping")}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetString("type", "ping")
+		x.On("deliver_packet", pkt).Return(nil)
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetBool("end", true)
+		x.On("deliver_packet", pkt).Return(nil)
+	}
+
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", false, false,
-		w, nil)
+		&x)
 
-	go func() {
-		op := <-w
-
-		assert.NotNil(op.pkt)
-		if op.pkt != nil {
-			assert.Equal("ping", string(op.pkt.Body))
-		}
-
-		op.cErr <- nil
-	}()
 	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
 	assert.NoError(err)
 
@@ -98,116 +100,68 @@ func TestBasicUnrealiable(t *testing.T) {
 		assert.Equal("pong", string(pkt.Body))
 	}
 
-	go func() {
-		op := <-w
+	pkt = &lob.Packet{}
+	pkt.Header().SetBool("end", true)
+	c.received_packet(pkt)
 
-		assert.NotNil(op.pkt)
-		if op.pkt != nil {
-			end, _ := op.pkt.Header().GetBool("end")
-			assert.True(end)
-		}
-
-		op.cErr <- nil
-
-		pkt := &lob.Packet{}
-		pkt.Header().SetBool("end", true)
-		c.received_packet(pkt)
-	}()
 	err = c.Close()
 	assert.NoError(err)
+
+	x.AssertExpectations(t)
 }
 
 func TestBasicRealiable(t *testing.T) {
 	var (
 		assert = assert.New(t)
 		c      *Channel
-		w      = make(chan opExchangeWrite, 1)
+		x      MockExchange
 		pkt    *lob.Packet
 		err    error
 	)
 
+	{ // mock
+		pkt = &lob.Packet{Body: []byte("ping")}
+		pkt.Header().SetString("type", "ping")
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("seq", 0)
+		x.On("deliver_packet", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("ack", 0)
+		x.On("deliver_packet", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("ack", 0)
+		pkt.Header().SetUint32Slice("miss", []uint32{1})
+		x.On("deliver_packet", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("ack", 1)
+		x.On("deliver_packet", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("seq", 1)
+		pkt.Header().SetBool("end", true)
+		pkt.Header().SetInt("ack", 0)
+		x.On("deliver_packet", pkt).Return(nil).Once()
+	}
+
 	c = newChannel(
 		hashname.H("a-hashname"),
 		"ping", true, false,
-		w, nil)
+		&x)
 
-	go func() {
-		op := <-w
-
-		if assert.NotNil(op.pkt) {
-			seq, _ := op.pkt.Header().GetInt("seq")
-			assert.Equal(0, seq)
-			assert.Equal("ping", string(op.pkt.Body))
-		}
-
-		op.cErr <- nil
-
-		pkt = &lob.Packet{Body: []byte("pong")}
-		pkt.Header().SetUint32("seq", 0)
-		pkt.Header().SetUint32("ack", 0)
-		c.received_packet(pkt)
-
-		op = <-w
-
-		if assert.NotNil(op.pkt) {
-			var (
-				_, hasSeq   = op.pkt.Header().GetInt("seq")
-				ack, hasAck = op.pkt.Header().GetInt("ack")
-			)
-			assert.False(hasSeq)
-			assert.True(hasAck)
-			assert.Equal(0, ack)
-		}
-
-		op.cErr <- nil
-
-		op = <-w
-
-		if assert.NotNil(op.pkt) {
-			seq, _ := op.pkt.Header().GetInt("seq")
-			end, _ := op.pkt.Header().GetBool("end")
-			assert.Equal(1, seq)
-			assert.True(end)
-		}
-
-		op.cErr <- nil
-
-		pkt := &lob.Packet{}
-		pkt.Header().SetBool("end", true)
-		pkt.Header().SetUint32("seq", 1)
-		pkt.Header().SetUint32("ack", 1)
-		c.received_packet(pkt)
-
-		op = <-w
-
-		if assert.NotNil(op.pkt) {
-			var (
-				_, hasSeq   = op.pkt.Header().GetInt("seq")
-				ack, hasAck = op.pkt.Header().GetInt("ack")
-			)
-			assert.False(hasSeq)
-			assert.True(hasAck)
-			assert.Equal(0, ack)
-		}
-
-		op.cErr <- nil
-
-		op = <-w
-
-		if assert.NotNil(op.pkt) {
-			var (
-				_, hasSeq   = op.pkt.Header().GetInt("seq")
-				ack, hasAck = op.pkt.Header().GetInt("ack")
-			)
-			assert.False(hasSeq)
-			assert.True(hasAck)
-			assert.Equal(1, ack)
-		}
-
-		op.cErr <- nil
-	}()
 	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
 	assert.NoError(err)
+
+	pkt = &lob.Packet{Body: []byte("pong")}
+	pkt.Header().SetUint32("seq", 0)
+	pkt.Header().SetUint32("ack", 0)
+	c.received_packet(pkt)
 
 	pkt, err = c.ReadPacket()
 	assert.NoError(err)
@@ -215,8 +169,20 @@ func TestBasicRealiable(t *testing.T) {
 		assert.Equal("pong", string(pkt.Body))
 	}
 
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetBool("end", true)
+		pkt.Header().SetUint32("seq", 1)
+		pkt.Header().SetUint32("ack", 1)
+		c.received_packet(pkt)
+	}()
+
 	err = c.Close()
 	assert.NoError(err)
+
+	x.AssertExpectations(t)
 }
 
 func TestPingPong(t *testing.T) {

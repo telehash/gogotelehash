@@ -48,9 +48,9 @@ func TestBasicExchange(t *testing.T) {
 	)
 
 	go events.Log(nil, cEvents)
-	go pipeTransport(A.r, B.w)
+	go pipeTransport(A.x, B.w)
 
-	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.w, A.r, cEvents, nil)
+	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.w, cEvents, nil)
 	assert.NoError(err)
 	go A.x.run()
 
@@ -70,12 +70,12 @@ func TestBasicExchange(t *testing.T) {
 		assert.NoError(err)
 		token = cipherset.ExtractToken(op.Msg)
 
-		B.x, err = newExchange(B.a, nil, handshake, token, B.w, B.r, cEvents, nil)
+		B.x, err = newExchange(B.a, nil, handshake, token, B.w, cEvents, nil)
 		assert.NoError(err)
 		go B.x.run()
 
 		if B.x != nil {
-			go pipeTransport(B.r, A.w)
+			go pipeTransport(B.x, A.w)
 
 			B.r <- transports.ReadOp{Msg: op.Msg, Src: op.Dst}
 			op.C <- nil
@@ -104,46 +104,9 @@ func makeAddr(name string) *Addr {
 	return addr
 }
 
-func pipeTransport(r chan<- transports.ReadOp, w <-chan transports.WriteOp) {
-	var (
-		q      []transports.ReadOp
-		closed bool
-	)
-
-	for {
-		var (
-			rr  = r
-			qop transports.ReadOp
-		)
-
-		if len(q) == 0 && closed {
-			break
-		}
-
-		if len(q) > 0 {
-			qop = q[0]
-		} else {
-			rr = nil
-		}
-
-		select {
-
-		case op, open := <-w:
-			if !open {
-				w = nil
-				closed = true
-			} else {
-				op.C <- nil
-				q = append(q, transports.ReadOp{Msg: op.Msg, Src: op.Dst})
-			}
-
-		case rr <- qop:
-			if len(q) > 1 {
-				copy(q, q[1:])
-			}
-			q = q[:len(q)-1]
-
-		}
+func pipeTransport(x *Exchange, w <-chan transports.WriteOp) {
+	for op := range w {
+		x.received(transports.ReadOp{Msg: op.Msg, Src: op.Dst})
 	}
 }
 

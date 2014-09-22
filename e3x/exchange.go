@@ -3,6 +3,7 @@ package e3x
 import (
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
@@ -29,6 +30,9 @@ const (
 )
 
 type Exchange struct {
+	mtx     sync.Mutex
+	cndOpen *sync.Cond
+
 	state           exchangeState
 	last_local_seq  uint32
 	last_remote_seq uint32
@@ -44,17 +48,13 @@ type Exchange struct {
 	handlers        map[string]Handler
 
 	// owned channels
-	cExchangeWrite       chan opExchangeWrite
 	cExchangeRead        chan opExchangeRead
 	cExchangeMakeChannel chan *opExchangeMakeChannel
-	cUnregisterChannel   chan opChannelUnregister
-	cOpen                chan struct{}
 	cDone                chan struct{}
 	cTerminate           chan struct{}
 
 	// lended channels
 	cTransportWrite   chan<- transports.WriteOp
-	cEndpointRead     <-chan transports.ReadOp
 	cDownstreamEvents chan<- events.E // exchange -> endpoint
 
 	nextHandshake     int
@@ -62,11 +62,6 @@ type Exchange struct {
 	tBreak            *time.Timer
 	tDeliverHandshake *time.Timer
 	subscribers       events.Hub
-}
-
-type opExchangeWrite struct {
-	pkt  *lob.Packet
-	cErr chan error
 }
 
 type opExchangeRead struct {
@@ -96,7 +91,6 @@ func newExchange(
 	handshake cipherset.Handshake,
 	token cipherset.Token,
 	w chan<- transports.WriteOp,
-	r <-chan transports.ReadOp,
 	eDown chan<- events.E,
 	handlers map[string]Handler,
 ) (*Exchange, error) {
@@ -105,18 +99,22 @@ func newExchange(
 		remoteAddr:           remoteAddr,
 		channels:             make(map[uint32]*channelEntry),
 		addressBook:          newAddressBook(),
-		cExchangeWrite:       make(chan opExchangeWrite, 100),
 		cExchangeRead:        make(chan opExchangeRead),
 		cExchangeMakeChannel: make(chan *opExchangeMakeChannel),
-		cUnregisterChannel:   make(chan opChannelUnregister),
-		cOpen:                make(chan struct{}),
 		cDone:                make(chan struct{}),
 		cTerminate:           make(chan struct{}),
 		cTransportWrite:      w,
-		cEndpointRead:        r,
 		cDownstreamEvents:    eDown,
 		handlers:             handlers,
 	}
+
+	x.cndOpen = sync.NewCond(&x.mtx)
+
+	x.tBreak = time.AfterFunc(2*60*time.Second, x.on_break)
+	x.tExpire = time.AfterFunc(60*time.Second, x.on_expire)
+	x.tDeliverHandshake = time.AfterFunc(60*time.Second, x.on_deliver_handshake)
+	x.reset_expire()
+	x.reschedule_handshake()
 
 	if localAddr == nil {
 		panic("missing local addr")
@@ -162,6 +160,28 @@ func newExchange(
 	return x, nil
 }
 
+func (x *Exchange) dial() error {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	if x.state == openedExchangeState {
+		return nil
+	}
+
+	x.deliver_handshake(0, nil)
+	x.reschedule_handshake()
+
+	for x.state == dialingExchangeState {
+		x.cndOpen.Wait()
+	}
+
+	if x.state == expiredExchangeState {
+		return BrokenExchangeError(x.remoteAddr.Hashname())
+	}
+
+	return nil
+}
+
 func (x *Exchange) terminate() {
 	select {
 	case <-x.cDone:
@@ -177,65 +197,31 @@ func (x *Exchange) run() {
 
 	defer func() {
 		close(x.cDone)
-		x.tBreak.Stop()
-		x.tExpire.Stop()
-		x.tDeliverHandshake.Stop()
-		close(x.cExchangeWrite)
 		close(x.cExchangeMakeChannel)
 	}()
 
-	x.tBreak = time.NewTimer(2 * 60 * time.Second)
-	x.tExpire = time.NewTimer(60 * time.Second)
-	x.tExpire.Stop()
-	x.tDeliverHandshake = time.NewTimer(60 * time.Second)
-	x.tDeliverHandshake.Stop()
-
 	if len(x.addressBook.HandshakeAddresses()) > 0 {
-		x.deliver_handshake(0, nil)
-		x.reschedule_handshake()
 	} else {
-		x.reschedule_handshake()
+		// x.reschedule_handshake()
 	}
 
 	for {
 		var (
-			cExchangeWrite       = x.cExchangeWrite
 			cExchangeMakeChannel = x.cExchangeMakeChannel
 		)
 
 		if x.state != openedExchangeState {
 			// block until the exchange is opened
-			cExchangeWrite = nil
 			cExchangeMakeChannel = nil
 		}
 
 		select {
 
-		case op := <-cExchangeWrite:
-			x.deliver_packet(op)
-
 		case op := <-cExchangeMakeChannel:
 			x.open_channel(op)
 
-		case op := <-x.cEndpointRead:
-			if len(op.Msg) >= 3 && op.Msg[1] == 1 {
-				x.received_handshake(op)
-			} else {
-				x.received_packet(op)
-			}
-
-		case <-x.tBreak.C:
-			x.on_break()
-
-		case <-x.tExpire.C:
-			x.on_expire()
-
 		case <-x.cTerminate:
 			x.on_expire()
-
-		case <-x.tDeliverHandshake.C:
-			x.reschedule_handshake()
-			x.deliver_handshake(0, nil)
 
 		}
 
@@ -253,7 +239,18 @@ func (e *Exchange) knownParts() cipherset.Parts {
 	return e.remoteAddr.parts
 }
 
-func (e *Exchange) received_handshake(op transports.ReadOp) bool {
+func (x *Exchange) received(op transports.ReadOp) {
+	if len(op.Msg) >= 3 && op.Msg[1] == 1 {
+		x.received_handshake(op)
+	} else {
+		x.received_packet(op)
+	}
+}
+
+func (x *Exchange) received_handshake(op transports.ReadOp) bool {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
 	var (
 		pkt       *lob.Packet
 		handshake cipherset.Handshake
@@ -278,32 +275,32 @@ func (e *Exchange) received_handshake(op transports.ReadOp) bool {
 	}
 	csid = uint8(pkt.Head[0])
 
-	handshake, err = cipherset.DecryptHandshake(csid, e.localAddr.keys[csid], pkt.Body)
+	handshake, err = cipherset.DecryptHandshake(csid, x.localAddr.keys[csid], pkt.Body)
 	if err != nil {
 		tracef("handshake: invalid (%s)", err)
 		return false
 	}
-	tracef("(id=%d) receiving_handshake(%p) seq=%v", e.addressBook.id, e, handshake.At())
+	tracef("(id=%d) receiving_handshake(%p) seq=%v", x.addressBook.id, x, handshake.At())
 
 	seq = handshake.At()
-	if seq < e.last_remote_seq {
+	if seq < x.last_remote_seq {
 		tracef("handshake: invalid (%s)", "seq already seen")
 		return false
 	}
 
-	if csid != e.csid {
+	if csid != x.csid {
 		tracef("handshake: invalid (%s)", "wrong csid")
 		return false
 	}
 
-	if !e.cipher.ApplyHandshake(handshake) {
+	if !x.cipher.ApplyHandshake(handshake) {
 		tracef("handshake: invalid (%s)", "wrong handshake")
 		return false
 	}
 
-	if e.remoteAddr == nil {
+	if x.remoteAddr == nil {
 		addr, err := NewAddr(
-			cipherset.Keys{e.csid: handshake.PublicKey()},
+			cipherset.Keys{x.csid: handshake.PublicKey()},
 			handshake.Parts(),
 			[]transports.Addr{op.Src},
 		)
@@ -311,32 +308,42 @@ func (e *Exchange) received_handshake(op transports.ReadOp) bool {
 			tracef("handshake: invalid (%s)", err)
 			return false
 		}
-		e.remoteAddr = addr
-		e.token = cipherset.ExtractToken(op.Msg)
+		x.remoteAddr = addr
+		x.token = cipherset.ExtractToken(op.Msg)
 	}
 
-	tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", e.addressBook.id, seq, e.state, e.isLocalSeq(seq))
+	tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
 
-	if e.isLocalSeq(seq) {
-		e.reset_break()
-		e.addressBook.ReceivedHandshake(op.Src)
+	if x.isLocalSeq(seq) {
+		x.reset_break()
+		x.addressBook.ReceivedHandshake(op.Src)
 	} else {
-		e.addressBook.AddAddress(op.Src)
-		e.deliver_handshake(seq, op.Src)
+		x.addressBook.AddAddress(op.Src)
+		x.deliver_handshake(seq, op.Src)
 	}
 
-	if e.state == dialingExchangeState {
-		tracef("(id=%d) opened", e.addressBook.id)
-		e.state = openedExchangeState
+	if x.state == dialingExchangeState {
+		tracef("(id=%d) opened", x.addressBook.id)
+		x.state = openedExchangeState
 
-		e.reset_expire()
-		close(e.cOpen)
+		x.reset_expire()
+		x.cndOpen.Broadcast()
 
-		evt := &ExchangeOpenedEvent{e.remoteAddr.Hashname()}
-		e.cDownstreamEvents <- evt
+		go func() {
+			evt := &ExchangeOpenedEvent{x.remoteAddr.Hashname()}
+			x.cDownstreamEvents <- evt
+		}()
 	}
 
 	return true
+}
+
+func (x *Exchange) on_deliver_handshake() {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	x.reschedule_handshake()
+	x.deliver_handshake(0, nil)
 }
 
 func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
@@ -409,13 +416,22 @@ func (e *Exchange) reschedule_handshake() {
 	e.tDeliverHandshake.Reset(d)
 }
 
-func (e *Exchange) received_packet(op transports.ReadOp) {
+func (x *Exchange) received_packet(op transports.ReadOp) {
 	pkt, err := lob.Decode(op.Msg)
 	if err != nil {
 		return // drop
 	}
 
-	pkt, err = e.cipher.DecryptPacket(pkt)
+	{
+		x.mtx.Lock()
+		if x.state != openedExchangeState {
+			tracef("drop // exchange not opened")
+			return // drop
+		}
+		x.mtx.Unlock()
+	}
+
+	pkt, err = x.cipher.DecryptPacket(pkt)
 	if err != nil {
 		return // drop
 	}
@@ -433,80 +449,88 @@ func (e *Exchange) received_packet(op transports.ReadOp) {
 		return
 	}
 
-	entry = e.channels[cid]
-	if entry == nil {
-		if !hasType {
-			tracef("drop // no `type`")
-			return // drop (missing typ)
+	{
+		x.mtx.Lock()
+		entry = x.channels[cid]
+		if entry == nil {
+			if !hasType {
+				tracef("drop // no `type`")
+				x.mtx.Unlock()
+				return // drop (missing typ)
+			}
+
+			h := x.handlers[typ]
+			if h == nil {
+				tracef("drop // no handler for `%s`", typ)
+				x.mtx.Unlock()
+				return // drop (no handler)
+			}
+
+			c = newChannel(
+				x.remoteAddr.Hashname(),
+				typ,
+				hasSeq,
+				true,
+				x,
+			)
+			c.id = cid
+
+			entry = &channelEntry{c}
+
+			x.channels[c.id] = entry
+			x.reset_expire()
+			x.subscribers.Emit(&ChannelOpenedEvent{c})
+
+			go h.ServeTelehash(c)
 		}
-
-		h := e.handlers[typ]
-		if h == nil {
-			tracef("drop // no handler for `%s`", typ)
-			return // drop (no handler)
-		}
-
-		c = newChannel(
-			e.remoteAddr.Hashname(),
-			typ,
-			hasSeq,
-			true,
-			e.cExchangeWrite,
-			e.cUnregisterChannel,
-		)
-		c.id = cid
-
-		entry = &channelEntry{c}
-
-		e.channels[c.id] = entry
-		e.reset_expire()
-		e.subscribers.Emit(&ChannelOpenedEvent{c})
-
-		go h.ServeTelehash(c)
+		x.mtx.Unlock()
 	}
 
 	entry.c.received_packet(pkt)
 }
 
-func (e *Exchange) deliver_packet(op opExchangeWrite) {
-	pkt, err := e.cipher.EncryptPacket(op.pkt)
-	if err != nil {
-		if op.cErr != nil {
-			op.cErr <- err
-		}
-		return
-	}
-
+func (e *Exchange) deliver_packet(pkt *lob.Packet) error {
+	e.mtx.Lock()
 	addr := e.addressBook.ActiveAddress()
+	e.mtx.Unlock()
+
+	pkt, err := e.cipher.EncryptPacket(pkt)
+	if err != nil {
+		return err
+	}
 
 	msg, err := lob.Encode(pkt)
 	if err != nil {
-		if op.cErr != nil {
-			op.cErr <- err
-		}
-		return
+		return err
 	}
 
-	if op.cErr == nil {
-		op.cErr = make(chan error, 1)
-	}
+	cErr := make(chan error, 1)
 
 	select {
-	case e.cTransportWrite <- transports.WriteOp{
-		Msg: msg,
-		Dst: addr,
-		C:   op.cErr,
-	}:
+	case e.cTransportWrite <- transports.WriteOp{Msg: msg, Dst: addr, C: cErr}:
+		return <-cErr
 	case <-e.cDone:
+		return transports.ErrClosed
 	}
 }
 
-func (e *Exchange) expire(err error) {
-	tracef("expire(%p, %q)", e, err)
-	e.state = expiredExchangeState
+func (x *Exchange) expire(err error) {
+	tracef("expire(%p, %q)", x, err)
 
-	evt := &ExchangeClosedEvent{e.remoteAddr.Hashname(), err}
-	e.cDownstreamEvents <- evt
+	x.mtx.Lock()
+	x.state = expiredExchangeState
+	x.cndOpen.Broadcast()
+
+	x.tBreak.Stop()
+	x.tExpire.Stop()
+	x.tDeliverHandshake.Stop()
+
+	x.mtx.Unlock()
+
+	go func() {
+		evt := &ExchangeClosedEvent{x.remoteAddr.Hashname(), err}
+		x.cDownstreamEvents <- evt
+	}()
 }
 
 func (e *Exchange) getNextSeq() uint32 {
@@ -550,29 +574,31 @@ func (x *Exchange) isLocalSeq(seq uint32) bool {
 	}
 }
 
-func (e *Exchange) reset_expire() {
-	if len(e.channels) > 0 {
-		e.tExpire.Stop()
+func (x *Exchange) on_expire() {
+	x.expire(nil)
+}
+
+func (x *Exchange) on_break() {
+	x.expire(BrokenExchangeError(x.remoteAddr.Hashname()))
+}
+
+func (x *Exchange) reset_expire() {
+	if len(x.channels) > 0 {
+		x.tExpire.Stop()
 	} else {
-		e.tExpire.Reset(2 * 60 * time.Second)
+		x.tExpire.Reset(2 * 60 * time.Second)
 	}
 }
 
-func (e *Exchange) on_expire() {
-	e.expire(nil)
+func (x *Exchange) reset_break() {
+	x.tBreak.Reset(2 * 60 * time.Second)
 }
 
-func (e *Exchange) reset_break() {
-	e.tBreak.Reset(2 * 60 * time.Second)
-}
-
-func (e *Exchange) on_break() {
-	e.expire(BrokenExchangeError(e.remoteAddr.Hashname()))
-}
-
-func (x *Exchange) unregister_channel(ch *Channel) {
-	delete(x.channels, ch.id)
+func (x *Exchange) unregister_channel(channelId uint32) {
+	x.mtx.Lock()
+	delete(x.channels, channelId)
 	x.reset_expire()
+	x.mtx.Unlock()
 }
 
 func (x *Exchange) nextChannelId() uint32 {
@@ -608,15 +634,6 @@ func (x *Exchange) done() <-chan struct{} {
 	return x.cDone
 }
 
-func (x *Exchange) open() <-chan struct{} {
-	if x == nil {
-		c := make(chan struct{})
-		close(c)
-		return c
-	}
-	return x.cOpen
-}
-
 func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	op := opExchangeMakeChannel{typ, reliable, nil, make(chan error)}
 
@@ -650,11 +667,10 @@ func (x *Exchange) open_channel(op *opExchangeMakeChannel) {
 		op.typ,
 		op.reliable,
 		false,
-		x.cExchangeWrite,
-		x.cUnregisterChannel,
+		x,
 	)
-	c.id = x.nextChannelId()
 
+	c.id = x.nextChannelId()
 	entry = &channelEntry{c}
 	x.channels[c.id] = entry
 	x.reset_expire()
