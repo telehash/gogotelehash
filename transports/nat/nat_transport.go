@@ -37,7 +37,7 @@ func (c Config) Open() (transports.Transport, error) {
 		return nil, err
 	}
 
-	return &transport{t: t}, nil
+	return &transport{t: t, mapping: make(map[string]transports.Addr)}, nil
 }
 
 func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, out chan<- events.E) <-chan struct{} {

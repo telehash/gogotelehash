@@ -537,6 +537,8 @@ func (c *Channel) Close() error {
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
+
+	c.x.unregister_channel(c.id)
 	c.mtx.Unlock()
 	return nil
 }
@@ -694,6 +696,8 @@ func (c *Channel) on_close_deadline_reached() {
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
+
+	c.x.unregister_channel(c.id)
 	c.mtx.Unlock()
 }
 
@@ -727,5 +731,7 @@ func (c *Channel) on_open_deadline_reached() {
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
+
+	c.x.unregister_channel(c.id)
 	c.mtx.Unlock()
 }

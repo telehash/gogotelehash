@@ -48,11 +48,10 @@ func TestBasicExchange(t *testing.T) {
 	)
 
 	go events.Log(nil, cEvents)
-	go pipeTransport(A.x, B.w)
 
 	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.w, cEvents, nil)
 	assert.NoError(err)
-	go A.x.run()
+	go pipeTransport(A.x, B.w)
 
 	go func() {
 		var (
@@ -72,7 +71,6 @@ func TestBasicExchange(t *testing.T) {
 
 		B.x, err = newExchange(B.a, nil, handshake, token, B.w, cEvents, nil)
 		assert.NoError(err)
-		go B.x.run()
 
 		if B.x != nil {
 			go pipeTransport(B.x, A.w)
@@ -82,8 +80,8 @@ func TestBasicExchange(t *testing.T) {
 		}
 	}()
 
-	_, _ = <-A.x.done()
-	_, _ = <-B.x.done()
+	A.x.waitDone()
+	B.x.waitDone()
 }
 
 func makeAddr(name string) *Addr {

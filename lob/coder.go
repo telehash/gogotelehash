@@ -9,14 +9,17 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 )
 
 var ErrInvalidPacket = errors.New("lob: invalid packet")
 
 type Packet struct {
-	Head       []byte
-	Body       []byte
-	jsonHeader Header
+	raw  []byte
+	json Header
+	Head []byte
+	Body []byte
 }
 
 func Decode(p []byte) (*Packet, error) {
@@ -54,7 +57,7 @@ func Decode(p []byte) (*Packet, error) {
 		head = nil
 	}
 
-	return &Packet{Head: head, jsonHeader: dict, Body: body}, nil
+	return &Packet{raw: p, Head: head, json: dict, Body: body}, nil
 }
 
 func Encode(pkt *Packet) ([]byte, error) {
@@ -69,8 +72,8 @@ func Encode(pkt *Packet) ([]byte, error) {
 		return []byte{0, 0}, nil
 	}
 
-	if len(pkt.jsonHeader) > 0 {
-		head, err = json.Marshal(pkt.jsonHeader)
+	if len(pkt.json) > 0 {
+		head, err = json.Marshal(pkt.json)
 		if err != nil {
 			return nil, err
 		}
@@ -88,7 +91,8 @@ func Encode(pkt *Packet) ([]byte, error) {
 		body = pkt.Body
 	}
 
-	p = make([]byte, 2+len(head)+len(body))
+	p = bufpool.GetBuffer()
+	p = p[:2+len(head)+len(body)]
 	binary.BigEndian.PutUint16(p, uint16(len(head)))
 	copy(p[2:], head)
 	copy(p[2+len(head):], body)
@@ -97,10 +101,16 @@ func Encode(pkt *Packet) ([]byte, error) {
 }
 
 func (p *Packet) Header() Header {
-	if p.jsonHeader == nil {
-		p.jsonHeader = make(Header)
+	if p.json == nil {
+		p.json = make(Header)
 	}
-	return p.jsonHeader
+	return p.json
+}
+
+func (p *Packet) Free() {
+	if p.raw != nil {
+		bufpool.PutBuffer(p.raw)
+	}
 }
 
 type Header map[string]interface{}

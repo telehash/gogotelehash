@@ -189,10 +189,10 @@ func (e *Endpoint) run() {
 
 		case <-e.cTerminate:
 			for _, e := range e.hashnames {
-				e.x.terminate()
+				e.x.on_break()
 			}
 			for _, e := range e.tokens {
-				e.x.terminate()
+				e.x.on_break()
 			}
 			close(e.cTransportWrite)
 
@@ -233,9 +233,9 @@ func (e *Endpoint) handle_event(evt events.E) {
 	}
 
 	if cevt, ok := evt.(*ExchangeClosedEvent); ok && cevt != nil {
-		entry := e.hashnames[cevt.Hashname]
+		entry := e.hashnames[cevt.Exchange.remoteAddr.Hashname()]
 		if entry != nil {
-			delete(e.hashnames, cevt.Hashname)
+			delete(e.hashnames, cevt.Exchange.remoteAddr.Hashname())
 			delete(e.tokens, entry.x.token)
 		}
 	}
@@ -329,11 +329,10 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 		x: x,
 	}
 
-	go x.run()
-
 	tracef("received_handshake() => registered %x %s", token, hn)
 	e.hashnames[hn] = entry
 	e.tokens[token] = entry
+	x.state = ExchangeDialing
 	x.received(op)
 	tracef("received_handshake() => done %x", token)
 }
@@ -402,7 +401,6 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 
 	entry.x = x
 	e.hashnames[op.addr.hashname] = entry
-	go x.run()
 
 	op.x = x
 	op.cErr <- nil

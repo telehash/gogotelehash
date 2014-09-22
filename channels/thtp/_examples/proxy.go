@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/channels/thtp"
 	"bitbucket.org/simonmenke/go-telehash/e3x"
@@ -52,6 +53,8 @@ func main() {
 		log.Fatalf("error: %s", err)
 	}
 
+	time.Sleep(1 * time.Second)
+
 	{
 		peerAddrJSON, err := peerAddr.MarshalJSON()
 		if err != nil {
@@ -61,7 +64,7 @@ func main() {
 		log.Printf("peerAddr:\n%s", peerAddrJSON)
 	}
 
-	err = e.Dial(peerAddr)
+	_, err = e.Dial(peerAddr)
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

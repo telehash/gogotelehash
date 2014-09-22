@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/channels/thtp"
 	"bitbucket.org/simonmenke/go-telehash/e3x"
@@ -38,6 +39,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
+
+	time.Sleep(1 * time.Second)
 
 	addr, err := e.LocalAddr()
 	if err != nil {

@@ -186,7 +186,7 @@ func (t *transport) ListVnodes(hn string) ([]*chord.Vnode, error) {
 		return nil, e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.list", true)
+	ch, err = t.e.Open(addr, "chord.list", true)
 	if err != nil {
 		return nil, err
 	}
@@ -253,7 +253,7 @@ func (t *transport) Ping(vn *chord.Vnode) (bool, error) {
 		return false, e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.ping", true)
+	ch, err = t.e.Open(addr, "chord.ping", true)
 	if err != nil {
 		return false, err
 	}
@@ -329,7 +329,7 @@ func (t *transport) GetPredecessor(vn *chord.Vnode) (*chord.Vnode, error) {
 		return nil, e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.predecessor.get", true)
+	ch, err = t.e.Open(addr, "chord.predecessor.get", true)
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +423,7 @@ func (t *transport) Notify(target, self *chord.Vnode) ([]*chord.Vnode, error) {
 		return nil, e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.notify", true)
+	ch, err = t.e.Open(addr, "chord.notify", true)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +521,7 @@ func (t *transport) FindSuccessors(vn *chord.Vnode, n int, k []byte) ([]*chord.V
 		return nil, e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.successors.find", true)
+	ch, err = t.e.Open(addr, "chord.successors.find", true)
 	if err != nil {
 		return nil, err
 	}
@@ -608,7 +608,7 @@ func (t *transport) ClearPredecessor(target, self *chord.Vnode) error {
 		return e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.predecessor.clear", true)
+	ch, err = t.e.Open(addr, "chord.predecessor.clear", true)
 	if err != nil {
 		return err
 	}
@@ -683,7 +683,7 @@ func (t *transport) SkipSuccessor(target, self *chord.Vnode) error {
 		return e3x.ErrNoAddress
 	}
 
-	ch, err = t.e.Dial(addr, "chord.successor.skip", true)
+	ch, err = t.e.Open(addr, "chord.successor.skip", true)
 	if err != nil {
 		return err
 	}

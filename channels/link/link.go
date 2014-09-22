@@ -92,7 +92,7 @@ func (m *Mesh) link(op *opLink) {
 	l := m.links[op.addr.Hashname()]
 
 	if l == nil {
-		c, err := m.Endpoint.Dial(op.addr, "link", false)
+		c, err := m.Endpoint.Open(op.addr, "link", false)
 		if err != nil {
 			op.cErr <- err
 			return

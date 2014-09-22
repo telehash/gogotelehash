@@ -12,6 +12,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/base32"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 )
 
 var (
@@ -416,7 +417,7 @@ func (s *state) CanDecryptPacket() bool {
 
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	var (
-		out       = make([]byte, 32+4+len(in)+box.Overhead+16)
+		out       = bufpool.GetBuffer()[:32+4+len(in)+box.Overhead+16]
 		agreedKey [32]byte
 		ctLen     int
 	)
@@ -505,7 +506,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	}
 
 	// alloc enough space
-	body = make([]byte, 16+24+len(inner)+box.Overhead)
+	body = bufpool.GetBuffer()[:16+24+len(inner)+box.Overhead]
 
 	// copy token
 	copy(body[:16], (*s.localToken)[:])

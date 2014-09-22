@@ -62,7 +62,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	}
 
-	c, err = rt.Endpoint.Dial(addr, "thtp", true)
+	c, err = rt.Endpoint.Open(addr, "thtp", true)
 	if err != nil {
 		c.Close()
 		return nil, err
