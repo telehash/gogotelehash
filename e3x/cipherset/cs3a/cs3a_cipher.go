@@ -9,9 +9,9 @@ import (
 	"code.google.com/p/go.crypto/nacl/box"
 	"code.google.com/p/go.crypto/poly1305"
 
-	"bitbucket.org/simonmenke/go-telehash/base32"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/util/base32util"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 )
 
@@ -54,7 +54,7 @@ func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
 	)
 
 	if pub != "" {
-		data, err := base32.DecodeString(pub)
+		data, err := base32util.DecodeString(pub)
 		if err != nil {
 			return nil, cipherset.ErrInvalidKey
 		}
@@ -66,7 +66,7 @@ func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
 	}
 
 	if prv != "" {
-		data, err := base32.DecodeString(prv)
+		data, err := base32util.DecodeString(prv)
 		if err != nil {
 			return nil, cipherset.ErrInvalidKey
 		}
@@ -609,7 +609,7 @@ func (k *key) Private() []byte {
 }
 
 func (k *key) String() string {
-	return base32.EncodeToString((*k.pub)[:])
+	return base32util.EncodeToString((*k.pub)[:])
 }
 
 func (k *key) CanSign() bool {

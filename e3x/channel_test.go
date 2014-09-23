@@ -82,7 +82,7 @@ func TestBasicUnrealiable(t *testing.T) {
 		pkt.Header().SetBool("end", true)
 		x.On("deliver_packet", pkt).Return(nil)
 
-		x.On("unregister_channel", 0).Return().Once()
+		x.On("unregister_channel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(
@@ -151,7 +151,7 @@ func TestBasicRealiable(t *testing.T) {
 		pkt.Header().SetInt("ack", 0)
 		x.On("deliver_packet", pkt).Return(nil).Once()
 
-		x.On("unregister_channel", 0).Return().Once()
+		x.On("unregister_channel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(

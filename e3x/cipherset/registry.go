@@ -1,7 +1,7 @@
 package cipherset
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/base32"
+	"bitbucket.org/simonmenke/go-telehash/util/base32util"
 )
 
 var ciphers = map[uint8]Cipher{}
@@ -29,11 +29,11 @@ func DecodeKey(csid uint8, pub, prv string) (Key, error) {
 	c := ciphers[csid]
 
 	if c == nil {
-		pubKey, err := base32.DecodeString(pub)
+		pubKey, err := base32util.DecodeString(pub)
 		if err != nil {
 			return nil, ErrInvalidKey
 		}
-		prvKey, err := base32.DecodeString(prv)
+		prvKey, err := base32util.DecodeString(prv)
 		if err != nil {
 			return nil, ErrInvalidKey
 		}

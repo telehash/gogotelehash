@@ -6,8 +6,8 @@ import (
 	"errors"
 	"sort"
 
-	"bitbucket.org/simonmenke/go-telehash/base32"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
+	"bitbucket.org/simonmenke/go-telehash/util/base32util"
 )
 
 var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")
@@ -40,7 +40,7 @@ func FromIntermediates(parts cipherset.Parts) (H, error) {
 		if len(partString) != 52 {
 			return "", ErrInvalidIntermediatePart
 		}
-		part, err := base32.DecodeString(partString)
+		part, err := base32util.DecodeString(partString)
 		if err != nil {
 			return "", ErrInvalidIntermediatePart
 		}
@@ -58,7 +58,7 @@ func FromIntermediates(parts cipherset.Parts) (H, error) {
 		hash.Write(buf[:32])
 	}
 
-	return H(base32.EncodeToString(buf[:32])), nil
+	return H(base32util.EncodeToString(buf[:32])), nil
 }
 
 func FromKeys(keys cipherset.Keys) (H, error) {
@@ -73,7 +73,7 @@ func FromKeys(keys cipherset.Keys) (H, error) {
 		hash.Sum(buf[:0])
 		hash.Reset()
 
-		intermediates[id] = base32.EncodeToString(buf[:])[:52]
+		intermediates[id] = base32util.EncodeToString(buf[:])[:52]
 	}
 
 	return FromIntermediates(intermediates)
@@ -91,7 +91,7 @@ func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
 		hash.Sum(buf[:0])
 		hash.Reset()
 
-		intermediates[id] = base32.EncodeToString(buf[:])[:52]
+		intermediates[id] = base32util.EncodeToString(buf[:])[:52]
 	}
 
 	return intermediates
@@ -101,7 +101,7 @@ func FromKeyAndIntermediates(id uint8, key []byte, intermediates cipherset.Parts
 	var (
 		all          = make(cipherset.Parts, len(intermediates)+1)
 		sum          = sha256.Sum256(key)
-		intermediate = base32.EncodeToString(sum[:])
+		intermediate = base32util.EncodeToString(sum[:])
 	)
 
 	for k, v := range intermediates {

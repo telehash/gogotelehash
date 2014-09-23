@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"bitbucket.org/simonmenke/go-telehash/base32"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/util/base32util"
 )
 
 var ErrInvalidKeys = errors.New("chipherset: invalid keys")
@@ -160,8 +160,8 @@ func (p PrivateKeys) MarshalJSON() ([]byte, error) {
 	m := make(map[string]pair, len(p))
 	for k, v := range p {
 		m[hex.EncodeToString([]byte{k})] = pair{
-			Pub: base32.EncodeToString(v.Public()),
-			Prv: base32.EncodeToString(v.Private()),
+			Pub: base32util.EncodeToString(v.Public()),
+			Prv: base32util.EncodeToString(v.Private()),
 		}
 	}
 
@@ -264,7 +264,7 @@ type opaqueKey struct {
 }
 
 func (o opaqueKey) String() string {
-	return base32.EncodeToString(o.pub)
+	return base32util.EncodeToString(o.pub)
 }
 
 func (o opaqueKey) Public() []byte {
