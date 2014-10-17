@@ -195,13 +195,34 @@ func (x *Exchange) dial() error {
 	return nil
 }
 
-func (e *Exchange) knownKeys() cipherset.Keys {
-	return e.remoteAddr.keys
+func (x *Exchange) RemoteHashname() hashname.H {
+	x.mtx.Lock()
+	hn := x.remoteAddr.Hashname()
+	x.mtx.Unlock()
+	return hn
 }
 
-func (e *Exchange) knownParts() cipherset.Parts {
-	return e.remoteAddr.parts
+func (x *Exchange) RemoteAddr() *Addr {
+	x.mtx.Lock()
+	addr := x.remoteAddr.withPaths(x.addressBook.KnownAddresses())
+	x.mtx.Unlock()
+	return addr
 }
+
+func (x *Exchange) ActivePath() transports.Addr {
+	x.mtx.Lock()
+	addr := x.addressBook.ActiveAddress()
+	x.mtx.Unlock()
+	return addr
+}
+
+// func (e *Exchange) knownKeys() cipherset.Keys {
+// 	return e.remoteAddr.keys
+// }
+
+// func (e *Exchange) knownParts() cipherset.Parts {
+// 	return e.remoteAddr.parts
+// }
 
 func (x *Exchange) received(op transports.ReadOp) {
 	if len(op.Msg) >= 3 && op.Msg[1] == 1 {

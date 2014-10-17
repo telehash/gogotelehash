@@ -33,6 +33,7 @@ type Endpoint struct {
 	transportConfig transports.Config
 	transport       transports.Transport
 	localAddresses  transports.AddrSet
+	modules         map[interface{}]Module
 
 	cTerminate      chan struct{}
 	cMakeExchange   chan *opMakeExchange
@@ -77,7 +78,17 @@ type exchangeEntry struct {
 }
 
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
-	return &Endpoint{keys: keys, transportConfig: tc, handlers: make(map[string]Handler)}
+	e := &Endpoint{
+		keys:            keys,
+		transportConfig: tc,
+		handlers:        make(map[string]Handler),
+		modules:         make(map[interface{}]Module),
+	}
+
+	e.Use(modForgetterKey, &modForgetter{e})
+	e.Use(modTransportsKey, &modTransports{e})
+
+	return e
 }
 
 func (e *Endpoint) Subscribe(c chan<- events.E) {
@@ -126,8 +137,16 @@ func (e *Endpoint) start() error {
 	e.cTransportWrite = make(chan transports.WriteOp)
 	e.cTransportRead = make(chan transports.ReadOp)
 	e.cEventIn = make(chan events.E, 10)
-
 	e.scheduler = scheduler.New()
+
+	for _, mod := range e.modules {
+		err := mod.Init()
+		if err != nil {
+			e.err = err
+			return err
+		}
+	}
+
 	e.scheduler.Start()
 
 	t, err := e.transportConfig.Open()
@@ -137,6 +156,14 @@ func (e *Endpoint) start() error {
 	}
 	e.transport = t
 	e.cTransportDone = t.Run(e.cTransportWrite, e.cTransportRead, e.cEventIn)
+
+	for _, mod := range e.modules {
+		err := mod.Start()
+		if err != nil {
+			e.err = err
+			return err
+		}
+	}
 
 	e.wg.Add(1)
 	go e.run()
@@ -152,6 +179,14 @@ func (e *Endpoint) Stop() error {
 }
 
 func (e *Endpoint) stop() error {
+	for _, mod := range e.modules {
+		err := mod.Stop()
+		if err != nil {
+			e.err = err
+			return err
+		}
+	}
+
 	select {
 	case e.cTerminate <- struct{}{}:
 	default:
@@ -407,6 +442,22 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	return
 }
 
+func (e *Endpoint) Use(key interface{}, mod Module) {
+	e.stateMtx.Lock()
+	defer e.stateMtx.Unlock()
+	if e.state != UnknownEndpointState {
+		panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
+	}
+	if _, found := e.modules[key]; found {
+		panic("This module is already registered.")
+	}
+	e.modules[key] = mod
+}
+
+func (e *Endpoint) Module(key interface{}) Module {
+	return e.modules[key]
+}
+
 func (e *Endpoint) Resolve(hn hashname.H) (*Addr, error) {
 	var (
 		addr *Addr
@@ -432,16 +483,7 @@ func (e *Endpoint) lookup_addr(op *opLookupAddr) {
 		return
 	}
 
-	ex := entry.x
-
-	addr, err := NewAddr(ex.knownKeys(), ex.knownParts(), ex.addressBook.KnownAddresses())
-	if err != nil {
-		tracef("error: %s", err)
-		op.cAddr <- nil
-		return
-	}
-
-	op.cAddr <- addr
+	op.cAddr <- entry.x.RemoteAddr()
 }
 
 func waitForError(c <-chan error) error {

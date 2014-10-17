@@ -3,6 +3,7 @@ package nat
 import (
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
@@ -29,6 +30,7 @@ type transport struct {
 	t       transports.Transport
 	nat     nat.NAT
 	mapping map[string]transports.Addr
+	done    chan struct{}
 }
 
 func (c Config) Open() (transports.Transport, error) {
@@ -37,55 +39,73 @@ func (c Config) Open() (transports.Transport, error) {
 		return nil, err
 	}
 
-	return &transport{t: t, mapping: make(map[string]transports.Addr)}, nil
+	nat := &transport{
+		t:       t,
+		mapping: make(map[string]transports.Addr),
+		done:    make(chan struct{}),
+	}
+
+	go nat.run_mapper()
+
+	return nat, nil
 }
 
-func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, out chan<- events.E) <-chan struct{} {
-	var (
-		in   = make(chan events.E)
-		done = t.t.Run(w, r, in)
-	)
-
-	go t.run_mapper(done, in, out)
-
-	return done
+func (t *transport) LocalAddresses() []Addr {
+	return t.t.LocalAddresses()
 }
 
-func (t *transport) run_mapper(done <-chan struct{}, in <-chan events.E, out chan<- events.E) {
-	var (
-		closed bool
-	)
+func (t *transport) ReadMessage(p []byte) (int, Addr, error) {
+	return t.t.ReadMessage(p)
+}
 
+func (t *transport) WriteMessage(p []byte, dst Addr) error {
+	return t.t.WriteMessage(p, dst)
+}
+
+func (t *transport) Close() error {
+	select {
+	case <-t.done: // is closed
+	default: // is opened
+		close(t.done)
+	}
+
+	return t.t.Close()
+}
+
+func (t *transport) run_mapper() {
+	var closed bool
 	for !closed {
 		if t.nat == nil {
-			closed = t.run_discover_mode(done, in, out)
+			closed = t.runDiscoverMode()
 		} else {
-			closed = t.run_mapping_mode(done, in, out)
+			closed = t.runMappingMode()
 		}
 	}
 }
 
-func (t *transport) run_discover_mode(done <-chan struct{}, in <-chan events.E, out chan<- events.E) bool {
-	var ticker = time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
+func (t *transport) runDiscoverMode() bool {
+	var discoverTicker = time.NewTicker(10 * time.Minute)
+	defer discoverTicker.Stop()
+
+	var updateTicker = time.NewTicker(5 * time.Second)
+	defer updateTicker.Stop()
+
+	var knownAddrs = make(map[string]bool)
 
 	for {
 		select {
 
-		case _, closed := <-done:
-			if closed {
-				return true // done
+		case <-done:
+			return true // done
+
+		case <-updateTicker.C:
+			changed := t.updateKnownAddresses(knownAddrs)
+			if changed {
+				t.discoverNAT()
 			}
 
-		case evt := <-in:
-			if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
-				t.discover_nat()
-				t.handle_event(x, out)
-			}
-			out <- evt
-
-		case <-ticker.C:
-			t.discover_nat()
+		case <-discoverTicker.C:
+			t.discoverNAT()
 
 		}
 
@@ -97,41 +117,78 @@ func (t *transport) run_discover_mode(done <-chan struct{}, in <-chan events.E, 
 	panic("unreachable")
 }
 
-func (t *transport) run_mapping_mode(done <-chan struct{}, in <-chan events.E, out chan<- events.E) bool {
-	var ticker = time.NewTicker(50 * time.Minute)
-	defer ticker.Stop()
+func asNATableAddr(addr transports.Addr) (string, net.IP, int) {
+	naddr, _ := addr.(NATableAddr)
+	if naddr == nil {
+		return "", nil, 0
+	}
 
-	t.mapping = make(map[string]transports.Addr)
+	proto, ip, port := naddr.InternalAddr()
+	if proto == "" || ip == nil || internal_port <= 0 {
+		return "", nil, 0
+	}
+
+	return proto, ip, port
+}
+
+func (t *transport) updateKnownAddresses(known map[string]bool) bool {
+	var (
+		changed bool
+	)
+
+	for key := range known {
+		known[key] = false
+	}
+
+	for _, addr := range t.t.LocalAddresses() {
+		proto, ip, internal_port := asNATableAddr(addr)
+		if proto == "" {
+			continue
+		}
+
+		key := mappingKey(proto, ip, internal_port)
+
+		if _, found := known[key]; !found {
+			changed = true
+		}
+
+		known[key] = true
+	}
+
+	for key, ok := range known {
+		if !ok {
+			delete(known, key)
+			changed = true
+		}
+	}
+
+	return changed
+}
+
+func (t *transport) runMappingMode() bool {
+	var refreshTicker = time.NewTicker(50 * time.Minute)
+	defer refreshTicker.Stop()
+
+	var updateTicker = time.NewTicker(5 * time.Second)
+	defer updateTicker.Stop()
 
 	for {
 		select {
 
-		case _, closed := <-done:
-			if closed {
-				return true // done
-			}
+		case <-done:
+			t.mapping = make(map[string]transports.Addr)
+			return true // done
 
-		case evt := <-in:
-			if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
-				t.handle_event(x, out)
-			}
-			out <- evt
+		case <-refreshTicker.C:
+			t.refreshMapping()
 
-		case <-ticker.C:
-			t.refresh_mapping(out)
+		case <-updateTicker.C:
+			t.update_mappings()
 
 		}
 
 		if t.nat == nil {
-			if len(t.mapping) > 0 {
-				evt := &transports.NetworkChangeEvent{}
-				for _, addr := range t.mapping {
-					evt.Down = append(evt.Down, addr)
-				}
-				out <- evt
-			}
-
-			t.mapping = nil
+			t.mapping = make(map[string]transports.Addr)
 			return false // not done
 		}
 	}
@@ -139,7 +196,7 @@ func (t *transport) run_mapping_mode(done <-chan struct{}, in <-chan events.E, o
 	panic("unreachable")
 }
 
-func (t *transport) discover_nat() {
+func (t *transport) discoverNAT() {
 	nat, err := nat.Discover()
 	if err != nil {
 		return
@@ -235,7 +292,7 @@ func (t *transport) handle_event(evt *transports.NetworkChangeEvent, out chan<- 
 	}
 }
 
-func (t *transport) refresh_mapping(out chan<- events.E) {
+func (t *transport) refreshMapping() {
 	var (
 		up       []transports.Addr
 		down     []transports.Addr
@@ -254,32 +311,23 @@ func (t *transport) refresh_mapping(out chan<- events.E) {
 		return
 	}
 
-	// map new addrs
+	// remap addrs
 	for key, addr := range t.mapping {
-		nataddr, ok := addr.(NATableAddr)
-		if !ok {
+		proto, ip, internal_port := asNATableAddr(addr)
+		if proto == "" {
 			droplist = append(droplist, key)
-			down = append(down, addr)
 			continue
 		}
 
-		proto, ip, internal_port := nataddr.InternalAddr()
-		if proto == "" || ip == nil || internal_port <= 0 {
-			droplist = append(droplist, key)
-			down = append(down, addr)
-			continue
-		}
-
+		// did our internal ip change?
 		if !ip.Equal(internal_ip) {
 			droplist = append(droplist, key)
-			down = append(down, addr)
 			continue
 		}
 
 		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Minute)
 		if err != nil {
 			droplist = append(droplist, key)
-			down = append(down, addr)
 			continue
 		}
 

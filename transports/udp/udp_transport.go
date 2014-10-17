@@ -5,12 +5,9 @@ import (
 	"errors"
 	"io"
 	"net"
-	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/transports/nat"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
+	// "bitbucket.org/simonmenke/go-telehash/transports/nat"
 )
 
 func init() {
@@ -37,8 +34,8 @@ type transport struct {
 }
 
 var (
-	_ transports.Addr      = (*addr)(nil)
-	_ nat.NATableAddr      = (*addr)(nil)
+	_ transports.Addr = (*addr)(nil)
+	// _ nat.NATableAddr      = (*addr)(nil)
 	_ transports.Transport = (*transport)(nil)
 	_ transports.Config    = Config{}
 )
@@ -113,159 +110,42 @@ func (c Config) Open() (transports.Transport, error) {
 	return &transport{c.Network, addr, ipnet, conn}, nil
 }
 
-func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, e chan<- events.E) <-chan struct{} {
-	var (
-		stop = make(chan struct{})
-		done = make(chan struct{})
-	)
-
-	go t.run_writer(w, stop)
-	go t.run_reader(r, stop)
-	go t.run_network_change_detector(e, stop, done)
-
-	return done
-}
-
-func (t *transport) run_writer(w <-chan transports.WriteOp, done chan struct{}) {
-	defer func() {
-		t.c.Close()
-		close(done)
-	}()
-
-	for op := range w {
-		a, ok := op.Dst.(*addr)
-		if !ok || a == nil {
-			op.C <- transports.ErrInvalidAddr
-			continue
-		}
-
-		if a.net != t.net {
-			op.C <- transports.ErrInvalidAddr
-			continue
-		}
-
-		if !t.dest.Contains(a.IP) {
-			op.C <- transports.ErrInvalidAddr
-			continue
-		}
-
-		n, err := t.c.WriteToUDP(op.Msg, &a.UDPAddr)
-		if err != nil {
-			op.C <- err
-			continue
-		}
-
-		if n != len(op.Msg) {
-			op.C <- io.ErrShortWrite
-			continue
-		}
-
-		op.C <- nil
-	}
-}
-
-func (t *transport) run_reader(r chan<- transports.ReadOp, stop <-chan struct{}) {
-	for {
-		b := bufpool.GetBuffer()
-
-		n, a, err := t.c.ReadFromUDP(b)
-		if err != nil {
-			if err.Error() == "use of closed network connection" {
-				return
-			}
-			// report error
-			// return 0, nil, err
-			continue
-		}
-
-		select {
-		case r <- transports.ReadOp{Msg: b[:n], Src: &addr{net: t.net, UDPAddr: *a}}:
-		case <-stop:
-			return
-		}
-	}
-}
-
-func (t *transport) run_network_change_detector(e chan<- events.E, stop, done chan struct{}) {
-	var (
-		ticker = time.NewTicker(5 * time.Second)
-		prev   map[string]transports.Addr
-		event  *transports.NetworkChangeEvent
-	)
-
-	defer close(done)
-	defer ticker.Stop()
-
-	{
-		addrs := t.local_addresses()
-		prev = make(map[string]transports.Addr, len(addrs))
-		for _, a := range addrs {
-			prev[a.String()] = a
-		}
-
-		e <- &transports.NetworkChangeEvent{Up: addrs}
+func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
+	n, a, err := t.c.ReadFromUDP(p)
+	if err != nil {
+		return 0, nil, err
 	}
 
-	for {
-		var (
-			c_timer  = ticker.C
-			c_events = e
-		)
-
-		if event == nil {
-			c_events = nil
-		} else {
-			c_timer = nil
-		}
-
-		select {
-
-		case <-stop:
-			event = &transports.NetworkChangeEvent{}
-			for _, a := range prev {
-				event.Down = append(event.Down, a)
-			}
-			if len(event.Up) > 0 || len(event.Down) > 0 {
-				e <- event
-			}
-			return
-
-		case c_events <- event:
-			event = nil
-
-		case <-c_timer:
-			var (
-				addrs = t.local_addresses()
-				next  = make(map[string]transports.Addr, len(addrs))
-			)
-
-			event = &transports.NetworkChangeEvent{}
-
-			for _, a := range addrs {
-				key := a.String()
-				next[key] = a
-				if b, p := prev[key]; !p || b == nil {
-					event.Up = append(event.Up, a)
-				}
-			}
-
-			for k, a := range prev {
-				if b, p := next[k]; !p || b == nil {
-					event.Down = append(event.Down, a)
-				}
-			}
-
-			prev = next
-
-			if len(event.Up) == 0 && len(event.Down) == 0 {
-				event = nil
-			}
-
-		}
-	}
+	return n, &addr{net: t.net, UDPAddr: *a}, nil
 }
 
-func (t *transport) local_addresses() []transports.Addr {
+func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
+	a, ok := dst.(*addr)
+	if !ok || a == nil {
+		return transports.ErrInvalidAddr
+	}
+
+	if a.net != t.net {
+		return transports.ErrInvalidAddr
+	}
+
+	if !t.dest.Contains(a.IP) {
+		return transports.ErrInvalidAddr
+	}
+
+	n, err := t.c.WriteToUDP(p, &a.UDPAddr)
+	if err != nil {
+		return err
+	}
+
+	if n != len(p) {
+		return io.ErrShortWrite
+	}
+
+	return nil
+}
+
+func (t *transport) LocalAddresses() []transports.Addr {
 	var (
 		port  int
 		addrs []transports.Addr
@@ -369,6 +249,10 @@ func (t *transport) local_addresses() []transports.Addr {
 	}
 
 	return addrs
+}
+
+func (t *transport) Close() error {
+	return t.c.Close()
 }
 
 func (a *addr) Network() string {

@@ -100,3 +100,16 @@ func (a *Addr) UnmarshalJSON(p []byte) error {
 	*a = *b
 	return nil
 }
+
+func (a *Addr) withPaths(paths []transports.Addr) *Addr {
+	return &Addr{
+		hashname: a.hashname,
+		keys:     a.keys,
+		parts:    a.parts,
+		addrs:    paths,
+	}
+}
+
+func (a *Addr) Keys() cipherset.Keys {
+	return a.keys
+}

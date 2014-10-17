@@ -19,7 +19,10 @@ type Config interface {
 }
 
 type Transport interface {
-	Run(w <-chan WriteOp, r chan<- ReadOp, e chan<- events.E) <-chan struct{}
+	LocalAddresses() []Addr
+	ReadMessage(p []byte) (n int, src Addr, err error)
+	WriteMessage(p []byte, dst Addr) error
+	Close() error
 }
 
 type Addr interface {

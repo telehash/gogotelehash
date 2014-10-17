@@ -18,3 +18,8 @@ func (m *MockExchange) deliver_packet(pkt *lob.Packet) error {
 func (m *MockExchange) unregister_channel(channelId uint32) {
 	m.Called(channelId)
 }
+
+func (m *MockExchange) RemoteAddr() *Addr {
+	args := m.Called()
+	return args.Get(0).(*Addr)
+}

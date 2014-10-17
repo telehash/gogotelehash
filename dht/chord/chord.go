@@ -11,35 +11,98 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/e3x"
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
+	"bitbucket.org/simonmenke/go-telehash/modules/mesh"
 )
 
 var _ chord.Transport = (*transport)(nil)
 
-// type Ring struct {
-//   r chord.Ring
-// }
+type moduleKey string
+
+type Ring interface {
+	Create() error
+	Join(existing *e3x.Addr) error
+	Lookup(n int, key []byte) ([]*chord.Vnode, error)
+}
+
+type ring struct {
+	endpoint *e3x.Endpoint
+	conf     *chord.Config
+	ring     *chord.Ring
+}
+
+func Register(e *e3x.Endpoint, key string, conf *chord.Config) {
+	e.Use(moduleKey(key), &ring{e, conf, nil})
+}
+
+func FromEndpoint(e *e3x.Endpoint, key string) Ring {
+	mod := e.Module(moduleKey(key))
+	if mod == nil {
+		return nil
+	}
+	return mod.(*ring)
+}
 
 func DefaultConfig(hn hashname.H) *chord.Config {
 	return chord.DefaultConfig(string(hn))
 }
 
-func Create(conf *chord.Config, e *e3x.Endpoint) (*chord.Ring, error) {
-	return chord.Create(conf, newTransport(e))
+func (r *ring) Init() error {
+	return nil
 }
 
-func Join(conf *chord.Config, e *e3x.Endpoint, existing *e3x.Addr) (*chord.Ring, error) {
-	t := newTransport(e)
+func (r *ring) Start() error {
+	return nil
+}
+
+func (r *ring) Stop() error {
+	if r.ring == nil {
+		return nil
+	}
+
+	defer r.ring.Shutdown()
+	return r.ring.Leave()
+}
+
+func (r *ring) Create() error {
+	m := mesh.FromEndpoint(r.endpoint)
+	if m == nil {
+		panic("Chord requires the `mesh` module")
+	}
+
+	ring, err := chord.Create(r.conf, newTransport(r.endpoint, m))
+	if err != nil {
+		return err
+	}
+
+	r.ring = ring
+	return nil
+}
+
+func (r *ring) Join(existing *e3x.Addr) error {
+	m := mesh.FromEndpoint(r.endpoint)
+	if m == nil {
+		panic("Chord requires the `mesh` module")
+	}
+
+	t := newTransport(r.endpoint, m)
 	t.registerAddr(existing)
-	return chord.Join(conf, t, string(existing.Hashname()))
+	ring, err := chord.Join(r.conf, t, string(existing.Hashname()))
+	if err != nil {
+		return err
+	}
+
+	r.ring = ring
+	return nil
 }
 
-// func (r *Ring) Leave() error
-// func (r *Ring) Lookup(n int, key []byte) ([]*chord.Vnode, error)
-// func (r *Ring) Shutdown()
+func (r *ring) Lookup(n int, key []byte) ([]*chord.Vnode, error) {
+	return r.ring.Lookup(n, key)
+}
 
 type transport struct {
 	mtx          sync.Mutex
 	e            *e3x.Endpoint
+	m            mesh.Mesh
 	addressTable map[hashname.H]*e3x.Addr
 	localVnodes  map[string]localRPC
 }
@@ -54,9 +117,10 @@ type completeVnode struct {
 	Addr *e3x.Addr `json:"addr"`
 }
 
-func newTransport(e *e3x.Endpoint) *transport {
+func newTransport(e *e3x.Endpoint, m mesh.Mesh) *transport {
 	t := &transport{
 		e:            e,
+		m:            m,
 		addressTable: map[hashname.H]*e3x.Addr{},
 		localVnodes:  map[string]localRPC{},
 	}

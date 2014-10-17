@@ -77,6 +77,7 @@ type Channel struct {
 type exchangeI interface {
 	deliver_packet(pkt *lob.Packet) error
 	unregister_channel(channelId uint32)
+	RemoteAddr() *Addr
 }
 
 type readBufferEntry struct {
@@ -125,6 +126,10 @@ func (c *Channel) RemoteHashname() hashname.H {
 	// hashname is constant
 
 	return c.hashname
+}
+
+func (c *Channel) RemoteAddr() *Addr {
+	return c.x.RemoteAddr()
 }
 
 func (e *Endpoint) Open(addr *Addr, typ string, reliable bool) (*Channel, error) {
@@ -474,6 +479,51 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 	c.mtx.Unlock()
 }
 
+func (c *Channel) Errorf(format string, args ...interface{}) error {
+	return c.Error(fmt.Errorf(format, args...))
+}
+
+func (c *Channel) Error(err error) error {
+	if c == nil {
+		return os.ErrInvalid
+	}
+
+	c.mtx.Lock()
+
+	if c.broken {
+		// tracef("Close() => broken")
+		// When a channel is marked as broken the all closes
+		// must return a BrokenChannelError.
+		c.mtx.Unlock()
+		return &BrokenChannelError{c.hashname, c.typ, c.id}
+	}
+
+	for c.block_write() {
+		c.cndWrite.Wait()
+	}
+
+	if c.deliveredEnd {
+		c.mtx.Unlock()
+		return nil
+	}
+
+	pkt := &lob.Packet{}
+	pkt.Header().SetString("err", err.Error())
+	if err := c.write(pkt); err != nil {
+		c.mtx.Unlock()
+		return err
+	}
+
+	c.broken = true
+	c.cndWrite.Broadcast()
+	c.cndRead.Broadcast()
+	c.cndClose.Broadcast()
+
+	c.x.unregister_channel(c.id)
+	c.mtx.Unlock()
+	return nil
+}
+
 func (c *Channel) Close() error {
 	if c == nil {
 		return os.ErrInvalid
@@ -725,6 +775,21 @@ func (c *Channel) on_open_deadline_reached() {
 	c.mtx.Lock()
 	c.broken = true
 	c.openDeadlineReached = true
+	c.tOpenDeadline = nil
+
+	// broadcast
+	c.cndWrite.Broadcast()
+	c.cndRead.Broadcast()
+	c.cndClose.Broadcast()
+
+	c.x.unregister_channel(c.id)
+	c.mtx.Unlock()
+}
+
+func (c *Channel) forget() {
+	c.mtx.Lock()
+	c.broken = true
+	c.openDeadlineReached = false
 	c.tOpenDeadline = nil
 
 	// broadcast
