@@ -8,76 +8,47 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 func TestManagerWithoutTransports(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		w    = make(chan transports.WriteOp)
-		r    = make(chan transports.ReadOp)
-		e    = make(chan events.E)
-		done <-chan struct{}
-
 		c   = Config{}
 		tr  transports.Transport
 		err error
 	)
 
-	go events.Log(nil, e)
-
 	tr, err = c.Open()
-	assert.NoError(err)
-	assert.NotNil(tr)
+	if assert.NoError(err) && assert.NotNil(tr) {
 
-	done = tr.Run(w, r, e)
-
-	close(w)
-	<-done
+		err = tr.Close()
+		assert.NoError(err)
+	}
 }
 
 func TestManagerWithOneTransport(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		w    = make(chan transports.WriteOp)
-		r    = make(chan transports.ReadOp)
-		e    = make(chan events.E)
-		done <-chan struct{}
-
 		c   = Config{udp.Config{}}
 		tr  transports.Transport
 		err error
 	)
 
-	go events.Log(nil, e)
-
 	tr, err = c.Open()
-	assert.NoError(err)
-	assert.NotNil(tr)
+	if assert.NoError(err) && assert.NotNil(tr) {
+		t.Logf("addrs=%v", tr.LocalAddresses())
 
-	done = tr.Run(w, r, e)
-
-	close(w)
-	<-done
+		err = tr.Close()
+		assert.NoError(err)
+	}
 }
 
 func TestManagerDeliverReceive(t *testing.T) {
 	assert := assert.New(t)
 
 	var (
-		eA    = make(chan events.E)
-		wA    = make(chan transports.WriteOp)
-		rA    = make(chan transports.ReadOp)
-		doneA <-chan struct{}
-		eB    = make(chan events.E)
-		eB0   <-chan events.E
-		eB1   <-chan events.E
-		wB    = make(chan transports.WriteOp)
-		rB    = make(chan transports.ReadOp)
-		doneB <-chan struct{}
-
 		ca  = Config{udp.Config{}}
 		cb  = Config{udp.Config{Addr: "127.0.0.1:0"}}
 		ta  transports.Transport
@@ -86,56 +57,30 @@ func TestManagerDeliverReceive(t *testing.T) {
 	)
 
 	ta, err = ca.Open()
-	assert.NoError(err)
-	assert.NotNil(ta)
+	if assert.NoError(err) && assert.NotNil(ta) {
 
-	tb, err = cb.Open()
-	assert.NoError(err)
-	assert.NotNil(tb)
+		tb, err = cb.Open()
+		if assert.NoError(err) && assert.NotNil(tb) {
 
-	doneA = ta.Run(wA, rA, eA)
-	doneB = tb.Run(wB, rB, eB)
+			t.Logf("ta addrs=%v", ta.LocalAddresses())
+			t.Logf("tb addrs=%v", tb.LocalAddresses())
 
-	eB0, eB1 = events.Split(eB)
-	go events.Log(nil, events.Join(eA, eB1))
-	addr := waitForFirstAddress(eB0)
+			addr := tb.LocalAddresses()[0]
+			log.Printf("SND %q to %s", "Hello World!", addr)
+			err = ta.WriteMessage([]byte("Hello World!"), addr)
+			assert.NoError(err)
 
-	log.Printf("SND %q to %q", "Hello World!", addr)
-
-	wop := transports.WriteOp{[]byte("Hello World!"), addr, make(chan error)}
-	wA <- wop
-	assert.NoError(<-wop.C)
-	close(wA)
-
-	rop := <-rB
-	assert.NotNil(rop.Msg)
-	assert.NotNil(rop.Src)
-	assert.Equal("Hello World!", string(rop.Msg))
-	log.Printf("RCV %q from %q", rop.Msg, rop.Src)
-	close(wB)
-
-	<-doneA
-	<-doneB
-}
-
-func waitForFirstAddress(e <-chan events.E) transports.Addr {
-	defer func() {
-		go func() {
-			for _ = range e {
+			buf := make([]byte, 128)
+			n, src, err := tb.ReadMessage(buf)
+			if assert.NoError(err) && assert.NotNil(src) {
+				assert.Equal("Hello World!", string(buf[:n]))
 			}
-		}()
-	}()
 
-	for evt := range e {
-		nc, ok := evt.(*transports.NetworkChangeEvent)
-		if !ok || nc == nil {
-			continue
+			err = ta.Close()
+			assert.NoError(err)
+
+			err = tb.Close()
+			assert.NoError(err)
 		}
-		if len(nc.Up) == 0 {
-			continue
-		}
-		return nc.Up[0]
 	}
-
-	return nil
 }
