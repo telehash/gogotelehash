@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 	"errors"
 	"sync"
 
@@ -35,18 +36,16 @@ type Endpoint struct {
 	localAddresses  transports.AddrSet
 	modules         map[interface{}]Module
 
-	cTerminate      chan struct{}
-	cMakeExchange   chan *opMakeExchange
-	cLookupAddr     chan *opLookupAddr
-	cTransportRead  chan transports.ReadOp
-	cTransportWrite chan transports.WriteOp
-	cTransportDone  <-chan struct{}
-	cEventIn        chan events.E
-	tokens          map[cipherset.Token]*exchangeEntry
-	hashnames       map[hashname.H]*exchangeEntry
-	scheduler       *scheduler.Scheduler
-	handlers        map[string]Handler
-	subscribers     events.Hub
+	cTerminate     chan struct{}
+	cMakeExchange  chan *opMakeExchange
+	cLookupAddr    chan *opLookupAddr
+	cTransportRead chan opRead
+	cEventIn       chan events.E
+	tokens         map[cipherset.Token]*exchangeEntry
+	hashnames      map[hashname.H]*exchangeEntry
+	scheduler      *scheduler.Scheduler
+	handlers       map[string]Handler
+	subscribers    events.Hub
 }
 
 type Handler interface {
@@ -71,6 +70,12 @@ type opMakeExchange struct {
 type opLookupAddr struct {
 	hashname hashname.H
 	cAddr    chan *Addr
+}
+
+type opRead struct {
+	msg []byte
+	src transports.Addr
+	err error
 }
 
 type exchangeEntry struct {
@@ -134,8 +139,7 @@ func (e *Endpoint) start() error {
 	e.cMakeExchange = make(chan *opMakeExchange)
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
-	e.cTransportWrite = make(chan transports.WriteOp)
-	e.cTransportRead = make(chan transports.ReadOp)
+	e.cTransportRead = make(chan opRead)
 	e.cEventIn = make(chan events.E, 10)
 	e.scheduler = scheduler.New()
 
@@ -155,7 +159,7 @@ func (e *Endpoint) start() error {
 		return err
 	}
 	e.transport = t
-	e.cTransportDone = t.Run(e.cTransportWrite, e.cTransportRead, e.cEventIn)
+	go e.runReader()
 
 	for _, mod := range e.modules {
 		err := mod.Start()
@@ -214,14 +218,6 @@ func (e *Endpoint) run() {
 		case op := <-e.scheduler.C:
 			op.Exec()
 
-		case <-e.cTransportDone:
-			close(e.cTransportRead)
-			close(e.cEventIn)
-			e.cTransportRead = nil
-			e.cTransportWrite = nil
-			e.cEventIn = nil
-			return
-
 		case <-e.cTerminate:
 			for _, e := range e.hashnames {
 				e.x.on_break()
@@ -229,7 +225,7 @@ func (e *Endpoint) run() {
 			for _, e := range e.tokens {
 				e.x.on_break()
 			}
-			close(e.cTransportWrite)
+			e.transport.Close() //TODO handle err
 
 		case op := <-e.cMakeExchange:
 			e.dial(op)
@@ -257,6 +253,17 @@ func (e *Endpoint) run() {
 	}
 }
 
+func (e *Endpoint) runReader() {
+	for {
+		buf := bufpool.GetBuffer()
+		n, src, err := e.transport.ReadMessage(buf)
+		if err == transports.ErrClosed {
+			return
+		}
+		e.cTransportRead <- opRead{buf[:n], src, err}
+	}
+}
+
 func (e *Endpoint) handle_event(evt events.E) {
 	if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
 		for _, addr := range x.Up {
@@ -278,20 +285,20 @@ func (e *Endpoint) handle_event(evt events.E) {
 	e.subscribers.Emit(evt)
 }
 
-func (e *Endpoint) received(op transports.ReadOp) {
-	if len(op.Msg) >= 3 && op.Msg[0] == 0 && op.Msg[1] == 1 {
+func (e *Endpoint) received(op opRead) {
+	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
 		e.received_handshake(op)
 		return
 	}
 
-	if len(op.Msg) >= 2 && op.Msg[0] == 0 && op.Msg[1] == 0 {
+	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
 		e.received_packet(op)
 	}
 
 	// drop
 }
 
-func (e *Endpoint) received_handshake(op transports.ReadOp) {
+func (e *Endpoint) received_handshake(op opRead) {
 	var (
 		entry     *exchangeEntry
 		x         *Exchange
@@ -304,7 +311,7 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 		err       error
 	)
 
-	token = cipherset.ExtractToken(op.Msg)
+	token = cipherset.ExtractToken(op.msg)
 	if token == cipherset.ZeroToken {
 		tracef("received_handshake() => drop // no token")
 		return // drop
@@ -324,14 +331,14 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 		return // drop
 	}
 
-	csid = uint8(op.Msg[2])
+	csid = uint8(op.msg[2])
 	localKey = localAddr.keys[csid]
 	if localKey == nil {
 		tracef("received_handshake() => drop // no local key")
 		return // drop
 	}
 
-	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.Msg[3:])
+	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.msg[3:])
 	if err != nil {
 		tracef("received_handshake() => drop // invalid handshake err=%s", err)
 		return // drop
@@ -354,7 +361,7 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	}
 
 	x, err = newExchange(localAddr, nil, handshake, token,
-		e.cTransportWrite, e.cEventIn, e.handlers)
+		e.transport, e.cEventIn, e.handlers)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
 		return // drop
@@ -372,9 +379,9 @@ func (e *Endpoint) received_handshake(op transports.ReadOp) {
 	tracef("received_handshake() => done %x", token)
 }
 
-func (e *Endpoint) received_packet(op transports.ReadOp) {
+func (e *Endpoint) received_packet(op opRead) {
 	var (
-		token = cipherset.ExtractToken(op.Msg)
+		token = cipherset.ExtractToken(op.msg)
 	)
 
 	if token == cipherset.ZeroToken {
@@ -428,7 +435,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	x, err = newExchange(localAddr, op.addr, nil, cipherset.ZeroToken,
-		e.cTransportWrite, e.cEventIn, e.handlers)
+		e.transport, e.cEventIn, e.handlers)
 	if err != nil {
 		op.cErr <- err
 		return

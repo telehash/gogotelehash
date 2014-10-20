@@ -78,7 +78,7 @@ type Exchange struct {
 	err             error
 
 	// lended channels
-	cTransportWrite   chan<- transports.WriteOp
+	transportWriter   transportWriter
 	cDownstreamEvents chan<- events.E // exchange -> endpoint
 
 	nextHandshake     int
@@ -90,6 +90,10 @@ type Exchange struct {
 
 type channelEntry struct {
 	c *Channel
+}
+
+type transportWriter interface {
+	WriteMessage([]byte, transports.Addr) error
 }
 
 func (x *Exchange) State() ExchangeState {
@@ -108,7 +112,7 @@ func newExchange(
 	remoteAddr *Addr,
 	handshake cipherset.Handshake,
 	token cipherset.Token,
-	w chan<- transports.WriteOp,
+	transportWriter transportWriter,
 	eDown chan<- events.E,
 	handlers map[string]Handler,
 ) (*Exchange, error) {
@@ -117,7 +121,7 @@ func newExchange(
 		remoteAddr:        remoteAddr,
 		channels:          make(map[uint32]*channelEntry),
 		addressBook:       newAddressBook(),
-		cTransportWrite:   w,
+		transportWriter:   transportWriter,
 		cDownstreamEvents: eDown,
 		handlers:          handlers,
 	}
@@ -216,25 +220,17 @@ func (x *Exchange) ActivePath() transports.Addr {
 	return addr
 }
 
-// func (e *Exchange) knownKeys() cipherset.Keys {
-// 	return e.remoteAddr.keys
-// }
-
-// func (e *Exchange) knownParts() cipherset.Parts {
-// 	return e.remoteAddr.parts
-// }
-
-func (x *Exchange) received(op transports.ReadOp) {
-	if len(op.Msg) >= 3 && op.Msg[1] == 1 {
+func (x *Exchange) received(op opRead) {
+	if len(op.msg) >= 3 && op.msg[1] == 1 {
 		x.received_handshake(op)
 	} else {
 		x.received_packet(op)
 	}
 
-	bufpool.PutBuffer(op.Msg)
+	bufpool.PutBuffer(op.msg)
 }
 
-func (x *Exchange) received_handshake(op transports.ReadOp) bool {
+func (x *Exchange) received_handshake(op opRead) bool {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
@@ -246,11 +242,11 @@ func (x *Exchange) received_handshake(op transports.ReadOp) bool {
 		err       error
 	)
 
-	if len(op.Msg) < 3 {
+	if len(op.msg) < 3 {
 		return false
 	}
 
-	pkt, err = lob.Decode(op.Msg)
+	pkt, err = lob.Decode(op.msg)
 	if err != nil {
 		tracef("handshake: invalid (%s)", err)
 		return false
@@ -289,24 +285,24 @@ func (x *Exchange) received_handshake(op transports.ReadOp) bool {
 		addr, err := NewAddr(
 			cipherset.Keys{x.csid: handshake.PublicKey()},
 			handshake.Parts(),
-			[]transports.Addr{op.Src},
+			[]transports.Addr{op.src},
 		)
 		if err != nil {
 			tracef("handshake: invalid (%s)", err)
 			return false
 		}
 		x.remoteAddr = addr
-		x.token = cipherset.ExtractToken(op.Msg)
+		x.token = cipherset.ExtractToken(op.msg)
 	}
 
 	tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
 
 	if x.isLocalSeq(seq) {
 		x.reset_break()
-		x.addressBook.ReceivedHandshake(op.Src)
+		x.addressBook.ReceivedHandshake(op.src)
 	} else {
-		x.addressBook.AddAddress(op.Src)
-		x.deliver_handshake(seq, op.Src)
+		x.addressBook.AddAddress(op.src)
+		x.deliver_handshake(seq, op.src)
 	}
 
 	if x.state == ExchangeDialing {
@@ -375,7 +371,7 @@ func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 	for _, addr := range addrs {
 		go func(addr transports.Addr) {
 			defer func() { recover() }()
-			e.cTransportWrite <- transports.WriteOp{pktData, addr, cErr}
+			cErr <- e.transportWriter.WriteMessage(pktData, addr)
 		}(addr)
 		e.addressBook.SentHandshake(addr)
 	}
@@ -403,8 +399,8 @@ func (e *Exchange) reschedule_handshake() {
 	e.tDeliverHandshake.Reset(d)
 }
 
-func (x *Exchange) received_packet(op transports.ReadOp) {
-	pkt, err := lob.Decode(op.Msg)
+func (x *Exchange) received_packet(op opRead) {
+	pkt, err := lob.Decode(op.msg)
 	if err != nil {
 		return // drop
 	}
@@ -499,9 +495,7 @@ func (x *Exchange) deliver_packet(pkt *lob.Packet) error {
 		return err
 	}
 
-	op := transports.WriteOp{Msg: msg, Dst: addr, C: make(chan error, 1)}
-	x.cTransportWrite <- op
-	err = <-op.C
+	err = x.transportWriter.WriteMessage(msg, addr)
 
 	bufpool.PutBuffer(pkt.Body)
 	bufpool.PutBuffer(msg)
