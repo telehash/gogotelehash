@@ -584,6 +584,9 @@ func (c *Channel) Close() error {
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
+	c.unset_open_deadline()
+	c.unset_close_deadline()
+
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
@@ -740,7 +743,8 @@ func (c *Channel) on_close_deadline_reached() {
 	c.mtx.Lock()
 	c.broken = true
 	c.closeDeadlineReached = true
-	c.tCloseDeadline = nil
+	c.unset_open_deadline()
+	c.unset_close_deadline()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -775,7 +779,8 @@ func (c *Channel) on_open_deadline_reached() {
 	c.mtx.Lock()
 	c.broken = true
 	c.openDeadlineReached = true
-	c.tOpenDeadline = nil
+	c.unset_open_deadline()
+	c.unset_close_deadline()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -790,7 +795,8 @@ func (c *Channel) forget() {
 	c.mtx.Lock()
 	c.broken = true
 	c.openDeadlineReached = false
-	c.tOpenDeadline = nil
+	c.unset_open_deadline()
+	c.unset_close_deadline()
 
 	// broadcast
 	c.cndWrite.Broadcast()

@@ -8,56 +8,39 @@ import (
 )
 
 func TestAddRemovePadding(t *testing.T) {
-	var tab = [][3]string{
-		{"", "", ""},
-		{"f", "my======", "my"},
-		{"fo", "mzxq====", "mzxq"},
-		{"foo", "mzxw6===", "mzxw6"},
-		{"foob", "mzxw6yq=", "mzxw6yq"},
-		{"fooba", "mzxw6ytb", "mzxw6ytb"},
-		{"foobar", "mzxw6ytboi======", "mzxw6ytboi"},
-		{"foobarb", "mzxw6ytbojra====", "mzxw6ytbojra"},
-		{"foobarba", "mzxw6ytbojrgc===", "mzxw6ytbojrgc"},
-		{"foobarbax", "mzxw6ytbojrgc6a=", "mzxw6ytbojrgc6a"},
+	var tab = [][2]string{
+		{"", ""},
+		{"f", "my"},
+		{"fo", "mzxq"},
+		{"foo", "mzxw6"},
+		{"foob", "mzxw6yq"},
+		{"fooba", "mzxw6ytb"},
+		{"foobar", "mzxw6ytboi"},
+		{"foobarb", "mzxw6ytbojra"},
+		{"foobarba", "mzxw6ytbojrgc"},
+		{"foobarbax", "mzxw6ytbojrgc6a"},
 	}
 	for i, r := range tab {
-		x := Encoding.EncodeToString([]byte(r[0]))
+		x := EncodeToString([]byte(r[0]))
 		if x != r[1] {
 			t.Errorf("#%d failed expected %q instead of %q for EncodeToString", i, r[1], x)
 		}
 
-		x = RemovePadding(x)
-		if x != r[2] {
-			t.Errorf("#%d failed expected %q instead of %q for RemovePadding", i, r[2], x)
-		}
-
-		x = AddPadding(x)
-		if x != r[1] {
-			t.Errorf("#%d failed expected %q instead of %q for AddPadding", i, r[1], x)
+		y, _ := DecodeString(x)
+		if string(y) != r[0] {
+			t.Errorf("#%d failed expected %q instead of %q for DecodeString", i, r[1], string(y))
 		}
 	}
 
 	f := func(x0 []byte) bool {
-		y0 := Encoding.EncodeToString(x0)
+		y0 := EncodeToString(x0)
 
-		y1 := RemovePadding(y0)
-
-		if strings.ContainsRune(y1, '=') {
+		if strings.ContainsRune(y0, '=') {
 			return false
 		}
 
-		y2 := AddPadding(y1)
-		if y0 != y2 {
-			return false
-		}
-
-		x1, err := Encoding.DecodeString(y2)
+		x1, err := DecodeString(y0)
 		if err != nil || !bytes.Equal(x0, x1) {
-			return false
-		}
-
-		y3 := AddPadding(y0)
-		if y0 != y3 {
 			return false
 		}
 

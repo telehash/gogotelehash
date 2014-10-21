@@ -6,7 +6,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/e3x"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 type Bridge interface {
@@ -95,51 +94,45 @@ type transport struct {
 	t   transports.Transport
 }
 
-func (t *transport) Run(w <-chan transports.WriteOp, r chan<- transports.ReadOp, e chan<- events.E) <-chan struct{} {
-	w2 := make(chan transports.WriteOp)
-	r2 := make(chan transports.ReadOp)
-	go t.run_bridge(w2, r2, w, r)
-	return t.t.Run(w2, r2, e)
+func (t *transport) LocalAddresses() []transports.Addr {
+	return t.t.LocalAddresses()
 }
 
-func (t *transport) run_bridge(
-	w2 chan transports.WriteOp, r2 chan transports.ReadOp,
-	w <-chan transports.WriteOp, r chan<- transports.ReadOp,
-) {
-LOOP:
+func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
 	for {
-		select {
-
-		case op, open := <-w:
-			if !open {
-				close(w2)
-				return
-			}
-			w2 <- op
-
-		case op, open := <-r2:
-			if !open {
-				return
-			}
-
-			token := cipherset.ExtractToken(op.Msg)
-			ex := t.mod.lookupToken(token)
-			if ex == nil {
-				r <- op
-				continue LOOP
-			}
-
-			writeOp := transports.WriteOp{
-				C:   make(chan error, 1),
-				Dst: ex.ActivePath(),
-				Msg: op.Msg,
-			}
-			if writeOp.Dst == nil {
-				continue LOOP
-			}
-
-			w2 <- writeOp
-
+		n, src, err = t.t.ReadMessage(p)
+		if err != nil {
+			return n, src, err
 		}
+
+		p = p[:n]
+
+		var (
+			token = cipherset.ExtractToken(p)
+			ex    = t.mod.lookupToken(token)
+		)
+
+		// not a bridged message
+		if ex == nil {
+			return n, src, err
+		}
+
+		// handle bridged message
+		err = t.t.WriteMessage(p, ex.ActivePath())
+		if err != nil {
+			// TODO handle error
+		}
+
+		// continue reading messages
 	}
+
+	panic("unreachable")
+}
+
+func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
+	return t.t.WriteMessage(p, dst)
+}
+
+func (t *transport) Close() error {
+	return t.t.Close()
 }

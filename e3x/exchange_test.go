@@ -46,16 +46,19 @@ func TestBasicExchange(t *testing.T) {
 	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, cEvents, nil)
 	assert.NoError(err)
 
+	go pipeTransportReader(A.x, A.t)
+
 	go func() {
 		var (
 			handshake cipherset.Handshake
 			token     cipherset.Token
 			err       error
 			buf       = make([]byte, 64*1024)
+			src       transports.Addr
 			n         int
 		)
 
-		n, _, err = B.t.ReadMessage(buf)
+		n, src, err = B.t.ReadMessage(buf)
 		assert.NoError(err)
 		buf = buf[:n]
 
@@ -69,9 +72,31 @@ func TestBasicExchange(t *testing.T) {
 
 			B.x, err = newExchange(B.a, nil, handshake, token, B.t, cEvents, nil)
 			assert.NoError(err)
+
+			B.x.received(opRead{buf, src, nil})
+
+			go pipeTransportReader(B.x, B.t)
 		}
 	}()
 
 	A.x.waitDone()
 	B.x.waitDone()
+}
+
+func pipeTransportReader(x *Exchange, r transports.Transport) {
+	for {
+		var (
+			err error
+			buf = make([]byte, 64*1024)
+			src transports.Addr
+			n   int
+		)
+
+		n, src, err = r.ReadMessage(buf)
+		if err == transports.ErrClosed {
+			return
+		}
+
+		x.received(opRead{buf[:n], src, err})
+	}
 }

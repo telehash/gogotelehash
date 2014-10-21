@@ -26,6 +26,8 @@ func (err BrokenExchangeError) Error() string {
 type ExchangeState uint8
 
 const (
+	ExchangeInitialising ExchangeState = 0
+
 	ExchangeDialing ExchangeState = 1 << iota
 	ExchangeIdle
 	ExchangeActive
@@ -43,6 +45,8 @@ func (s ExchangeState) IsClosed() bool {
 
 func (s ExchangeState) String() string {
 	switch s {
+	case ExchangeInitialising:
+		return "initialising"
 	case ExchangeDialing:
 		return "dialing"
 	case ExchangeIdle:
@@ -253,7 +257,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	}
 
 	if len(pkt.Head) != 1 {
-		tracef("handshake: invalid (%s)", "wronf header length")
+		tracef("handshake: invalid (%s)", "wrong header length")
 		return false
 	}
 	csid = uint8(pkt.Head[0])
@@ -305,7 +309,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		x.deliver_handshake(seq, op.src)
 	}
 
-	if x.state == ExchangeDialing {
+	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
 		tracef("(id=%d) opened", x.addressBook.id)
 
 		x.state = ExchangeIdle
@@ -653,7 +657,7 @@ func (x *Exchange) nextChannelId() uint32 {
 
 func (x *Exchange) waitDone() {
 	x.mtx.Lock()
-	for x.state != ExchangeExpired {
+	for x.state != ExchangeExpired && x.state != ExchangeBroken {
 		x.cndState.Wait()
 	}
 	x.mtx.Unlock()
