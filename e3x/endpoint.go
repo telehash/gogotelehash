@@ -1,14 +1,15 @@
 package e3x
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 	"errors"
+	"os"
 	"sync"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 	"bitbucket.org/simonmenke/go-telehash/util/events"
 	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
@@ -33,7 +34,6 @@ type Endpoint struct {
 	keys            cipherset.Keys
 	transportConfig transports.Config
 	transport       transports.Transport
-	localAddresses  transports.AddrSet
 	modules         map[interface{}]Module
 
 	cTerminate     chan struct{}
@@ -58,7 +58,7 @@ func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 
 type opReceived struct {
 	pkt *lob.Packet
-	transports.ReadOp
+	opRead
 }
 
 type opMakeExchange struct {
@@ -109,7 +109,7 @@ func (e *Endpoint) AddHandler(typ string, h Handler) {
 }
 
 func (e *Endpoint) LocalAddr() (*Addr, error) {
-	return NewAddr(e.keys, nil, e.localAddresses)
+	return NewAddr(e.keys, nil, e.transport.LocalAddresses())
 }
 
 func (e *Endpoint) Start() error {
@@ -192,8 +192,9 @@ func (e *Endpoint) stop() error {
 	}
 
 	select {
-	case e.cTerminate <- struct{}{}:
+	case <-e.cTerminate: // closed
 	default:
+		close(e.cTerminate)
 	}
 
 	if e.state == RunningEndpointState {
@@ -226,6 +227,7 @@ func (e *Endpoint) run() {
 				e.x.on_break()
 			}
 			e.transport.Close() //TODO handle err
+			return
 
 		case op := <-e.cMakeExchange:
 			e.dial(op)
@@ -265,14 +267,6 @@ func (e *Endpoint) runReader() {
 }
 
 func (e *Endpoint) handle_event(evt events.E) {
-	if x, ok := evt.(*transports.NetworkChangeEvent); ok && x != nil {
-		for _, addr := range x.Up {
-			e.localAddresses.Add(addr)
-		}
-		for _, addr := range x.Down {
-			e.localAddresses.Remove(addr)
-		}
-	}
 
 	if cevt, ok := evt.(*ExchangeClosedEvent); ok && cevt != nil {
 		entry := e.hashnames[cevt.Exchange.remoteAddr.Hashname()]
@@ -398,6 +392,10 @@ func (e *Endpoint) received_packet(op opRead) {
 }
 
 func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
+	if addr == nil {
+		return nil, os.ErrInvalid
+	}
+
 	op := opMakeExchange{addr, nil, make(chan error)}
 	e.cMakeExchange <- &op
 	err := <-op.cErr
@@ -414,6 +412,7 @@ func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
 }
 
 func (e *Endpoint) dial(op *opMakeExchange) {
+	tracef("op=%v", op)
 	if entry, found := e.hashnames[op.addr.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil

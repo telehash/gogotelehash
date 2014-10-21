@@ -20,7 +20,6 @@ import (
 func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
 	with_endpoint(t, func(a *Endpoint) {
 		with_endpoint(t, func(b *Endpoint) {
-			time.Sleep(1 * time.Second)
 			f(a, b)
 		})
 	})

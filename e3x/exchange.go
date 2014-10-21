@@ -571,10 +571,16 @@ func (x *Exchange) isLocalSeq(seq uint32) bool {
 }
 
 func (x *Exchange) on_expire() {
+	if x == nil {
+		return
+	}
 	x.expire(nil)
 }
 
 func (x *Exchange) on_break() {
+	if x == nil {
+		return
+	}
 	x.expire(BrokenExchangeError(x.remoteAddr.Hashname()))
 }
 

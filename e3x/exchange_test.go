@@ -1,8 +1,6 @@
 package e3x
 
 import (
-	"encoding/json"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,119 +24,54 @@ func TestBasicExchange(t *testing.T) {
 
 		A = struct {
 			a *Addr
-			w chan transports.WriteOp
-			r chan transports.ReadOp
+			t transports.Transport
 			x *Exchange
 		}{
 			a: makeAddr("A"),
-			r: make(chan transports.ReadOp),
-			w: make(chan transports.WriteOp),
 		}
 
 		B = struct {
 			a *Addr
-			r chan transports.ReadOp
-			w chan transports.WriteOp
+			t transports.Transport
 			x *Exchange
 		}{
 			a: makeAddr("B"),
-			r: make(chan transports.ReadOp),
-			w: make(chan transports.WriteOp),
 		}
 	)
 
 	go events.Log(nil, cEvents)
 
-	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.w, cEvents, nil)
+	A.t, B.t = openPipeTransport("A", "B")
+
+	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, cEvents, nil)
 	assert.NoError(err)
-	go pipeTransport(A.x, B.w)
 
 	go func() {
 		var (
-			op        = <-A.w
 			handshake cipherset.Handshake
 			token     cipherset.Token
 			err       error
+			buf       = make([]byte, 64*1024)
+			n         int
 		)
 
+		n, _, err = B.t.ReadMessage(buf)
+		assert.NoError(err)
+		buf = buf[:n]
+
 		// detect handshake
-		assert.Equal(0, op.Msg[0])
-		assert.Equal(1, op.Msg[1])
-		assert.Equal(0x3a, op.Msg[2])
-		handshake, err = cipherset.DecryptHandshake(0x3a, B.a.keys[0x3a], op.Msg[3:])
-		assert.NoError(err)
-		token = cipherset.ExtractToken(op.Msg)
+		assert.Equal(0, buf[0])
+		assert.Equal(1, buf[1])
+		assert.Equal(0x3a, buf[2])
+		handshake, err = cipherset.DecryptHandshake(0x3a, B.a.keys[0x3a], buf[3:])
+		if assert.NoError(err) {
+			token = cipherset.ExtractToken(buf)
 
-		B.x, err = newExchange(B.a, nil, handshake, token, B.w, cEvents, nil)
-		assert.NoError(err)
-
-		if B.x != nil {
-			go pipeTransport(B.x, A.w)
-
-			B.r <- transports.ReadOp{Msg: op.Msg, Src: op.Dst}
-			op.C <- nil
+			B.x, err = newExchange(B.a, nil, handshake, token, B.t, cEvents, nil)
+			assert.NoError(err)
 		}
 	}()
 
 	A.x.waitDone()
 	B.x.waitDone()
-}
-
-func makeAddr(name string) *Addr {
-	key, err := cipherset.GenerateKey(0x3a)
-	if err != nil {
-		panic(err)
-	}
-
-	addr, err := NewAddr(cipherset.Keys{0x3a: key}, nil, []transports.Addr{
-		MockAddr(fmt.Sprintf("%s-%s", name, "1")),
-		MockAddr(fmt.Sprintf("%s-%s", name, "2")),
-		MockAddr(fmt.Sprintf("%s-%s", name, "3")),
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	return addr
-}
-
-func pipeTransport(x *Exchange, w <-chan transports.WriteOp) {
-	for op := range w {
-		x.received(transports.ReadOp{Msg: op.Msg, Src: op.Dst})
-	}
-}
-
-type MockAddr string
-
-func (m MockAddr) Network() string {
-	return "mock"
-}
-
-func (m MockAddr) String() string {
-	data, err := m.MarshalJSON()
-	if err != nil {
-		panic(err)
-	}
-
-	return string(data)
-}
-
-func (m MockAddr) MarshalJSON() ([]byte, error) {
-	var desc = struct {
-		Type string `json:"type"`
-		Name string `json:"name"`
-	}{
-		Type: "mock",
-		Name: string(m),
-	}
-
-	return json.Marshal(&desc)
-}
-
-func (a MockAddr) Equal(x transports.Addr) bool {
-	b, ok := x.(MockAddr)
-	if !ok {
-		return false
-	}
-	return a == b
 }
