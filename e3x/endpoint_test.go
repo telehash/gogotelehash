@@ -10,7 +10,6 @@ import (
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
 	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 func TestSimpleEndpoint(t *testing.T) {
@@ -19,9 +18,6 @@ func TestSimpleEndpoint(t *testing.T) {
 	}
 
 	assert := assert.New(t)
-
-	eventC := make(chan events.E)
-	go events.Log(nil, eventC)
 
 	ka, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
@@ -32,8 +28,8 @@ func TestSimpleEndpoint(t *testing.T) {
 	ea := New(cipherset.Keys{0x3a: ka}, mux.Config{udp.Config{}})
 	eb := New(cipherset.Keys{0x3a: kb}, mux.Config{udp.Config{}})
 
-	ea.Subscribe(eventC)
-	eb.Subscribe(eventC)
+	registerEventLoggers(ea, t)
+	registerEventLoggers(eb, t)
 
 	err = ea.Start()
 	assert.NoError(err)
@@ -61,9 +57,6 @@ func TestSimpleEndpoint(t *testing.T) {
 
 	time.Sleep(2*time.Minute + 10*time.Second)
 	tracef("BYE")
-
-	tracef("ea: schedule idle=%v next=%s", ea.scheduler.Idle(), ea.scheduler.Next())
-	tracef("eb: schedule idle=%v next=%s", eb.scheduler.Idle(), eb.scheduler.Next())
 
 	err = ea.Stop()
 	assert.NoError(err)

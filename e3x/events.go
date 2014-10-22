@@ -2,16 +2,18 @@ package e3x
 
 import (
 	"fmt"
-
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 var (
-	_ events.E = (*ExchangeOpenedEvent)(nil)
-	_ events.E = (*ExchangeClosedEvent)(nil)
-	_ events.E = (*ChannelOpenedEvent)(nil)
-	_ events.E = (*ChannelClosedEvent)(nil)
+	_ Event = (*ExchangeOpenedEvent)(nil)
+	_ Event = (*ExchangeClosedEvent)(nil)
+	_ Event = (*ChannelOpenedEvent)(nil)
+	_ Event = (*ChannelClosedEvent)(nil)
 )
+
+type Event interface {
+	String() string
+}
 
 type ExchangeOpenedEvent struct {
 	Exchange *Exchange

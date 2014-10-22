@@ -2,11 +2,11 @@ package mesh
 
 import (
 	"errors"
+	"sync"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x"
 	"bitbucket.org/simonmenke/go-telehash/hashname"
 	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 var ErrNotAuthorized = errors.New("link: not authorized")
@@ -36,11 +36,7 @@ type Mesh interface {
 type mesh struct {
 	endpoint    *e3x.Endpoint
 	accept      AcceptFunc
-	cLink       chan *opLink
-	cRelease    chan *opRelease
-	cHasLink    chan opHasLink
-	cEventIn    chan events.E
-	cTerminate  chan struct{}
+	mtx         sync.Mutex
 	links       map[hashname.H]*link
 	last_tag_id uint64
 }
@@ -75,143 +71,93 @@ type opHasLink struct {
 
 func newMesh(e *e3x.Endpoint, accept AcceptFunc) *mesh {
 	return &mesh{
-		endpoint:   e,
-		accept:     accept,
-		cLink:      make(chan *opLink),
-		cRelease:   make(chan *opRelease),
-		cHasLink:   make(chan opHasLink),
-		cEventIn:   make(chan events.E),
-		cTerminate: make(chan struct{}),
-		links:      make(map[hashname.H]*link),
+		endpoint: e,
+		accept:   accept,
+		links:    make(map[hashname.H]*link),
 	}
 }
 
 func (m *mesh) Init() error {
 	m.endpoint.AddHandler("link", e3x.HandlerFunc(m.handle_link))
-	m.endpoint.Subscribe(m.cEventIn)
+
+	observers := e3x.ObserversFromEndpoint(m.endpoint)
+	observers.Register(m.on_exchange_closed)
 	return nil
 }
 
-func (m *mesh) Start() error {
-	go m.run()
-	return nil
-}
+func (m *mesh) Start() error { return nil }
+func (m *mesh) Stop() error  { return nil }
 
-func (m *mesh) Stop() error {
-	close(m.cTerminate)
-	return nil
-}
+func (m *mesh) on_exchange_closed(evt *e3x.ExchangeClosedEvent) {
+	m.mtx.Lock()
+	var (
+		hn   = evt.Exchange.RemoteHashname()
+		link = m.links[hn]
+	)
+	delete(m.links, hn)
+	m.mtx.Unlock()
 
-func (m *mesh) run() {
-	for {
-		select {
-
-		case evt := <-m.cEventIn:
-			m.handle_event(evt)
-
-		case <-m.cTerminate:
-			return
-
-		case op := <-m.cLink:
-			m.link(op)
-
-		case op := <-m.cRelease:
-			m.release(op)
-
-		case op := <-m.cHasLink:
-			m.has_link(op)
-
-		}
-	}
-}
-
-func (m *mesh) handle_event(x events.E) {
-	switch evt := x.(type) {
-	case *e3x.ExchangeClosedEvent:
-		var (
-			hn   = evt.Exchange.RemoteHashname()
-			link = m.links[hn]
-		)
-
-		if link == nil {
-			return
-		}
-
+	if link != nil {
 		link.channel.Close()
-		delete(m.links, hn)
 	}
 }
 
 func (m *mesh) HasLink(h hashname.H) bool {
-	op := opHasLink{h, make(chan bool)}
-	m.cHasLink <- op
-	return <-op.resp
-}
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
 
-func (m *mesh) has_link(op opHasLink) {
-	l, f := m.links[op.hashname]
-	op.resp <- f && len(l.tags) > 0 && l.channel != nil
+	l, f := m.links[h]
+	return f && len(l.tags) > 0 && l.channel != nil
 }
 
 func (m *mesh) Link(addr *e3x.Addr, pkt *lob.Packet) (Tag, error) {
-	op := opLink{addr: addr, pkt: pkt, cErr: make(chan error)}
-	m.cLink <- &op
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
 
-	if err := <-op.cErr; err != nil {
-		return Tag{}, err
-	}
-
-	return op.tag, nil
-}
-
-func (m *mesh) link(op *opLink) {
-	l := m.links[op.addr.Hashname()]
+	l := m.links[addr.Hashname()]
 
 	if l == nil {
-		c, err := m.endpoint.Open(op.addr, "link", false)
+		c, err := m.endpoint.Open(addr, "link", false)
 		if err != nil {
-			op.cErr <- err
-			return
+			return Tag{}, err
 		}
 
-		if op.pkt == nil {
-			op.pkt = &lob.Packet{}
+		if pkt == nil {
+			pkt = &lob.Packet{}
 		}
-		err = c.WritePacket(op.pkt)
+		err = c.WritePacket(pkt)
 		if err != nil {
 			c.Close()
-			op.cErr <- err
-			return
+			return Tag{}, err
 		}
 
 		pkt, err := c.ReadPacket()
 		if err != nil {
 			c.Close()
-			op.cErr <- err
-			return
+			return Tag{}, err
 		}
 
 		// authenticate peer
-		if m.accept != nil && !m.accept(op.addr, pkt, nil) {
+		if m.accept != nil && !m.accept(addr, pkt, nil) {
 			c.Errorf("access denied")
-			op.cErr <- ErrNotAuthorized
-			return
+			return Tag{}, ErrNotAuthorized
 		}
 
-		l = &link{op.addr, c, make(map[uint64]bool)}
-		m.links[op.addr.Hashname()] = l
+		l = &link{addr, c, make(map[uint64]bool)}
+		m.links[addr.Hashname()] = l
 	}
 
 	m.last_tag_id++
-	t := Tag{op.addr.Hashname(), m.last_tag_id, m}
+	t := Tag{addr.Hashname(), m.last_tag_id, m}
 	l.tags[m.last_tag_id] = true
 
-	op.tag = t
-	op.cErr <- nil
-	return
+	return t, nil
 }
 
 func (m *mesh) handle_link(ch *e3x.Channel) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
 	pkt, err := ch.ReadPacket()
 	if err != nil {
 		ch.Close()
@@ -247,24 +193,24 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 }
 
 func (t Tag) Release() {
-	op := opRelease{tag: t}
-	t.mesh.cRelease <- &op
-}
+	m := t.mesh
 
-func (m *mesh) release(op *opRelease) {
-	l := m.links[op.tag.hashname]
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	l := m.links[t.hashname]
 	if l == nil {
 		return
 	}
 
-	if !l.tags[op.tag.id] {
+	if !l.tags[t.id] {
 		return
 	}
 
-	delete(l.tags, op.tag.id)
+	delete(l.tags, t.id)
 
 	if len(l.tags) == 0 {
 		l.channel.Close()
-		delete(m.links, op.tag.hashname)
+		delete(m.links, t.hashname)
 	}
 }

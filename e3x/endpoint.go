@@ -10,8 +10,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
-	"bitbucket.org/simonmenke/go-telehash/util/scheduler"
 )
 
 type EndpointState uint8
@@ -40,12 +38,9 @@ type Endpoint struct {
 	cMakeExchange  chan *opMakeExchange
 	cLookupAddr    chan *opLookupAddr
 	cTransportRead chan opRead
-	cEventIn       chan events.E
 	tokens         map[cipherset.Token]*exchangeEntry
 	hashnames      map[hashname.H]*exchangeEntry
-	scheduler      *scheduler.Scheduler
 	handlers       map[string]Handler
-	subscribers    events.Hub
 }
 
 type Handler interface {
@@ -90,18 +85,14 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 		modules:         make(map[interface{}]Module),
 	}
 
+	observers := &modObservers{}
+	observers.Register(e.on_exchange_closed)
+
+	e.Use(modObserversKey, observers)
 	e.Use(modForgetterKey, &modForgetter{e})
 	e.Use(modTransportsKey, &modTransports{e})
 
 	return e
-}
-
-func (e *Endpoint) Subscribe(c chan<- events.E) {
-	e.subscribers.Subscribe(c)
-}
-
-func (e *Endpoint) Unsubscribe(c chan<- events.E) {
-	e.subscribers.Unubscribe(c)
 }
 
 func (e *Endpoint) AddHandler(typ string, h Handler) {
@@ -140,8 +131,6 @@ func (e *Endpoint) start() error {
 	e.cLookupAddr = make(chan *opLookupAddr)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportRead = make(chan opRead)
-	e.cEventIn = make(chan events.E, 10)
-	e.scheduler = scheduler.New()
 
 	for _, mod := range e.modules {
 		err := mod.Init()
@@ -150,8 +139,6 @@ func (e *Endpoint) start() error {
 			return err
 		}
 	}
-
-	e.scheduler.Start()
 
 	t, err := e.transportConfig.Open()
 	if err != nil {
@@ -203,8 +190,6 @@ func (e *Endpoint) stop() error {
 		e.state = BrokenEndpointState
 	}
 
-	e.scheduler.Stop()
-
 	e.wg.Wait()
 
 	return e.err
@@ -215,9 +200,6 @@ func (e *Endpoint) run() {
 
 	for {
 		select {
-
-		case op := <-e.scheduler.C:
-			op.Exec()
 
 		case <-e.cTerminate:
 			for _, e := range e.hashnames {
@@ -238,19 +220,6 @@ func (e *Endpoint) run() {
 		case op := <-e.cLookupAddr:
 			e.lookup_addr(op)
 
-		case evt := <-e.cEventIn:
-			e.handle_event(evt)
-
-		}
-
-		// flush events
-		for more := true; more; {
-			select {
-			case evt := <-e.cEventIn:
-				e.handle_event(evt)
-			default:
-				more = false
-			}
 		}
 	}
 }
@@ -266,17 +235,14 @@ func (e *Endpoint) runReader() {
 	}
 }
 
-func (e *Endpoint) handle_event(evt events.E) {
+func (e *Endpoint) on_exchange_closed(event *ExchangeClosedEvent) {
 
-	if cevt, ok := evt.(*ExchangeClosedEvent); ok && cevt != nil {
-		entry := e.hashnames[cevt.Exchange.remoteAddr.Hashname()]
-		if entry != nil {
-			delete(e.hashnames, cevt.Exchange.remoteAddr.Hashname())
-			delete(e.tokens, entry.x.token)
-		}
+	entry := e.hashnames[event.Exchange.remoteAddr.Hashname()]
+	if entry != nil {
+		delete(e.hashnames, event.Exchange.remoteAddr.Hashname())
+		delete(e.tokens, entry.x.token)
 	}
 
-	e.subscribers.Emit(evt)
 }
 
 func (e *Endpoint) received(op opRead) {
@@ -355,7 +321,7 @@ func (e *Endpoint) received_handshake(op opRead) {
 	}
 
 	x, err = newExchange(localAddr, nil, handshake, token,
-		e.transport, e.cEventIn, e.handlers)
+		e.transport, ObserversFromEndpoint(e), e.handlers)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
 		return // drop
@@ -434,7 +400,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	x, err = newExchange(localAddr, op.addr, nil, cipherset.ZeroToken,
-		e.transport, e.cEventIn, e.handlers)
+		e.transport, ObserversFromEndpoint(e), e.handlers)
 	if err != nil {
 		op.cErr <- err
 		return

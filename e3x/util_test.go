@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"testing"
 
 	"github.com/stretchr/testify/mock"
 
@@ -12,6 +13,14 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 )
+
+func registerEventLoggers(e *Endpoint, t *testing.T) {
+	observers := ObserversFromEndpoint(e)
+	observers.Register(func(e *ExchangeOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ExchangeClosedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ChannelOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ChannelClosedEvent) { t.Logf("EVENT: %s", e.String()) })
+}
 
 type MockExchange struct {
 	mock.Mock

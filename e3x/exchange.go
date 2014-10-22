@@ -12,7 +12,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
@@ -81,15 +80,13 @@ type Exchange struct {
 	handlers        map[string]Handler
 	err             error
 
-	// lended channels
-	transportWriter   transportWriter
-	cDownstreamEvents chan<- events.E // exchange -> endpoint
+	transportWriter transportWriter
+	observers       Observers
 
 	nextHandshake     int
 	tExpire           *time.Timer
 	tBreak            *time.Timer
 	tDeliverHandshake *time.Timer
-	subscribers       events.Hub
 }
 
 type channelEntry struct {
@@ -117,17 +114,17 @@ func newExchange(
 	handshake cipherset.Handshake,
 	token cipherset.Token,
 	transportWriter transportWriter,
-	eDown chan<- events.E,
+	observers Observers,
 	handlers map[string]Handler,
 ) (*Exchange, error) {
 	x := &Exchange{
-		localAddr:         localAddr,
-		remoteAddr:        remoteAddr,
-		channels:          make(map[uint32]*channelEntry),
-		addressBook:       newAddressBook(),
-		transportWriter:   transportWriter,
-		cDownstreamEvents: eDown,
-		handlers:          handlers,
+		localAddr:       localAddr,
+		remoteAddr:      remoteAddr,
+		channels:        make(map[uint32]*channelEntry),
+		addressBook:     newAddressBook(),
+		transportWriter: transportWriter,
+		observers:       observers,
+		handlers:        handlers,
 	}
 
 	x.cndState = sync.NewCond(&x.mtx)
@@ -316,10 +313,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		x.reset_expire()
 		x.cndState.Broadcast()
 
-		go func() {
-			evt := &ExchangeOpenedEvent{x}
-			x.cDownstreamEvents <- evt
-		}()
+		x.observers.Trigger(&ExchangeOpenedEvent{x})
 	}
 
 	return true
@@ -467,8 +461,7 @@ func (x *Exchange) received_packet(op opRead) {
 			x.channels[c.id] = entry
 			x.reset_expire()
 
-			x.cDownstreamEvents <- &ChannelOpenedEvent{c}
-			x.subscribers.Emit(&ChannelOpenedEvent{c})
+			x.observers.Trigger(&ChannelOpenedEvent{c})
 
 			go h.ServeTelehash(c)
 		}
@@ -527,10 +520,7 @@ func (x *Exchange) expire(err error) {
 
 	x.mtx.Unlock()
 
-	go func() {
-		evt := &ExchangeClosedEvent{x, err}
-		x.cDownstreamEvents <- evt
-	}()
+	x.observers.Trigger(&ExchangeClosedEvent{x, err})
 }
 
 func (e *Exchange) getNextSeq() uint32 {
@@ -624,8 +614,7 @@ func (x *Exchange) unregister_channel(channelId uint32) {
 		delete(x.channels, channelId)
 		x.reset_expire()
 
-		x.cDownstreamEvents <- &ChannelClosedEvent{entry.c}
-		x.subscribers.Emit(&ChannelClosedEvent{entry.c})
+		x.observers.Trigger(&ChannelClosedEvent{entry.c})
 	}
 
 	x.mtx.Unlock()
@@ -692,15 +681,6 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	x.reset_expire()
 	x.mtx.Unlock()
 
-	x.cDownstreamEvents <- &ChannelOpenedEvent{c}
-	x.subscribers.Emit(&ChannelOpenedEvent{c})
+	x.observers.Trigger(&ChannelOpenedEvent{c})
 	return c, nil
-}
-
-func (x *Exchange) Subscribe(c chan<- events.E) {
-	x.subscribers.Subscribe(c)
-}
-
-func (x *Exchange) Unsubscribe(c chan<- events.E) {
-	x.subscribers.Unubscribe(c)
 }

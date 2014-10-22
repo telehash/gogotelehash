@@ -7,7 +7,6 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
 )
@@ -18,9 +17,9 @@ func TestBasicExchange(t *testing.T) {
 	}
 
 	var (
-		assert  = assert.New(t)
-		err     error
-		cEvents = make(chan events.E)
+		assert    = assert.New(t)
+		err       error
+		observers = &modObservers{}
 
 		A = struct {
 			a *Addr
@@ -39,11 +38,14 @@ func TestBasicExchange(t *testing.T) {
 		}
 	)
 
-	go events.Log(nil, cEvents)
+	observers.Register(func(e *ExchangeOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ExchangeClosedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ChannelOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
+	observers.Register(func(e *ChannelClosedEvent) { t.Logf("EVENT: %s", e.String()) })
 
 	A.t, B.t = openPipeTransport("A", "B")
 
-	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, cEvents, nil)
+	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, observers, nil)
 	assert.NoError(err)
 
 	go pipeTransportReader(A.x, A.t)
@@ -70,7 +72,7 @@ func TestBasicExchange(t *testing.T) {
 		if assert.NoError(err) {
 			token = cipherset.ExtractToken(buf)
 
-			B.x, err = newExchange(B.a, nil, handshake, token, B.t, cEvents, nil)
+			B.x, err = newExchange(B.a, nil, handshake, token, B.t, observers, nil)
 			assert.NoError(err)
 
 			B.x.received(opRead{buf, src, nil})

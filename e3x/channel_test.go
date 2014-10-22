@@ -14,7 +14,6 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/events"
 )
 
 func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
@@ -27,17 +26,14 @@ func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
 
 func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 	var (
-		err     error
-		key     cipherset.Key
-		e       *Endpoint
-		cEvents = make(chan events.E)
-		tc      = mux.Config{
+		err error
+		key cipherset.Key
+		e   *Endpoint
+		tc  = mux.Config{
 			udp.Config{Network: "udp4"},
 			udp.Config{Network: "udp6"},
 		}
 	)
-
-	go events.Log(nil, cEvents)
 
 	key, err = cipherset.GenerateKey(0x3a)
 	require.NoError(t, err)
@@ -46,7 +42,7 @@ func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 	e = New(cipherset.Keys{0x3a: key}, tc)
 	require.NotNil(t, e)
 
-	e.Subscribe(cEvents)
+	registerEventLoggers(e, t)
 
 	err = e.Start()
 	require.NoError(t, err)
@@ -54,8 +50,6 @@ func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 	defer func() {
 		err = e.Stop()
 		require.NoError(t, err)
-
-		close(cEvents)
 	}()
 
 	f(e)
