@@ -27,6 +27,7 @@ func BenchmarkLookupString_Found(b *testing.B) {
 		_ = m[a]
 	}
 }
+
 func BenchmarkLookupByteArray_Found(b *testing.B) {
 	b.StopTimer()
 	var (
@@ -56,6 +57,7 @@ func BenchmarkLookupString_NotFound(b *testing.B) {
 		_ = m[a]
 	}
 }
+
 func BenchmarkLookupByteArray_NotFound(b *testing.B) {
 	b.StopTimer()
 	var (

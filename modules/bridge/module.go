@@ -43,19 +43,18 @@ func newBridge(e *e3x.Endpoint) *module {
 }
 
 func (mod *module) Init() error {
+
 	e3x.TransportsFromEndpoint(mod.e).Wrap(func(c transports.Config) transports.Config {
 		return transportConfig{mod, c}
 	})
+
+	e3x.ObserversFromEndpoint(mod.e).Register(mod.on_exchange_closed)
+
 	return nil
 }
 
-func (mod *module) Start() error {
-	return nil
-}
-
-func (mod *module) Stop() error {
-	return nil
-}
+func (mod *module) Start() error { return nil }
+func (mod *module) Stop() error  { return nil }
 
 func (mod *module) RouteToken(token cipherset.Token, to *e3x.Exchange) {
 	mod.mtx.Lock()
@@ -74,6 +73,17 @@ func (mod *module) lookupToken(token cipherset.Token) *e3x.Exchange {
 	ex := mod.tokenRoutes[token]
 	mod.mtx.RUnlock()
 	return ex
+}
+
+func (mod *module) on_exchange_closed(e *e3x.ExchangeClosedEvent) {
+	mod.mtx.Lock()
+	defer mod.mtx.Unlock()
+
+	for token, x := range mod.tokenRoutes {
+		if e.Exchange == x {
+			delete(mod.tokenRoutes, token)
+		}
+	}
 }
 
 type transportConfig struct {
