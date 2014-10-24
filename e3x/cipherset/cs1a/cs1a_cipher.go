@@ -1,3 +1,4 @@
+// Cipher Set 1a implementation.
 package cs1a
 
 import (

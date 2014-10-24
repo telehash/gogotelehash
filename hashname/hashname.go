@@ -1,3 +1,5 @@
+// Hashname
+//
 // See: https://github.com/telehash/telehash.org/tree/558332cd82dec3b619d194d42b3d16618f077e0f/v3/hashname
 package hashname
 
