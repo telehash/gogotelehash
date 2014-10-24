@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"log"
 	"sync"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x"
@@ -127,6 +128,7 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 			return n, src, err
 		}
 
+		log.Printf("\x1B[35m----> FWD %x %s\x1B[0m", token, ex)
 		// handle bridged message
 		err = t.t.WriteMessage(p, ex.ActivePath())
 		if err != nil {

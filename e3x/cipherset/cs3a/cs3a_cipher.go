@@ -259,7 +259,14 @@ func (s *state) IsHigh() bool {
 	return false
 }
 
-func (s *state) RemoteToken() cipherset.Token {
+func (s *state) SenderToken() cipherset.Token {
+	if s.localToken != nil {
+		return *s.localToken
+	}
+	return cipherset.ZeroToken
+}
+
+func (s *state) ReceiverToken() cipherset.Token {
 	if s.remoteToken != nil {
 		return *s.remoteToken
 	}

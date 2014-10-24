@@ -113,3 +113,7 @@ func (a *Addr) withPaths(paths []transports.Addr) *Addr {
 func (a *Addr) Keys() cipherset.Keys {
 	return a.keys
 }
+
+func (a *Addr) Addresses() []transports.Addr {
+	return a.addrs
+}

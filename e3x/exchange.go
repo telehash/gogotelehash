@@ -684,3 +684,18 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	x.observers.Trigger(&ChannelOpenedEvent{c})
 	return c, nil
 }
+
+func (x *Exchange) SenderToken() cipherset.Token {
+	return x.cipher.SenderToken()
+}
+
+func (x *Exchange) ReceiverToken() cipherset.Token {
+	return x.cipher.ReceiverToken()
+}
+
+func (x *Exchange) AddPathCandidate(addr transports.Addr) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	x.addressBook.AddAddress(addr)
+}

@@ -30,6 +30,9 @@ type Cipher interface {
 type State interface {
 	CSID() uint8
 
+	SenderToken() Token
+	ReceiverToken() Token
+
 	SetRemoteKey(k Key) error
 
 	NeedsRemoteKey() bool

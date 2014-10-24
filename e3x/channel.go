@@ -71,6 +71,7 @@ type Channel struct {
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
 	tReadDeadline  *time.Timer
+	tResend        *time.Timer
 	lastSentAck    time.Time
 }
 
@@ -226,6 +227,12 @@ func (c *Channel) write(pkt *lob.Packet) error {
 	if c.reliable {
 		c.apply_ack_headers(pkt)
 		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, time.Time{}}
+
+		if c.tResend == nil {
+			c.tResend = time.AfterFunc(1*time.Second, c.resend_last_packet)
+		} else {
+			c.tResend.Reset(1 * time.Second)
+		}
 	}
 
 	err := c.x.deliver_packet(pkt)
@@ -418,6 +425,10 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 				changed = true
 			}
 
+			if len(c.writeBuffer) == 0 && c.tResend != nil {
+				c.tResend.Stop()
+			}
+
 			if changed {
 				c.cndWrite.Signal()
 				if c.deliveredEnd {
@@ -586,6 +597,7 @@ func (c *Channel) Close() error {
 
 	c.unset_open_deadline()
 	c.unset_close_deadline()
+	c.tResend.Stop()
 
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
@@ -658,6 +670,24 @@ func (c *Channel) process_missing_packets(ack uint32, miss []uint32) {
 
 		c.x.deliver_packet(e.pkt)
 	}
+}
+
+func (c *Channel) resend_last_packet() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	e := c.writeBuffer[uint32(c.oSeq)]
+	if e == nil {
+		return
+	}
+
+	omiss := c.buildMissList()
+	e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	e.pkt.Header().SetUint32Slice("miss", omiss)
+	e.lastResend = time.Now()
+	c.x.deliver_packet(e.pkt)
+
+	c.tResend.Reset(1 * time.Second)
 }
 
 func (c *Channel) maybe_deliver_ack() {
@@ -745,6 +775,7 @@ func (c *Channel) on_close_deadline_reached() {
 	c.closeDeadlineReached = true
 	c.unset_open_deadline()
 	c.unset_close_deadline()
+	c.tResend.Stop()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -781,6 +812,7 @@ func (c *Channel) on_open_deadline_reached() {
 	c.openDeadlineReached = true
 	c.unset_open_deadline()
 	c.unset_close_deadline()
+	c.tResend.Stop()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -797,6 +829,7 @@ func (c *Channel) forget() {
 	c.openDeadlineReached = false
 	c.unset_open_deadline()
 	c.unset_close_deadline()
+	c.tResend.Stop()
 
 	// broadcast
 	c.cndWrite.Broadcast()
