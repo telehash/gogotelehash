@@ -279,9 +279,9 @@ func (e *Endpoint) received_handshake(op opRead) {
 
 	entry = e.tokens[token]
 	if entry != nil {
-		tracef("received_handshake() => found token %x", token)
+		// tracef("received_handshake() => found token %x", token)
 		entry.x.received(op)
-		tracef("received_handshake() => done %x", token)
+		// tracef("received_handshake() => done %x", token)
 		return
 	}
 
@@ -313,10 +313,10 @@ func (e *Endpoint) received_handshake(op opRead) {
 
 	entry = e.hashnames[hn]
 	if entry != nil {
-		tracef("received_handshake() => found hashname %x %s", token, hn)
+		// tracef("received_handshake() => found hashname %x %s", token, hn)
 		e.tokens[token] = entry
 		entry.x.received(op)
-		tracef("received_handshake() => done %x", token)
+		// tracef("received_handshake() => done %x", token)
 		return
 	}
 
@@ -331,18 +331,21 @@ func (e *Endpoint) received_handshake(op opRead) {
 		x: x,
 	}
 
-	tracef("received_handshake() => registered %x %s", token, hn)
+	// tracef("received_handshake() => registered %x %s", token, hn)
 	e.hashnames[hn] = entry
 	e.tokens[token] = entry
 	x.state = ExchangeDialing
 	x.received(op)
-	tracef("received_handshake() => done %x", token)
+	// tracef("received_handshake() => done %x", token)
 }
 
 func (e *Endpoint) received_packet(op opRead) {
 	var (
 		token = cipherset.ExtractToken(op.msg)
 	)
+
+	addr, _ := e.LocalAddr()
+	tracef("\x1B[36mRCV\x1B[0m %s pkt-token=%x from=%s", addr, token, op.src)
 
 	if token == cipherset.ZeroToken {
 		return // drop
@@ -378,7 +381,6 @@ func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
 }
 
 func (e *Endpoint) dial(op *opMakeExchange) {
-	tracef("op=%v", op)
 	if entry, found := e.hashnames[op.addr.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil

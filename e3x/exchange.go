@@ -264,7 +264,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		tracef("handshake: invalid (%s)", err)
 		return false
 	}
-	tracef("(id=%d) receiving_handshake(%p) seq=%v", x.addressBook.id, x, handshake.At())
+	// tracef("(id=%d) receiving_handshake(%p) seq=%v", x.addressBook.id, x, handshake.At())
 
 	seq = handshake.At()
 	if seq < x.last_remote_seq {
@@ -296,7 +296,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		x.token = cipherset.ExtractToken(op.msg)
 	}
 
-	tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
+	// tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
 
 	if x.isLocalSeq(seq) {
 		x.reset_break()
@@ -307,7 +307,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	}
 
 	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
-		tracef("(id=%d) opened", x.addressBook.id)
+		// tracef("(id=%d) opened", x.addressBook.id)
 
 		x.state = ExchangeIdle
 		x.reset_expire()
@@ -328,8 +328,8 @@ func (x *Exchange) on_deliver_handshake() {
 }
 
 func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
-	tracef("(id=%d) delivering_handshake(%p, spray=%v, addr=%s)",
-		e.addressBook.id, e, addr == nil, addr)
+	// tracef("(id=%d) delivering_handshake(%p, spray=%v, addr=%s)",
+	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
 		pkt     = &lob.Packet{Head: []byte{e.csid}}
@@ -393,7 +393,7 @@ func (e *Exchange) reschedule_handshake() {
 	}
 
 	var d = time.Duration(e.nextHandshake) * time.Second
-	tracef("(id=%d) reschedule_handshake(%s)", e.addressBook.id, d)
+	// tracef("(id=%d) reschedule_handshake(%s)", e.addressBook.id, d)
 	e.tDeliverHandshake.Reset(d)
 }
 

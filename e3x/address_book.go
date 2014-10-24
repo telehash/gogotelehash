@@ -92,7 +92,7 @@ func (book *addressBook) NextHandshakeEpoch() {
 }
 
 func (book *addressBook) SentHandshake(addr transports.Addr) {
-	tracef("(id=%d) SentHandshake(%s)", book.id, addr)
+	// tracef("(id=%d) SentHandshake(%s)", book.id, addr)
 
 	var (
 		now = time.Now()
@@ -129,7 +129,7 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	book.known = append(book.known, e)
 	book.updateActive()
 
-	tracef("(id=%d) \x1B[34mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", book.id, e, e.latency)
+	tracef("(id=%d) \x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", book.id, e, e.latency)
 }
 
 func (book *addressBook) ReceivedHandshake(addr transports.Addr) {

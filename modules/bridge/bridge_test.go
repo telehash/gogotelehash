@@ -47,10 +47,10 @@ func TestBridge(t *testing.T) {
 		return true
 	}
 
-	A := e3x.New(randomKeys(0x1a, 0x3a), udp.Config{})
-	B := e3x.New(randomKeys(0x1a, 0x3a), fw.Config{udp.Config{}, fw.RuleFunc(blacklistRule)})
+	A := e3x.New(randomKeys(0x3a), udp.Config{})
+	B := e3x.New(randomKeys(0x3a), fw.Config{udp.Config{}, fw.RuleFunc(blacklistRule)})
 
-	R := e3x.New(randomKeys(0x1a, 0x3a), udp.Config{})
+	R := e3x.New(randomKeys(0x3a), udp.Config{})
 	Register(R)
 	bridge := FromEndpoint(R)
 

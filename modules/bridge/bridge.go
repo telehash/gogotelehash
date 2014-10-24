@@ -116,10 +116,10 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 			return n, src, err
 		}
 
-		p = p[:n]
+		buf := p[:n]
 
 		var (
-			token = cipherset.ExtractToken(p)
+			token = cipherset.ExtractToken(buf)
 			ex    = t.mod.lookupToken(token)
 		)
 
@@ -128,11 +128,13 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 			return n, src, err
 		}
 
-		log.Printf("\x1B[35m----> FWD %x %s\x1B[0m", token, ex)
 		// handle bridged message
-		err = t.t.WriteMessage(p, ex.ActivePath())
+		err = t.t.WriteMessage(buf, ex.ActivePath())
 		if err != nil {
 			// TODO handle error
+			log.Printf("\x1B[35m----> FWD %x %s %s error=%s\x1B[0m", token, ex, ex.ActivePath(), err)
+		} else {
+			log.Printf("\x1B[35m----> FWD %x %s %s\x1B[0m", token, ex, ex.ActivePath())
 		}
 
 		// continue reading messages
