@@ -7,7 +7,7 @@ import (
 	"net"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
-	// "bitbucket.org/simonmenke/go-telehash/transports/nat"
+	"bitbucket.org/simonmenke/go-telehash/transports/nat"
 )
 
 func init() {
@@ -34,8 +34,8 @@ type transport struct {
 }
 
 var (
-	_ transports.Addr = (*addr)(nil)
-	// _ nat.NATableAddr      = (*addr)(nil)
+	_ transports.Addr      = (*addr)(nil)
+	_ nat.NATableAddr      = (*addr)(nil)
 	_ transports.Transport = (*transport)(nil)
 	_ transports.Config    = Config{}
 )
