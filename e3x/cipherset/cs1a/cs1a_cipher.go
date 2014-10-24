@@ -546,12 +546,12 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	copy(nonce[:], pkt.Body[16:16+4])
 
 	{ // verify hmac
-		mac := pkt.Body[21+4+innerLen:]
+		mac := pkt.Body[16+4+innerLen:]
 
 		macKey := append(s.lineDecryptionKey, nonce[:]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(pkt.Body[:21+4+innerLen])
+		h.Write(pkt.Body[:16+4+innerLen])
 		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
 			return nil, cipherset.ErrInvalidPacket
 		}
