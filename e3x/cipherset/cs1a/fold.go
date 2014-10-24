@@ -9,7 +9,7 @@ func fold(p []byte, l int) []byte {
 	}
 
 	// make a copy
-	p = appen([]byte{}, p...)
+	p = append([]byte{}, p...)
 
 	for len(p) > l {
 		p = foldHalf(p)

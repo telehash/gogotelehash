@@ -1,11 +1,9 @@
 package cs1a
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/secp160r1"
 	"bytes"
 	"crypto/aes"
 	Cipher "crypto/cipher"
-	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -15,6 +13,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/eccp"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/ecdh"
+	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/secp160r1"
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
 )
@@ -95,7 +94,7 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 
 		h := hmac.New(sha256.New, macKey)
 		h.Write(p[:21+4+ctLen])
-		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 0 {
+		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
 			return nil, cipherset.ErrInvalidMessage
 		}
 	}
@@ -229,13 +228,16 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	}
 
 	{ // verify mac
+		var nonce [16]byte
+		copy(nonce[:], iv)
+
 		macKey := ecdh.ComputeShared(secp160r1.P160(),
 			remoteKey.pub.x, remoteKey.pub.y, localKey_.prv.d)
-		macKey = append(macKey, iv...)
+		macKey = append(macKey, nonce[:]...)
 
 		h := hmac.New(sha256.New, macKey)
 		h.Write(p[:21+4+ctLen])
-		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 0 {
+		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
 			return nil, cipherset.ErrInvalidMessage
 		}
 	}
@@ -250,17 +252,15 @@ type state struct {
 	remoteLineKey     *key
 	localToken        *cipherset.Token
 	remoteToken       *cipherset.Token
-	macKeyBase        *[32]byte
-	lineEncryptionKey *[32]byte
-	lineDecryptionKey *[32]byte
-	nonce             *[24]byte
+	lineEncryptionKey []byte
+	lineDecryptionKey []byte
 }
 
 func (k *state) CSID() uint8 { return 0x1a }
 
 func (s *state) IsHigh() bool {
 	if s.localKey != nil && s.remoteKey != nil {
-		return bytes.Compare((*s.remoteKey.pub)[:], (*s.localKey.pub)[:]) < 0
+		return s.localKey.pub.x.Cmp(s.remoteKey.pub.x) > 0
 	}
 	return false
 }
@@ -287,110 +287,44 @@ func (s *state) setRemoteLineKey(k *key) {
 }
 
 func (s *state) update() {
-	if s.nonce == nil {
-		s.nonce = make([]byte, 4)
-		io.ReadFull(rand.Reader, s.nonce[:])
-	}
-
 	// generate a local line Key
 	if s.localLineKey == nil {
 		s.localLineKey, _ = generateKey()
 	}
 
-	// generate mac key base
-	if s.macKeyBase == nil && s.localKey.CanSign() && s.remoteKey.CanEncrypt() {
-		s.macKeyBase = new([32]byte)
-		box.Precompute(s.macKeyBase, s.remoteKey.pub, s.localKey.prv)
-	}
-
 	// make local token
 	if s.localToken == nil && s.localLineKey != nil {
 		s.localToken = new(cipherset.Token)
-		sha := sha256.Sum256((*s.localLineKey.pub)[:16])
+		sha := sha256.Sum256(s.localLineKey.Public()[:16])
 		copy((*s.localToken)[:], sha[:16])
 	}
 
 	// make remote token
 	if s.remoteToken == nil && s.remoteLineKey != nil {
 		s.remoteToken = new(cipherset.Token)
-		sha := sha256.Sum256((*s.remoteLineKey.pub)[:16])
+		sha := sha256.Sum256(s.remoteLineKey.Public()[:16])
 		copy((*s.remoteToken)[:], sha[:16])
 	}
 
 	// generate line keys
 	if s.localToken != nil && s.remoteToken != nil {
-		var sharedKey [32]byte
-		box.Precompute(&sharedKey, s.remoteLineKey.pub, s.localLineKey.prv)
+		sharedKey := ecdh.ComputeShared(
+			secp160r1.P160(),
+			s.remoteLineKey.pub.x, s.remoteLineKey.pub.y,
+			s.localLineKey.prv.d)
 
 		sha := sha256.New()
-		s.lineEncryptionKey = new([32]byte)
-		sha.Write(sharedKey[:])
-		sha.Write((*s.localToken)[:])
-		sha.Write((*s.remoteToken)[:])
-		sha.Sum((*s.lineEncryptionKey)[:0])
+		sha.Write(sharedKey)
+		sha.Write(s.localLineKey.Public())
+		sha.Write(s.remoteLineKey.Public())
+		s.lineEncryptionKey = fold(sha.Sum(nil), 16)
 
 		sha.Reset()
-		s.lineDecryptionKey = new([32]byte)
-		sha.Write(sharedKey[:])
-		sha.Write((*s.remoteToken)[:])
-		sha.Write((*s.localToken)[:])
-		sha.Sum((*s.lineDecryptionKey)[:0])
+		sha.Write(sharedKey)
+		sha.Write(s.remoteLineKey.Public())
+		sha.Write(s.localLineKey.Public())
+		s.lineDecryptionKey = fold(sha.Sum(nil), 16)
 	}
-}
-
-func (s *state) macKey(seq []byte) *[32]byte {
-	if len(seq) != 4 {
-		return nil
-	}
-
-	if s.macKeyBase == nil {
-		return nil
-	}
-
-	var (
-		macKey = new([32]byte)
-		sha    = sha256.New()
-	)
-	sha.Write(seq)
-	sha.Write((*s.macKeyBase)[:])
-	sha.Sum((*macKey)[:0])
-	return macKey
-}
-
-func (s *state) sign(sig, seq, p []byte) {
-	if len(sig) != 16 {
-		panic("invalid sig buffer len(sig) must be 16")
-	}
-
-	var (
-		sum [16]byte
-		key = s.macKey(seq)
-	)
-
-	if key == nil {
-		panic("unable to generate a signature")
-	}
-
-	poly1305.Sum(&sum, p, key)
-	copy(sig, sum[:])
-}
-
-func (s *state) verify(sig, seq, p []byte) bool {
-	if len(sig) != 16 {
-		return false
-	}
-
-	var (
-		sum [16]byte
-		key = s.macKey(seq)
-	)
-
-	if key == nil {
-		return false
-	}
-
-	copy(sum[:], sig)
-	return poly1305.Verify(&sum, p, key)
 }
 
 func (s *state) NeedsRemoteKey() bool {
@@ -423,9 +357,8 @@ func (s *state) CanDecryptPacket() bool {
 
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	var (
-		out       = bufpool.GetBuffer()[:32+4+len(in)+box.Overhead+16]
-		agreedKey [32]byte
-		ctLen     int
+		ctLen = len(in)
+		out   = bufpool.GetBuffer()[:21+4+ctLen+4]
 	)
 
 	if !s.CanEncryptMessage() {
@@ -433,21 +366,59 @@ func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	}
 
 	// copy public senderLineKey
-	copy(out[:32], (*s.localLineKey.pub)[:])
+	copy(out[:21], s.localLineKey.Public())
 
 	// copy the nonce
-	copy(out[32:32+4], s.nonce[:4])
+	_, err := io.ReadFull(rand.Reader, out[21:21+4])
+	if err != nil {
+		return nil, err
+	}
 
-	// make the agreedKey
-	box.Precompute(&agreedKey, s.remoteKey.pub, s.localLineKey.prv)
+	{ // encrypt inner
+		shared := ecdh.ComputeShared(
+			secp160r1.P160(),
+			s.remoteKey.pub.x, s.remoteKey.pub.y,
+			s.localLineKey.prv.d)
+		if shared == nil {
+			return nil, cipherset.ErrInvalidMessage
+		}
 
-	// encrypt p
-	ctLen = len(box.SealAfterPrecomputation(out[32+4:32+4], in, s.nonce, &agreedKey))
+		aharedSum := sha256.Sum256(shared)
+		aesKey := fold(aharedSum[:], 16)
+		if aesKey == nil {
+			return nil, cipherset.ErrInvalidMessage
+		}
 
-	// Sign message
-	s.sign(out[32+4+ctLen:], s.nonce[:4], out[:32+4+ctLen])
+		aesBlock, err := aes.NewCipher(aesKey)
+		if err != nil {
+			return nil, err
+		}
 
-	return out[:32+4+ctLen+16], nil
+		var aesIv [16]byte
+		copy(aesIv[:], out[21:21+4])
+
+		aes := Cipher.NewCTR(aesBlock, aesIv[:])
+		if aes == nil {
+			return nil, cipherset.ErrInvalidMessage
+		}
+
+		aes.XORKeyStream(out[21+4:21+4+ctLen], in)
+	}
+
+	{ // compute HMAC
+		macKey := ecdh.ComputeShared(secp160r1.P160(),
+			s.remoteKey.pub.x, s.remoteKey.pub.y, s.localKey.prv.d)
+		macKey = append(macKey, out[21:21+4]...)
+
+		h := hmac.New(sha256.New, macKey)
+		h.Write(out[:21+4+ctLen])
+		sum := h.Sum(nil)
+		copy(out[21+4+ctLen:], fold(sum, 4))
+	}
+
+	out = out[:21+4+ctLen+4]
+
+	return out, nil
 }
 
 func (s *state) EncryptHandshake(at uint32, compact cipherset.Parts) ([]byte, error) {
@@ -470,11 +441,11 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 		return false
 	}
 
-	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
+	if s.remoteLineKey != nil && !bytes.Equal(s.remoteLineKey.Public(), hs.lineKey.Public()) {
 		return false
 	}
 
-	if s.remoteKey != nil && *s.remoteKey.pub != *hs.key.pub {
+	if s.remoteKey != nil && !bytes.Equal(s.remoteKey.Public(), hs.key.Public()) {
 		return false
 	}
 
@@ -487,7 +458,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	var (
 		inner []byte
 		body  []byte
-		nonce [24]byte
+		nonce [16]byte
 		ctLen int
 		err   error
 	)
@@ -505,24 +476,45 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, err
 	}
 
+	ctLen = len(inner)
+
 	// make nonce
-	_, err = io.ReadFull(rand.Reader, nonce[:])
+	_, err = io.ReadFull(rand.Reader, nonce[:4])
 	if err != nil {
 		return nil, err
 	}
 
 	// alloc enough space
-	body = bufpool.GetBuffer()[:16+24+len(inner)+box.Overhead]
+	body = bufpool.GetBuffer()[:16+4+len(inner)+4]
 
 	// copy token
 	copy(body[:16], (*s.localToken)[:])
 
 	// copy nonce
-	copy(body[16:16+24], nonce[:])
+	copy(body[16:16+4], nonce[:])
 
-	// encrypt inner packet
-	ctLen = len(box.SealAfterPrecomputation(body[16+24:16+24], inner, &nonce, s.lineEncryptionKey))
-	body = body[:16+24+ctLen]
+	{ // encrypt inner
+		aesBlock, err := aes.NewCipher(s.lineEncryptionKey)
+		if err != nil {
+			return nil, err
+		}
+
+		aes := Cipher.NewCTR(aesBlock, nonce[:])
+		if aes == nil {
+			return nil, cipherset.ErrInvalidMessage
+		}
+
+		aes.XORKeyStream(body[16+4:16+4+ctLen], inner)
+	}
+
+	{ // compute HMAC
+		macKey := append(s.lineEncryptionKey, body[16:16+4]...)
+
+		h := hmac.New(sha256.New, macKey)
+		h.Write(body[:16+4+ctLen])
+		sum := h.Sum(nil)
+		copy(body[16+4+ctLen:], fold(sum, 4))
+	}
 
 	return &lob.Packet{Body: body}, nil
 }
@@ -535,14 +527,14 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || len(pkt.Header()) != 0 || len(pkt.Body) < 16+24 {
+	if len(pkt.Head) != 0 || len(pkt.Header()) != 0 || len(pkt.Body) < 16+4+4 {
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	var (
-		nonce [24]byte
-		inner = make([]byte, len(pkt.Body))
-		ok    bool
+		nonce    [16]byte
+		innerLen = len(pkt.Body) - (16 + 4 + 4)
+		inner    = make([]byte, innerLen)
 	)
 
 	// compare token
@@ -551,12 +543,32 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	}
 
 	// copy nonce
-	copy(nonce[:], pkt.Body[16:16+24])
+	copy(nonce[:], pkt.Body[16:16+4])
 
-	// decrypt inner packet
-	inner, ok = box.OpenAfterPrecomputation(inner[:0], pkt.Body[16+24:], &nonce, s.lineDecryptionKey)
-	if !ok {
-		return nil, cipherset.ErrInvalidPacket
+	{ // verify hmac
+		mac := pkt.Body[21+4+innerLen:]
+
+		macKey := append(s.lineDecryptionKey, nonce[:]...)
+
+		h := hmac.New(sha256.New, macKey)
+		h.Write(pkt.Body[:21+4+innerLen])
+		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
+			return nil, cipherset.ErrInvalidPacket
+		}
+	}
+
+	{ // decrypt inner
+		aesBlock, err := aes.NewCipher(s.lineDecryptionKey)
+		if err != nil {
+			return nil, err
+		}
+
+		aes := Cipher.NewCTR(aesBlock, nonce[:])
+		if aes == nil {
+			return nil, cipherset.ErrInvalidPacket
+		}
+
+		aes.XORKeyStream(inner, pkt.Body[16+4:16+4+innerLen])
 	}
 
 	return lob.Decode(inner)

@@ -117,27 +117,31 @@ func (s *cipherTestSuite) TestHandshake() {
 
 	hb, err = c.DecryptHandshake(kb, box)
 	assert.NoError(err)
-	assert.NotNil(hb)
-	assert.Equal(ka.Public(), hb.PublicKey().Public())
-	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
-	assert.Equal(1, hb.At())
+	if assert.NotNil(hb) {
+		assert.Equal(ka.Public(), hb.PublicKey().Public())
+		assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
+		assert.Equal(1, hb.At())
+	}
 
 	sb, err = c.NewState(kb)
 	assert.NoError(err)
-	assert.NotNil(sb)
-	assert.False(sb.CanEncryptMessage())
-	assert.False(sb.CanEncryptHandshake())
-	assert.False(sb.CanDecryptMessage())
-	assert.True(sb.CanDecryptHandshake())
-	assert.True(sb.NeedsRemoteKey())
+	if assert.NotNil(sb) {
+		assert.False(sb.CanEncryptMessage())
+		assert.False(sb.CanEncryptHandshake())
+		assert.False(sb.CanDecryptMessage())
+		assert.True(sb.CanDecryptHandshake())
+		assert.True(sb.NeedsRemoteKey())
+	}
 
-	ok = sb.ApplyHandshake(hb)
-	assert.True(ok)
-	assert.True(sb.CanEncryptMessage())
-	assert.True(sb.CanEncryptHandshake())
-	assert.True(sb.CanDecryptMessage())
-	assert.True(sb.CanDecryptHandshake())
-	assert.False(sb.NeedsRemoteKey())
+	if sb != nil && hb != nil {
+		ok = sb.ApplyHandshake(hb)
+		assert.True(ok)
+		assert.True(sb.CanEncryptMessage())
+		assert.True(sb.CanEncryptHandshake())
+		assert.True(sb.CanDecryptMessage())
+		assert.True(sb.CanDecryptHandshake())
+		assert.False(sb.NeedsRemoteKey())
+	}
 
 	box, err = sb.EncryptHandshake(1, cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"})
 	assert.NoError(err)
