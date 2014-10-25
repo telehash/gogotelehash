@@ -10,6 +10,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 type EndpointState uint8
@@ -29,7 +30,9 @@ type Endpoint struct {
 	state    EndpointState
 	err      error
 
+	hashname        hashname.H
 	keys            cipherset.Keys
+	log             *logs.Logger
 	transportConfig transports.Config
 	transport       transports.Transport
 	modules         map[interface{}]Module
@@ -85,6 +88,14 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 		modules:         make(map[interface{}]Module),
 	}
 
+	var err error
+	e.hashname, err = hashname.FromKeys(e.keys)
+	if err != nil {
+		panic(err)
+	}
+
+	e.log = logs.Module("e3x").From(e.hashname)
+
 	observers := &modObservers{}
 	observers.Register(e.on_exchange_closed)
 
@@ -97,6 +108,10 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 
 func (e *Endpoint) AddHandler(typ string, h Handler) {
 	e.handlers[typ] = h
+}
+
+func (e *Endpoint) LocalHashname() hashname.H {
+	return e.hashname
 }
 
 func (e *Endpoint) LocalAddr() (*Addr, error) {
@@ -321,7 +336,7 @@ func (e *Endpoint) received_handshake(op opRead) {
 	}
 
 	x, err = newExchange(localAddr, nil, handshake, token,
-		e.transport, ObserversFromEndpoint(e), e.handlers)
+		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
 		return // drop
@@ -344,9 +359,6 @@ func (e *Endpoint) received_packet(op opRead) {
 		token = cipherset.ExtractToken(op.msg)
 	)
 
-	addr, _ := e.LocalAddr()
-	tracef("\x1B[36mRCV\x1B[0m %s pkt-token=%x from=%s", addr, token, op.src)
-
 	if token == cipherset.ZeroToken {
 		return // drop
 	}
@@ -356,6 +368,9 @@ func (e *Endpoint) received_packet(op opRead) {
 		tracef("unknown token")
 		return // drop
 	}
+
+	e.log.To(entry.x.RemoteHashname()).Module("e3x.tx").
+		Printf("\x1B[36mRCV\x1B[0m token=%x from=%s", token, op.src)
 
 	entry.x.received(op)
 }
@@ -402,7 +417,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	x, err = newExchange(localAddr, op.addr, nil, cipherset.ZeroToken,
-		e.transport, ObserversFromEndpoint(e), e.handlers)
+		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		op.cErr <- err
 		return

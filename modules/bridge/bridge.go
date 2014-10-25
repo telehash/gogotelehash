@@ -1,12 +1,12 @@
 package bridge
 
 import (
-	"log"
 	"sync"
 
 	"bitbucket.org/simonmenke/go-telehash/e3x"
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 type Bridge interface {
@@ -18,6 +18,7 @@ type module struct {
 	mtx         sync.RWMutex
 	e           *e3x.Endpoint
 	tokenRoutes map[cipherset.Token]*e3x.Exchange
+	log         *logs.Logger
 }
 
 type moduleKeyType string
@@ -40,6 +41,7 @@ func newBridge(e *e3x.Endpoint) *module {
 	return &module{
 		e:           e,
 		tokenRoutes: make(map[cipherset.Token]*e3x.Exchange),
+		log:         logs.Module("bridge").From(e.LocalHashname()),
 	}
 }
 
@@ -128,13 +130,19 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 			return n, src, err
 		}
 
+		// detect message type
+		var msgtype = "PKT"
+		if buf[0] == 0 && buf[1] == 1 {
+			msgtype = "HDR"
+		}
+
 		// handle bridged message
 		err = t.t.WriteMessage(buf, ex.ActivePath())
 		if err != nil {
 			// TODO handle error
-			log.Printf("\x1B[35m----> FWD %x %s %s error=%s\x1B[0m", token, ex, ex.ActivePath(), err)
+			t.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s error=%s\x1B[0m", msgtype, token, ex.ActivePath(), err)
 		} else {
-			log.Printf("\x1B[35m----> FWD %x %s %s\x1B[0m", token, ex, ex.ActivePath())
+			t.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s\x1B[0m", msgtype, token, ex.ActivePath())
 		}
 
 		// continue reading messages

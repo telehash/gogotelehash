@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 const (
@@ -12,7 +13,7 @@ const (
 )
 
 type addressBook struct {
-	id          int
+	log         *logs.Logger
 	active      *addressBookEntry
 	known       []*addressBookEntry
 	unsupported []string
@@ -31,11 +32,8 @@ type addressBookEntry struct {
 	sample_count int
 }
 
-var nextAddressBookId = 0
-
-func newAddressBook() *addressBook {
-	nextAddressBookId++
-	return &addressBook{id: nextAddressBookId}
+func newAddressBook(log *logs.Logger) *addressBook {
+	return &addressBook{log: log.Module("addrbook")}
 }
 
 func (book *addressBook) ActiveAddress() transports.Addr {
@@ -79,7 +77,7 @@ func (book *addressBook) NextHandshakeEpoch() {
 				e.Reachable = false
 				changed = true
 
-				tracef("(id=%d) \x1B[31mDetected broken path\x1B[0m %s", book.id, e)
+				book.log.Printf("\x1B[31mDetected broken path\x1B[0m %s", e)
 			}
 		}
 
@@ -129,7 +127,7 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	book.known = append(book.known, e)
 	book.updateActive()
 
-	tracef("(id=%d) \x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", book.id, e, e.latency)
+	book.log.Printf("\x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", e, e.latency)
 }
 
 func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
@@ -154,7 +152,7 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 	e.Reachable = true
 	e.GotResponse = true
 
-	tracef("(id=%d) \x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", book.id, e, e.latency)
+	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", e, e.latency)
 	book.updateActive()
 }
 
@@ -173,7 +171,7 @@ func (book *addressBook) updateActive() {
 	}
 
 	if oldActive != book.active {
-		tracef("(id=%d) \x1B[32mChanged path\x1B[0m from %s to %s", book.id, oldActive, book.active)
+		book.log.Printf("\x1B[32mChanged path\x1B[0m from %s to %s", oldActive, book.active)
 	}
 }
 

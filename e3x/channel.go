@@ -426,7 +426,7 @@ func (c *Channel) received_packet(pkt *lob.Packet) {
 			}
 
 			if len(c.writeBuffer) == 0 && c.tResend != nil {
-				c.tResend.Stop()
+				c.unset_resender()
 			}
 
 			if changed {
@@ -597,7 +597,7 @@ func (c *Channel) Close() error {
 
 	c.unset_open_deadline()
 	c.unset_close_deadline()
-	c.tResend.Stop()
+	c.unset_resender()
 
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
@@ -775,7 +775,7 @@ func (c *Channel) on_close_deadline_reached() {
 	c.closeDeadlineReached = true
 	c.unset_open_deadline()
 	c.unset_close_deadline()
-	c.tResend.Stop()
+	c.unset_resender()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -812,7 +812,7 @@ func (c *Channel) on_open_deadline_reached() {
 	c.openDeadlineReached = true
 	c.unset_open_deadline()
 	c.unset_close_deadline()
-	c.tResend.Stop()
+	c.unset_resender()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -829,7 +829,7 @@ func (c *Channel) forget() {
 	c.openDeadlineReached = false
 	c.unset_open_deadline()
 	c.unset_close_deadline()
-	c.tResend.Stop()
+	c.unset_resender()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -838,4 +838,10 @@ func (c *Channel) forget() {
 
 	c.x.unregister_channel(c.id)
 	c.mtx.Unlock()
+}
+
+func (c *Channel) unset_resender() {
+	if c.tResend != nil {
+		c.tResend.Stop()
+	}
 }

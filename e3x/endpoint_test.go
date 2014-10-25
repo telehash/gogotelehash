@@ -10,9 +10,12 @@ import (
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
 	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 func TestSimpleEndpoint(t *testing.T) {
+	logs.ResetLogger()
+
 	if testing.Short() {
 		t.Skip("this is a long running test.")
 	}

@@ -12,6 +12,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
@@ -82,6 +83,7 @@ type Exchange struct {
 
 	transportWriter transportWriter
 	observers       Observers
+	log             *logs.Logger
 
 	nextHandshake     int
 	tExpire           *time.Timer
@@ -116,12 +118,12 @@ func newExchange(
 	transportWriter transportWriter,
 	observers Observers,
 	handlers map[string]Handler,
+	log *logs.Logger,
 ) (*Exchange, error) {
 	x := &Exchange{
 		localAddr:       localAddr,
 		remoteAddr:      remoteAddr,
 		channels:        make(map[uint32]*channelEntry),
-		addressBook:     newAddressBook(),
 		transportWriter: transportWriter,
 		observers:       observers,
 		handlers:        handlers,
@@ -140,6 +142,8 @@ func newExchange(
 	}
 
 	if remoteAddr != nil {
+		x.log = log.To(remoteAddr.Hashname())
+
 		csid := cipherset.SelectCSID(localAddr.keys, remoteAddr.keys)
 		cipher, err := cipherset.NewState(csid, localAddr.keys[csid])
 		if err != nil {
@@ -151,6 +155,7 @@ func newExchange(
 			return nil, err
 		}
 
+		x.addressBook = newAddressBook(x.log)
 		x.cipher = cipher
 		x.csid = csid
 
@@ -171,9 +176,16 @@ func newExchange(
 			return nil, ErrInvalidHandshake
 		}
 
+		hn, err := hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Public(), handshake.Parts())
+		if err != nil {
+			hn = "xxxx"
+		}
+
+		x.log = log.To(hn)
 		x.token = token
 		x.cipher = cipher
 		x.csid = csid
+		x.addressBook = newAddressBook(x.log)
 	}
 
 	return x, nil
@@ -519,6 +531,10 @@ func (x *Exchange) expire(err error) {
 	x.tDeliverHandshake.Stop()
 
 	x.mtx.Unlock()
+
+	for _, e := range x.channels {
+		e.c.on_close_deadline_reached()
+	}
 
 	x.observers.Trigger(&ExchangeClosedEvent{x, err})
 }

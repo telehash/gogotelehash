@@ -7,11 +7,14 @@ import (
 
 	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
 	"bitbucket.org/simonmenke/go-telehash/transports"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 
 	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
 )
 
 func TestBasicExchange(t *testing.T) {
+	logs.ResetLogger()
+
 	if testing.Short() {
 		t.Skip("this is a long running test.")
 	}
@@ -45,7 +48,8 @@ func TestBasicExchange(t *testing.T) {
 
 	A.t, B.t = openPipeTransport("A", "B")
 
-	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, observers, nil)
+	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, observers, nil,
+		logs.Module("e3x").From(A.a.Hashname()).To(B.a.Hashname()))
 	assert.NoError(err)
 
 	go pipeTransportReader(A.x, A.t)
@@ -72,7 +76,8 @@ func TestBasicExchange(t *testing.T) {
 		if assert.NoError(err) {
 			token = cipherset.ExtractToken(buf)
 
-			B.x, err = newExchange(B.a, nil, handshake, token, B.t, observers, nil)
+			B.x, err = newExchange(B.a, nil, handshake, token, B.t, observers, nil,
+				logs.Module("e3x").From(B.a.Hashname()).To(A.a.Hashname()))
 			assert.NoError(err)
 
 			B.x.received(opRead{buf, src, nil})

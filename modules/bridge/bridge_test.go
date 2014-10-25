@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"log"
 	"testing"
 	"time"
 
@@ -15,7 +14,10 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/transports"
 	"bitbucket.org/simonmenke/go-telehash/transports/fw"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
+
+var log = logs.Module("test")
 
 func TestBridge(t *testing.T) {
 	// given:

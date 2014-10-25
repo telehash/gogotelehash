@@ -14,6 +14,7 @@ import (
 	"bitbucket.org/simonmenke/go-telehash/lob"
 	"bitbucket.org/simonmenke/go-telehash/transports/mux"
 	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"bitbucket.org/simonmenke/go-telehash/util/logs"
 )
 
 func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
@@ -56,6 +57,8 @@ func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 }
 
 func TestBasicUnrealiable(t *testing.T) {
+	logs.ResetLogger()
+
 	var (
 		assert = assert.New(t)
 		c      *Channel
@@ -106,6 +109,8 @@ func TestBasicUnrealiable(t *testing.T) {
 }
 
 func TestBasicRealiable(t *testing.T) {
+	logs.ResetLogger()
+
 	var (
 		assert = assert.New(t)
 		c      *Channel
@@ -183,6 +188,8 @@ func TestBasicRealiable(t *testing.T) {
 }
 
 func TestPingPong(t *testing.T) {
+	logs.ResetLogger()
+
 	with_two_endpoints(t, func(A, B *Endpoint) {
 		var (
 			assert = assert.New(t)
@@ -230,6 +237,8 @@ func TestPingPong(t *testing.T) {
 }
 
 func TestPingPongReliable(t *testing.T) {
+	logs.ResetLogger()
+
 	with_two_endpoints(t, func(A, B *Endpoint) {
 		var (
 			assert = assert.New(t)
@@ -279,6 +288,9 @@ func TestPingPongReliable(t *testing.T) {
 }
 
 func TestFloodReliable(t *testing.T) {
+	logs.ResetLogger()
+	logs.DisableModule("e3x.tx")
+
 	if testing.Short() {
 		t.Skip("this is a long running test.")
 	}
