@@ -157,6 +157,9 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	if !c.block_write() {
 		c.cndWrite.Signal()
 	}
+	if !c.block_read() {
+		c.cndRead.Signal()
+	}
 
 	c.mtx.Unlock()
 	return err
@@ -664,8 +667,12 @@ func (c *Channel) process_missing_packets(ack uint32, miss []uint32) {
 		}
 
 		// tracef("MISS->SND(%d)", seq)
-		e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
-		e.pkt.Header().SetUint32Slice("miss", omiss)
+		if c.iSeq >= 0 {
+			e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+		}
+		if len(omiss) > 0 {
+			e.pkt.Header().SetUint32Slice("miss", omiss)
+		}
 		e.lastResend = now
 
 		c.x.deliver_packet(e.pkt)
@@ -682,8 +689,12 @@ func (c *Channel) resend_last_packet() {
 	}
 
 	omiss := c.buildMissList()
-	e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
-	e.pkt.Header().SetUint32Slice("miss", omiss)
+	if c.iSeq >= 0 {
+		e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	}
+	if len(omiss) > 0 {
+		e.pkt.Header().SetUint32Slice("miss", omiss)
+	}
 	e.lastResend = time.Now()
 	c.x.deliver_packet(e.pkt)
 
@@ -738,7 +749,9 @@ func (c *Channel) apply_ack_headers(pkt *lob.Packet) {
 		return
 	}
 
-	pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	if c.iSeq >= 0 {
+		pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	}
 	if l := c.buildMissList(); len(l) > 0 {
 		pkt.Header().SetUint32Slice("miss", c.buildMissList())
 	}

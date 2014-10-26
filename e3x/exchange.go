@@ -359,10 +359,6 @@ func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 	} else {
 		e.addressBook.NextHandshakeEpoch()
 		addrs = e.addressBook.HandshakeAddresses()
-		if len(addrs) == 0 {
-			e.on_break()
-			return nil
-		}
 	}
 
 	pkt.Body, err = e.cipher.EncryptHandshake(seq, e.localAddr.parts)
@@ -377,13 +373,11 @@ func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 
 	e.last_local_seq = seq
 
-	cErr := make(chan error, len(addrs))
 	for _, addr := range addrs {
-		go func(addr transports.Addr) {
-			defer func() { recover() }()
-			cErr <- e.transportWriter.WriteMessage(pktData, addr)
-		}(addr)
-		e.addressBook.SentHandshake(addr)
+		err := e.transportWriter.WriteMessage(pktData, addr)
+		if err == nil {
+			e.addressBook.SentHandshake(addr)
+		}
 	}
 
 	return nil

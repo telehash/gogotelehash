@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -56,7 +55,9 @@ func TestBridge(t *testing.T) {
 	Register(R)
 	bridge := FromEndpoint(R)
 
+	done := make(chan bool, 1)
 	A.AddHandler("ping", e3x.HandlerFunc(func(c *e3x.Channel) {
+		defer func() { done <- true }()
 		defer c.Close()
 
 		var (
@@ -121,8 +122,6 @@ func TestBridge(t *testing.T) {
 	bridge.RouteToken(ABex.ReceiverToken(), RAex)
 	ABex.AddPathCandidate(BRex.ActivePath())
 
-	time.Sleep(10 * time.Second)
-
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
 	{
@@ -147,6 +146,12 @@ func TestBridge(t *testing.T) {
 
 		ch.Close()
 	}
+
+	<-done
+
+	assert.NoError(A.Stop())
+	assert.NoError(B.Stop())
+	assert.NoError(R.Stop())
 }
 
 func randomKeys(csids ...uint8) cipherset.Keys {
