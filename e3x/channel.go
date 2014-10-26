@@ -78,7 +78,7 @@ type Channel struct {
 type exchangeI interface {
 	deliver_packet(pkt *lob.Packet) error
 	unregister_channel(channelId uint32)
-	RemoteAddr() *Addr
+	RemoteIdent() *Ident
 }
 
 type readBufferEntry struct {
@@ -129,12 +129,12 @@ func (c *Channel) RemoteHashname() hashname.H {
 	return c.hashname
 }
 
-func (c *Channel) RemoteAddr() *Addr {
-	return c.x.RemoteAddr()
+func (c *Channel) RemoteIdent() *Ident {
+	return c.x.RemoteIdent()
 }
 
-func (e *Endpoint) Open(addr *Addr, typ string, reliable bool) (*Channel, error) {
-	x, err := e.Dial(addr)
+func (e *Endpoint) Open(ident *Ident, typ string, reliable bool) (*Channel, error) {
+	x, err := e.Dial(ident)
 	if err != nil {
 		return nil, err
 	}

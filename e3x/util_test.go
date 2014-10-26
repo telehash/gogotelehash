@@ -35,9 +35,9 @@ func (m *MockExchange) unregister_channel(channelId uint32) {
 	m.Called(channelId)
 }
 
-func (m *MockExchange) RemoteAddr() *Addr {
+func (m *MockExchange) RemoteIdent() *Ident {
 	args := m.Called()
-	return args.Get(0).(*Addr)
+	return args.Get(0).(*Ident)
 }
 
 type pipeTransport struct {
@@ -124,20 +124,20 @@ func (t *pipeTransport) Close() error {
 	return nil
 }
 
-func makeAddr(name string) *Addr {
+func makeIdent(name string) *Ident {
 	key, err := cipherset.GenerateKey(0x3a)
 	if err != nil {
 		panic(err)
 	}
 
-	addr, err := NewAddr(cipherset.Keys{0x3a: key}, nil, []transports.Addr{
+	ident, err := NewIdent(cipherset.Keys{0x3a: key}, nil, []transports.Addr{
 		mockAddr(name),
 	})
 	if err != nil {
 		panic(err)
 	}
 
-	return addr
+	return ident
 }
 
 type mockAddr string

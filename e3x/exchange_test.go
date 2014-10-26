@@ -25,19 +25,19 @@ func TestBasicExchange(t *testing.T) {
 		observers = &modObservers{}
 
 		A = struct {
-			a *Addr
+			a *Ident
 			t transports.Transport
 			x *Exchange
 		}{
-			a: makeAddr("A"),
+			a: makeIdent("A"),
 		}
 
 		B = struct {
-			a *Addr
+			a *Ident
 			t transports.Transport
 			x *Exchange
 		}{
-			a: makeAddr("B"),
+			a: makeIdent("B"),
 		}
 	)
 

@@ -71,8 +71,8 @@ type Exchange struct {
 	last_remote_seq uint32
 	next_seq        uint32
 	token           cipherset.Token
-	localAddr       *Addr
-	remoteAddr      *Addr
+	localIdent      *Ident
+	remoteIdent     *Ident
 	csid            uint8
 	cipher          cipherset.State
 	next_channel_id uint32
@@ -107,12 +107,12 @@ func (x *Exchange) State() ExchangeState {
 }
 
 func (x *Exchange) String() string {
-	return fmt.Sprintf("<Exchange %s state=%s>", x.remoteAddr.Hashname(), x.State())
+	return fmt.Sprintf("<Exchange %s state=%s>", x.remoteIdent.Hashname(), x.State())
 }
 
 func newExchange(
-	localAddr *Addr,
-	remoteAddr *Addr,
+	localIdent *Ident,
+	remoteIdent *Ident,
 	handshake cipherset.Handshake,
 	token cipherset.Token,
 	transportWriter transportWriter,
@@ -121,8 +121,8 @@ func newExchange(
 	log *logs.Logger,
 ) (*Exchange, error) {
 	x := &Exchange{
-		localAddr:       localAddr,
-		remoteAddr:      remoteAddr,
+		localIdent:      localIdent,
+		remoteIdent:     remoteIdent,
 		channels:        make(map[uint32]*channelEntry),
 		transportWriter: transportWriter,
 		observers:       observers,
@@ -137,20 +137,20 @@ func newExchange(
 	x.reset_expire()
 	x.reschedule_handshake()
 
-	if localAddr == nil {
+	if localIdent == nil {
 		panic("missing local addr")
 	}
 
-	if remoteAddr != nil {
-		x.log = log.To(remoteAddr.Hashname())
+	if remoteIdent != nil {
+		x.log = log.To(remoteIdent.Hashname())
 
-		csid := cipherset.SelectCSID(localAddr.keys, remoteAddr.keys)
-		cipher, err := cipherset.NewState(csid, localAddr.keys[csid])
+		csid := cipherset.SelectCSID(localIdent.keys, remoteIdent.keys)
+		cipher, err := cipherset.NewState(csid, localIdent.keys[csid])
 		if err != nil {
 			return nil, err
 		}
 
-		err = cipher.SetRemoteKey(remoteAddr.keys[csid])
+		err = cipher.SetRemoteKey(remoteIdent.keys[csid])
 		if err != nil {
 			return nil, err
 		}
@@ -159,14 +159,14 @@ func newExchange(
 		x.cipher = cipher
 		x.csid = csid
 
-		for _, addr := range remoteAddr.addrs {
+		for _, addr := range remoteIdent.addrs {
 			x.addressBook.AddAddress(addr)
 		}
 	}
 
 	if handshake != nil {
 		csid := handshake.CSID()
-		cipher, err := cipherset.NewState(csid, localAddr.keys[csid])
+		cipher, err := cipherset.NewState(csid, localIdent.keys[csid])
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +206,7 @@ func (x *Exchange) dial() error {
 	}
 
 	if !x.state.IsOpen() {
-		return BrokenExchangeError(x.remoteAddr.Hashname())
+		return BrokenExchangeError(x.remoteIdent.Hashname())
 	}
 
 	return nil
@@ -214,16 +214,16 @@ func (x *Exchange) dial() error {
 
 func (x *Exchange) RemoteHashname() hashname.H {
 	x.mtx.Lock()
-	hn := x.remoteAddr.Hashname()
+	hn := x.remoteIdent.Hashname()
 	x.mtx.Unlock()
 	return hn
 }
 
-func (x *Exchange) RemoteAddr() *Addr {
+func (x *Exchange) RemoteIdent() *Ident {
 	x.mtx.Lock()
-	addr := x.remoteAddr.withPaths(x.addressBook.KnownAddresses())
+	ident := x.remoteIdent.withPaths(x.addressBook.KnownAddresses())
 	x.mtx.Unlock()
-	return addr
+	return ident
 }
 
 func (x *Exchange) ActivePath() transports.Addr {
@@ -271,7 +271,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	}
 	csid = uint8(pkt.Head[0])
 
-	handshake, err = cipherset.DecryptHandshake(csid, x.localAddr.keys[csid], pkt.Body)
+	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
 	if err != nil {
 		tracef("handshake: invalid (%s)", err)
 		return false
@@ -294,8 +294,8 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		return false
 	}
 
-	if x.remoteAddr == nil {
-		addr, err := NewAddr(
+	if x.remoteIdent == nil {
+		ident, err := NewIdent(
 			cipherset.Keys{x.csid: handshake.PublicKey()},
 			handshake.Parts(),
 			[]transports.Addr{op.src},
@@ -304,7 +304,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 			tracef("handshake: invalid (%s)", err)
 			return false
 		}
-		x.remoteAddr = addr
+		x.remoteIdent = ident
 		x.token = cipherset.ExtractToken(op.msg)
 	}
 
@@ -361,7 +361,7 @@ func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 		addrs = e.addressBook.HandshakeAddresses()
 	}
 
-	pkt.Body, err = e.cipher.EncryptHandshake(seq, e.localAddr.parts)
+	pkt.Body, err = e.cipher.EncryptHandshake(seq, e.localIdent.parts)
 	if err != nil {
 		return err
 	}
@@ -454,7 +454,7 @@ func (x *Exchange) received_packet(op opRead) {
 			}
 
 			c = newChannel(
-				x.remoteAddr.Hashname(),
+				x.remoteIdent.Hashname(),
 				typ,
 				hasSeq,
 				true,
@@ -483,7 +483,7 @@ func (x *Exchange) deliver_packet(pkt *lob.Packet) error {
 		x.cndState.Wait()
 	}
 	if !x.state.IsOpen() {
-		return BrokenExchangeError(x.remoteAddr.Hashname())
+		return BrokenExchangeError(x.remoteIdent.Hashname())
 	}
 	addr := x.addressBook.ActiveAddress()
 	x.mtx.Unlock()
@@ -585,7 +585,7 @@ func (x *Exchange) on_break() {
 	if x == nil {
 		return
 	}
-	x.expire(BrokenExchangeError(x.remoteAddr.Hashname()))
+	x.expire(BrokenExchangeError(x.remoteIdent.Hashname()))
 }
 
 func (x *Exchange) reset_expire() {
@@ -669,7 +669,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	)
 
 	c = newChannel(
-		x.remoteAddr.Hashname(),
+		x.remoteIdent.Hashname(),
 		typ,
 		reliable,
 		false,
@@ -682,7 +682,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	}
 	if !x.state.IsOpen() {
 		x.mtx.Unlock()
-		return nil, BrokenExchangeError(x.remoteAddr.Hashname())
+		return nil, BrokenExchangeError(x.remoteIdent.Hashname())
 	}
 
 	c.id = x.nextChannelId()

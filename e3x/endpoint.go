@@ -39,7 +39,7 @@ type Endpoint struct {
 
 	cTerminate     chan struct{}
 	cMakeExchange  chan *opMakeExchange
-	cLookupAddr    chan *opLookupAddr
+	cLookupIdent   chan *opLookupIdent
 	cTransportRead chan opRead
 	tokens         map[cipherset.Token]*exchangeEntry
 	hashnames      map[hashname.H]*exchangeEntry
@@ -60,14 +60,14 @@ type opReceived struct {
 }
 
 type opMakeExchange struct {
-	addr *Addr
-	x    *Exchange
-	cErr chan error
+	ident *Ident
+	x     *Exchange
+	cErr  chan error
 }
 
-type opLookupAddr struct {
+type opLookupIdent struct {
 	hashname hashname.H
-	cAddr    chan *Addr
+	cIdent   chan *Ident
 }
 
 type opRead struct {
@@ -114,8 +114,8 @@ func (e *Endpoint) LocalHashname() hashname.H {
 	return e.hashname
 }
 
-func (e *Endpoint) LocalAddr() (*Addr, error) {
-	return NewAddr(e.keys, nil, e.transport.LocalAddresses())
+func (e *Endpoint) LocalIdent() (*Ident, error) {
+	return NewIdent(e.keys, nil, e.transport.LocalAddresses())
 }
 
 func (e *Endpoint) Start() error {
@@ -143,7 +143,7 @@ func (e *Endpoint) start() error {
 	e.tokens = make(map[cipherset.Token]*exchangeEntry)
 	e.hashnames = make(map[hashname.H]*exchangeEntry)
 	e.cMakeExchange = make(chan *opMakeExchange)
-	e.cLookupAddr = make(chan *opLookupAddr)
+	e.cLookupIdent = make(chan *opLookupIdent)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportRead = make(chan opRead)
 
@@ -232,8 +232,8 @@ func (e *Endpoint) run() {
 		case op := <-e.cTransportRead:
 			e.received(op)
 
-		case op := <-e.cLookupAddr:
-			e.lookup_addr(op)
+		case op := <-e.cLookupIdent:
+			e.lookupIdent(op)
 
 		}
 	}
@@ -252,9 +252,9 @@ func (e *Endpoint) runReader() {
 
 func (e *Endpoint) on_exchange_closed(event *ExchangeClosedEvent) {
 
-	entry := e.hashnames[event.Exchange.remoteAddr.Hashname()]
+	entry := e.hashnames[event.Exchange.remoteIdent.Hashname()]
 	if entry != nil {
-		delete(e.hashnames, event.Exchange.remoteAddr.Hashname())
+		delete(e.hashnames, event.Exchange.remoteIdent.Hashname())
 		delete(e.tokens, entry.x.token)
 	}
 
@@ -275,15 +275,15 @@ func (e *Endpoint) received(op opRead) {
 
 func (e *Endpoint) received_handshake(op opRead) {
 	var (
-		entry     *exchangeEntry
-		x         *Exchange
-		localAddr *Addr
-		csid      uint8
-		localKey  cipherset.Key
-		handshake cipherset.Handshake
-		token     cipherset.Token
-		hn        hashname.H
-		err       error
+		entry      *exchangeEntry
+		x          *Exchange
+		localIdent *Ident
+		csid       uint8
+		localKey   cipherset.Key
+		handshake  cipherset.Handshake
+		token      cipherset.Token
+		hn         hashname.H
+		err        error
 	)
 
 	token = cipherset.ExtractToken(op.msg)
@@ -300,14 +300,14 @@ func (e *Endpoint) received_handshake(op opRead) {
 		return
 	}
 
-	localAddr, err = e.LocalAddr()
+	localIdent, err = e.LocalIdent()
 	if err != nil {
 		tracef("received_handshake() => drop // no local address")
 		return // drop
 	}
 
 	csid = uint8(op.msg[2])
-	localKey = localAddr.keys[csid]
+	localKey = localIdent.keys[csid]
 	if localKey == nil {
 		tracef("received_handshake() => drop // no local key")
 		return // drop
@@ -335,7 +335,7 @@ func (e *Endpoint) received_handshake(op opRead) {
 		return
 	}
 
-	x, err = newExchange(localAddr, nil, handshake, token,
+	x, err = newExchange(localIdent, nil, handshake, token,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
@@ -375,12 +375,12 @@ func (e *Endpoint) received_packet(op opRead) {
 	entry.x.received(op)
 }
 
-func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
-	if addr == nil {
+func (e *Endpoint) Dial(ident *Ident) (*Exchange, error) {
+	if ident == nil {
 		return nil, os.ErrInvalid
 	}
 
-	op := opMakeExchange{addr, nil, make(chan error)}
+	op := opMakeExchange{ident, nil, make(chan error)}
 	e.cMakeExchange <- &op
 	err := <-op.cErr
 	if err != nil {
@@ -396,27 +396,27 @@ func (e *Endpoint) Dial(addr *Addr) (*Exchange, error) {
 }
 
 func (e *Endpoint) dial(op *opMakeExchange) {
-	if entry, found := e.hashnames[op.addr.hashname]; found {
+	if entry, found := e.hashnames[op.ident.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil
 		return
 	}
 
 	var (
-		entry     = &exchangeEntry{}
-		localAddr *Addr
-		x         *Exchange
+		entry      = &exchangeEntry{}
+		localIdent *Ident
+		x          *Exchange
 
 		err error
 	)
 
-	localAddr, err = e.LocalAddr()
+	localIdent, err = e.LocalIdent()
 	if err != nil {
 		op.cErr <- err
 		return
 	}
 
-	x, err = newExchange(localAddr, op.addr, nil, cipherset.ZeroToken,
+	x, err = newExchange(localIdent, op.ident, nil, cipherset.ZeroToken,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		op.cErr <- err
@@ -424,7 +424,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	entry.x = x
-	e.hashnames[op.addr.hashname] = entry
+	e.hashnames[op.ident.hashname] = entry
 
 	op.x = x
 	op.cErr <- nil
@@ -447,32 +447,32 @@ func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
 }
 
-func (e *Endpoint) Resolve(hn hashname.H) (*Addr, error) {
+func (e *Endpoint) Resolve(hn hashname.H) (*Ident, error) {
 	var (
-		addr *Addr
+		ident *Ident
 	)
 
-	if addr == nil {
-		op := opLookupAddr{hashname: hn, cAddr: make(chan *Addr)}
-		e.cLookupAddr <- &op
-		addr = <-op.cAddr
+	if ident == nil {
+		op := opLookupIdent{hashname: hn, cIdent: make(chan *Ident)}
+		e.cLookupIdent <- &op
+		ident = <-op.cIdent
 	}
 
-	if addr == nil {
+	if ident == nil {
 		return nil, ErrNoAddress
 	}
 
-	return addr, nil
+	return ident, nil
 }
 
-func (e *Endpoint) lookup_addr(op *opLookupAddr) {
+func (e *Endpoint) lookupIdent(op *opLookupIdent) {
 	entry, found := e.hashnames[op.hashname]
 	if !found || entry == nil {
-		op.cAddr <- nil
+		op.cIdent <- nil
 		return
 	}
 
-	op.cAddr <- entry.x.RemoteAddr()
+	op.cIdent <- entry.x.RemoteIdent()
 }
 
 func waitForError(c <-chan error) error {

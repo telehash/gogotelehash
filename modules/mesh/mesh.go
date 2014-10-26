@@ -12,7 +12,7 @@ import (
 var ErrNotAuthorized = errors.New("link: not authorized")
 
 type moduleKeyType string
-type AcceptFunc func(addr *e3x.Addr, req, resp *lob.Packet) bool
+type AcceptFunc func(ident *e3x.Ident, req, resp *lob.Packet) bool
 
 const moduleKey = moduleKeyType("mesh")
 
@@ -29,7 +29,7 @@ func FromEndpoint(e *e3x.Endpoint) Mesh {
 }
 
 type Mesh interface {
-	Link(addr *e3x.Addr, pkt *lob.Packet) (Tag, error)
+	Link(ident *e3x.Ident, pkt *lob.Packet) (Tag, error)
 	HasLink(hashname.H) bool
 }
 
@@ -48,16 +48,16 @@ type Tag struct {
 }
 
 type link struct {
-	addr    *e3x.Addr
+	ident   *e3x.Ident
 	channel *e3x.Channel
 	tags    map[uint64]bool
 }
 
 type opLink struct {
-	addr *e3x.Addr
-	pkt  *lob.Packet
-	tag  Tag
-	cErr chan error
+	ident *e3x.Ident
+	pkt   *lob.Packet
+	tag   Tag
+	cErr  chan error
 }
 
 type opRelease struct {
@@ -110,7 +110,7 @@ func (m *mesh) HasLink(h hashname.H) bool {
 	return f && len(l.tags) > 0 && l.channel != nil
 }
 
-func (m *mesh) Link(addr *e3x.Addr, pkt *lob.Packet) (Tag, error) {
+func (m *mesh) Link(addr *e3x.Ident, pkt *lob.Packet) (Tag, error) {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
@@ -166,7 +166,7 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 
 	resp := &lob.Packet{}
 
-	if m.accept != nil && !m.accept(ch.RemoteAddr(), pkt, resp) {
+	if m.accept != nil && !m.accept(ch.RemoteIdent(), pkt, resp) {
 		ch.Errorf("access denied")
 		return
 	}
@@ -180,8 +180,8 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 	l := m.links[ch.RemoteHashname()]
 	if l == nil {
 		l = &link{
-			addr: ch.RemoteAddr(),
-			tags: make(map[uint64]bool),
+			ident: ch.RemoteIdent(),
+			tags:  make(map[uint64]bool),
 		}
 		m.links[ch.RemoteHashname()] = l
 	}

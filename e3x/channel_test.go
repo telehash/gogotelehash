@@ -194,7 +194,7 @@ func TestPingPong(t *testing.T) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
-			addr   *Addr
+			ident  *Ident
 			pkt    *lob.Packet
 			err    error
 		)
@@ -216,10 +216,10 @@ func TestPingPong(t *testing.T) {
 			}
 		}))
 
-		addr, err = A.LocalAddr()
+		ident, err = A.LocalIdent()
 		assert.NoError(err)
 
-		c, err = B.Open(addr, "ping", false)
+		c, err = B.Open(ident, "ping", false)
 		assert.NoError(err)
 		if assert.NotNil(c) {
 			defer c.Close()
@@ -243,7 +243,7 @@ func TestPingPongReliable(t *testing.T) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
-			addr   *Addr
+			ident  *Ident
 			pkt    *lob.Packet
 			err    error
 		)
@@ -265,10 +265,10 @@ func TestPingPongReliable(t *testing.T) {
 			}
 		}))
 
-		addr, err = A.LocalAddr()
+		ident, err = A.LocalIdent()
 		assert.NoError(err)
 
-		c, err = B.Open(addr, "ping", true)
+		c, err = B.Open(ident, "ping", true)
 		assert.NoError(err)
 		if assert.NotNil(c) {
 
@@ -299,7 +299,7 @@ func TestFloodReliable(t *testing.T) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
-			addr   *Addr
+			ident  *Ident
 			pkt    *lob.Packet
 			err    error
 		)
@@ -325,10 +325,10 @@ func TestFloodReliable(t *testing.T) {
 			}
 		}))
 
-		addr, err = A.LocalAddr()
+		ident, err = A.LocalIdent()
 		assert.NoError(err)
 
-		c, err = B.Open(addr, "flood", true)
+		c, err = B.Open(ident, "flood", true)
 		assert.NoError(err)
 		assert.NotNil(c)
 

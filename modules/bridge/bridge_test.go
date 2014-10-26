@@ -94,26 +94,26 @@ func TestBridge(t *testing.T) {
 	assert.NoError(B.Start())
 	assert.NoError(R.Start())
 
-	Aaddr, err := A.LocalAddr()
+	Aident, err := A.LocalIdent()
 	assert.NoError(err)
-	Baddr, err := B.LocalAddr()
+	Bident, err := B.LocalIdent()
 	assert.NoError(err)
-	Raddr, err := R.LocalAddr()
+	Rident, err := R.LocalIdent()
 	assert.NoError(err)
 
-	ABex, err := A.Dial(Baddr)
+	ABex, err := A.Dial(Bident)
 	assert.NoError(err)
-	BRex, err := B.Dial(Raddr)
+	BRex, err := B.Dial(Rident)
 	assert.NoError(err)
-	RBex, err := R.Dial(Baddr)
+	RBex, err := R.Dial(Bident)
 	assert.NoError(err)
-	RAex, err := R.Dial(Aaddr)
+	RAex, err := R.Dial(Aident)
 	assert.NoError(err)
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
 	// blacklist A
-	blacklist = append(blacklist, Aaddr.Addresses()...)
+	blacklist = append(blacklist, Aident.Addresses()...)
 	log.Println("\x1B[32mblacklist:\x1B[0m", blacklist)
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
@@ -125,7 +125,7 @@ func TestBridge(t *testing.T) {
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
 	{
-		ch, err := B.Open(Aaddr, "ping", true)
+		ch, err := B.Open(Aident, "ping", true)
 		assert.NoError(err)
 
 		for n := 10; n > 0; n-- {

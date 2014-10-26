@@ -42,20 +42,20 @@ func TestSimpleEndpoint(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	addrA, err := ea.LocalAddr()
+	identA, err := ea.LocalIdent()
 	assert.NoError(err)
 
-	addrB, err := eb.LocalAddr()
+	identB, err := eb.LocalIdent()
 	assert.NoError(err)
 
 	tracef("HELLO")
-	_, err = ea.Dial(addrB)
+	_, err = ea.Dial(identB)
 	assert.NoError(err)
 
-	_, err = ea.Dial(addrB)
+	_, err = ea.Dial(identB)
 	assert.NoError(err)
 
-	_, err = eb.Dial(addrA)
+	_, err = eb.Dial(identA)
 	assert.NoError(err)
 
 	time.Sleep(2*time.Minute + 10*time.Second)
