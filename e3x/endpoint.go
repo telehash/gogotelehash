@@ -368,6 +368,14 @@ func (e *Endpoint) receivedPacket(op opRead) {
 	entry.x.received(op)
 }
 
+type Dialable interface {
+	Dialer(e *Endpoint) Dialer
+}
+
+type Dialer interface {
+	Dial() (*Exchange, error)
+}
+
 func (e *Endpoint) Dial(ident *Ident) (*Exchange, error) {
 	if ident == nil {
 		return nil, os.ErrInvalid
