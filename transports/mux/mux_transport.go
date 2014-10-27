@@ -1,3 +1,7 @@
+// Mux transport wrapper.
+//
+// This package provides a transport that transparently merges multiple sub-transports
+// as-if they are one.
 package mux
 
 import (
@@ -12,6 +16,14 @@ var (
 	_ transports.Transport = (*muxer)(nil)
 )
 
+// Config is a list of sub-transport configurations.
+//
+//   e3x.New(keys, nat.Config{mux.Config{
+//     udp.Config{},
+//     webrtc.Config{},
+//     tcp.Config{MaxSessions: 150},
+//     http.Config{MaxSessions: 150},
+//   }})
 type Config []transports.Config
 
 type muxer struct {

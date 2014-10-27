@@ -1,3 +1,7 @@
+// NAT port mapping transport wrapper.
+//
+// This packages provides transparent NAT port mapping for the
+// sub-transports that support it.
 package nat
 
 import (
@@ -15,13 +19,26 @@ var (
 	_ transports.Config    = Config{}
 )
 
+// NATableAddr must be implemented by transports that support NAT port mapping.
 type NATableAddr interface {
+	// Make sure transports.Addr is implemented
 	transports.Addr
+
+	// InternalAddr returns basic addressing information.
+	// proto must be either "udp" or "tcp".
+	// ip must be the ip associated with this address.
+	// port must be the UDP or TCP port associated with this address.
 	InternalAddr() (proto string, ip net.IP, port int)
+
+	// MakeGlobal makes a new addr while replacing the ip:port.
 	MakeGlobal(ip net.IP, port int) transports.Addr
 }
 
+// Config must be given a sub-transport.
+//
+//   e3x.New(keys, nat.Config{udp.Config{}})
 type Config struct {
+	// The configuration of the sub-transport.
 	Config transports.Config
 }
 

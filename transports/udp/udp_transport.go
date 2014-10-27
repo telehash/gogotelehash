@@ -1,3 +1,6 @@
+// UDP transport implementation.
+//
+// The UDP transport is NAT-able.
 package udp
 
 import (
@@ -15,10 +18,24 @@ func init() {
 	transports.RegisterAddrDecoder("udp6", decodeAddress)
 }
 
+// Config for the UDP transport. Typically the zero value is sufficient to get started.
+//
+//   e3x.New(keys, udp.Config{})
 type Config struct {
-	Network string // "udp4", "udp6"
-	Addr    string
-	Dest    string // CIDR format network range
+	// Can be set to UDPv4, UDPv6 or can be left blank.
+	// The zero valu will bind the transport to both UDPv4 and UDPv6
+	Network string
+
+	// Can be set to an address and/or port.
+	// The zero value will bind it to a random port while listening on all interfaces.
+	// When port is unspecified ("127.0.0.1") a random port will be chosen.
+	// When ip is unspecified (":3000") the transport will listen on all interfaces.
+	Addr string
+
+	// Can be set to an ip network (in CIDR format).
+	// Setting this value will restrict all outbound traffic on this transport to the
+	// specified network.
+	Dest string
 }
 
 type addr struct {
@@ -45,6 +62,7 @@ const (
 	UDPv6 = "udp6"
 )
 
+// Open opens the transport.
 func (c Config) Open() (transports.Transport, error) {
 	var (
 		ipnet *net.IPNet
