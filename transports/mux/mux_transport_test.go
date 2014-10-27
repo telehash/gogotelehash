@@ -4,7 +4,7 @@ import (
 	"log"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/udp"

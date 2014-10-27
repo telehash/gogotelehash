@@ -3,7 +3,7 @@ package tests
 import (
 	"testing"
 
-	"github.com/stretchr/testify/suite"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/suite"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/lob"

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
 )

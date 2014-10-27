@@ -1,0 +1,67 @@
+{
+	"ImportPath": "github.com/telehash/gogotelehash",
+	"GoVersion": "go1.3.3",
+	"Packages": [
+		"./..."
+	],
+	"Deps": [
+		{
+			"ImportPath": "code.google.com/p/go.crypto/curve25519",
+			"Comment": "null-213",
+			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+		},
+		{
+			"ImportPath": "code.google.com/p/go.crypto/nacl/box",
+			"Comment": "null-213",
+			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+		},
+		{
+			"ImportPath": "code.google.com/p/go.crypto/nacl/secretbox",
+			"Comment": "null-213",
+			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+		},
+		{
+			"ImportPath": "code.google.com/p/go.crypto/poly1305",
+			"Comment": "null-213",
+			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+		},
+		{
+			"ImportPath": "code.google.com/p/go.crypto/salsa20",
+			"Comment": "null-213",
+			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+		},
+		{
+			"ImportPath": "github.com/docopt/docopt-go",
+			"Comment": "0.6.1-rc2-24-g7fb3e64",
+			"Rev": "7fb3e64728058525f5940d913d0b854474dcd66a"
+		},
+		{
+			"ImportPath": "github.com/huin/goupnp",
+			"Rev": "ecfaac0e3a7f89c42ebfa85a6546cd2c58b2fd89"
+		},
+		{
+			"ImportPath": "github.com/jackpal/go-nat-pmp",
+			"Rev": "a45aa3d54aef73b504e15eb71bea0e5565b5e6e1"
+		},
+		{
+			"ImportPath": "github.com/stretchr/objx",
+			"Rev": "cbeaeb16a013161a98496fad62933b1d21786672"
+		},
+		{
+			"ImportPath": "github.com/stretchr/testify/assert",
+			"Rev": "d6577e08ec30538639ac0ea38b562b6f250e9055"
+		},
+		{
+			"ImportPath": "github.com/stretchr/testify/mock",
+			"Rev": "d6577e08ec30538639ac0ea38b562b6f250e9055"
+		},
+		{
+			"ImportPath": "github.com/stretchr/testify/require",
+			"Rev": "d6577e08ec30538639ac0ea38b562b6f250e9055"
+		},
+		{
+			"ImportPath": "github.com/stretchr/testify/suite",
+			"Rev": "d6577e08ec30538639ac0ea38b562b6f250e9055"
+		}
+	]
+}

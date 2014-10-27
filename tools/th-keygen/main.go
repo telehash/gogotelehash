@@ -6,7 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 
-	"github.com/docopt/docopt-go"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/docopt/docopt-go"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
