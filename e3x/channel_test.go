@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/require"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
