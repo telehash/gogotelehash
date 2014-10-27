@@ -2,9 +2,17 @@
 
 ## Project Status
 
-Gogotelehash is currently under active development. The API is subject to change.
+Gogotelehash is currently under active development. The API is subject to change. We are currently working on Telehash v3.
 
-All development is currenly done against the develop branch and is tracked in [this PR](https://github.com/telehash/gogotelehash/pull/2) . When the API stablizes the master branch will be replaced.
+What works:
 
+* Endpoints
+* Exchanges
+* Channels (both reliable and unreliable)
+* cipherset 1a
+* cipherset 3a
+* transport udp
+* upnp and nat-pmp mapping
 
 [![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/telehash/gogotelehash/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
+
