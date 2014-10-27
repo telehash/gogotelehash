@@ -4,8 +4,8 @@ import (
 	"sort"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 const (

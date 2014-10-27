@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func TestManagerWithoutTransports(t *testing.T) {

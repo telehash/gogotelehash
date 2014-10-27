@@ -1,7 +1,7 @@
 package cipherset
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/util/base32util"
+	"github.com/telehash/gogotelehash/util/base32util"
 )
 
 var ciphers = map[uint8]Cipher{}

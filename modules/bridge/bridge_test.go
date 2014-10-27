@@ -5,15 +5,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a"
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/transports/fw"
-	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/fw"
+	"github.com/telehash/gogotelehash/transports/udp"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 var log = logs.Module("test")

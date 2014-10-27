@@ -6,11 +6,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
-	"bitbucket.org/simonmenke/go-telehash/transports/mux"
-	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
+	"github.com/telehash/gogotelehash/transports/mux"
+	"github.com/telehash/gogotelehash/transports/udp"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 func TestSimpleEndpoint(t *testing.T) {

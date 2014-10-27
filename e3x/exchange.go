@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")

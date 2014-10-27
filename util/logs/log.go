@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/hashname"
+	"github.com/telehash/gogotelehash/hashname"
 )
 
 var disabledMods = map[string]bool{}

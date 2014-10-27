@@ -3,10 +3,10 @@ package peers
 import (
 	"encoding/hex"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
 )
 
 func (p *peers) connect(ex *e3x.Exchange, inner []byte) error {

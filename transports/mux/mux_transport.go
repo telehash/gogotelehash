@@ -3,8 +3,8 @@ package mux
 import (
 	"io"
 
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var (

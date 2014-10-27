@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var ErrInvalidPacket = errors.New("lob: invalid packet")

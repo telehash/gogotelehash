@@ -8,10 +8,10 @@ import (
 
 	"github.com/docopt/docopt-go"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
 
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 const usage = `Telehash key generation tool.

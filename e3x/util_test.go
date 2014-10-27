@@ -9,9 +9,9 @@ import (
 
 	"github.com/stretchr/testify/mock"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/transports"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports"
 )
 
 func registerEventLoggers(e *Endpoint, t *testing.T) {

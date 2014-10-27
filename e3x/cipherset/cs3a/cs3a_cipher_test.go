@@ -6,7 +6,7 @@ import (
 	mathrand "math/rand"
 	"testing"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/tests"
+	"github.com/telehash/gogotelehash/e3x/cipherset/tests"
 )
 
 func TestCipher(t *testing.T) {

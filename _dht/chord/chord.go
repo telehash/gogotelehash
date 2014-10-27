@@ -8,10 +8,10 @@ import (
 
 	"github.com/armon/go-chord"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/modules/mesh"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/modules/mesh"
 )
 
 var _ chord.Transport = (*transport)(nil)

@@ -3,7 +3,7 @@ package cs1a
 import (
 	"testing"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/tests"
+	"github.com/telehash/gogotelehash/e3x/cipherset/tests"
 )
 
 func TestCipher(t *testing.T) {

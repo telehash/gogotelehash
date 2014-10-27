@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/transports"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/transports"
 )
 
 var ErrNoKeys = errors.New("e3x: no keys")

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/base32util"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/base32util"
 )
 
 var ErrInvalidKeys = errors.New("chipherset: invalid keys")

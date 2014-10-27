@@ -8,8 +8,8 @@ import (
 	"errors"
 	"sort"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/util/base32util"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/util/base32util"
 )
 
 var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")

@@ -1,7 +1,7 @@
 package e3x
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/transports"
+	"github.com/telehash/gogotelehash/transports"
 )
 
 type Transports interface {

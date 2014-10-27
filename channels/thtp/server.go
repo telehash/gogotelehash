@@ -12,8 +12,8 @@ import (
 	"runtime"
 	"strings"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/lob"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/lob"
 )
 
 var (

@@ -9,10 +9,10 @@ import (
 	"code.google.com/p/go.crypto/nacl/box"
 	"code.google.com/p/go.crypto/poly1305"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/base32util"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/base32util"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var (

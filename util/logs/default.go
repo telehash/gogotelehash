@@ -3,7 +3,7 @@ package logs
 import (
 	"os"
 
-	"bitbucket.org/simonmenke/go-telehash/hashname"
+	"github.com/telehash/gogotelehash/hashname"
 )
 
 var defaultLogger = New(os.Stdout)

@@ -5,10 +5,10 @@ import (
 	"crypto/rand"
 	"math/big"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/eccp"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/secp160r1"
-	"bitbucket.org/simonmenke/go-telehash/util/base32util"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
+	"github.com/telehash/gogotelehash/util/base32util"
 )
 
 type key struct {

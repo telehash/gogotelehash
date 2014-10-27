@@ -1,7 +1,7 @@
 package fw
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/transports"
+	"github.com/telehash/gogotelehash/transports"
 )
 
 var (

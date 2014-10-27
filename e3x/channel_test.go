@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/transports/mux"
-	"bitbucket.org/simonmenke/go-telehash/transports/udp"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports/mux"
+	"github.com/telehash/gogotelehash/transports/udp"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {

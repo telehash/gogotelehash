@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/nat"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/nat"
 )
 
 var (

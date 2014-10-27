@@ -5,11 +5,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/util/logs"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/logs"
 
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func TestBasicExchange(t *testing.T) {

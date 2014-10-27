@@ -6,8 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func TestCoding(t *testing.T) {

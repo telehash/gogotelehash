@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/secp160r1"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
 )
 
 func Test_ComputeShared_P256(t *testing.T) {

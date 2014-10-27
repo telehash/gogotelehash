@@ -1,9 +1,9 @@
 package peers
 
 import (
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/modules/mesh"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/modules/mesh"
 )
 
 type Config struct {

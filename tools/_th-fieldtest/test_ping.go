@@ -3,8 +3,8 @@ package main
 import (
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/lob"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/lob"
 )
 
 type TestPing struct{}

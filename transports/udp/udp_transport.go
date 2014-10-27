@@ -6,8 +6,8 @@ import (
 	"io"
 	"net"
 
-	"bitbucket.org/simonmenke/go-telehash/transports"
-	"bitbucket.org/simonmenke/go-telehash/transports/nat"
+	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/nat"
 )
 
 func init() {

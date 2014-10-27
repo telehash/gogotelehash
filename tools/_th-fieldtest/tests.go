@@ -4,7 +4,7 @@ import (
 	"math/rand"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
+	"github.com/telehash/gogotelehash/e3x"
 )
 
 type Reporter interface {

@@ -3,14 +3,14 @@ package main
 import (
 	"log"
 
-	"bitbucket.org/simonmenke/go-telehash/dht/chord"
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/transports/mux"
-	"bitbucket.org/simonmenke/go-telehash/transports/nat"
-	"bitbucket.org/simonmenke/go-telehash/transports/udp"
+	"github.com/telehash/gogotelehash/dht/chord"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/transports/mux"
+	"github.com/telehash/gogotelehash/transports/nat"
+	"github.com/telehash/gogotelehash/transports/udp"
 
-	_ "bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs3a"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func main() {

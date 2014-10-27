@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
 )
 
 type UnreachableEndpointError hashname.H

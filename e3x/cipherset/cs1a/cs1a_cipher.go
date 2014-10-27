@@ -11,12 +11,12 @@ import (
 	"crypto/subtle"
 	"io"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/eccp"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/ecdh"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset/cs1a/secp160r1"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/ecdh"
+	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var (

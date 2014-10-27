@@ -6,8 +6,8 @@ import (
 
 	"code.google.com/p/go.crypto/salsa20"
 
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/util/bufpool"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 func cloak(p []byte, key *[32]byte) ([]byte, error) {

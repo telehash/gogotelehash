@@ -3,11 +3,11 @@ package peers
 import (
 	"encoding/hex"
 
-	"bitbucket.org/simonmenke/go-telehash/e3x"
-	"bitbucket.org/simonmenke/go-telehash/e3x/cipherset"
-	"bitbucket.org/simonmenke/go-telehash/hashname"
-	"bitbucket.org/simonmenke/go-telehash/lob"
-	"bitbucket.org/simonmenke/go-telehash/modules/bridge"
+	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/modules/bridge"
 )
 
 func (p *peers) peerWithHashname(via *e3x.Addr, to hashname.H) error {
