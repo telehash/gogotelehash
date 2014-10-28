@@ -325,6 +325,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 		x.reset_expire()
 		x.cndState.Broadcast()
 
+		x.log.Printf("\x1B[32mOpened exchange\x1B[0m")
 		x.observers.Trigger(&ExchangeOpenedEvent{x})
 	}
 
@@ -467,6 +468,7 @@ func (x *Exchange) received_packet(op opRead) {
 			x.channels[c.id] = entry
 			x.reset_expire()
 
+			x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, cid)
 			x.observers.Trigger(&ChannelOpenedEvent{c})
 
 			go h.ServeTelehash(c)
@@ -530,6 +532,7 @@ func (x *Exchange) expire(err error) {
 		e.c.on_close_deadline_reached()
 	}
 
+	x.log.Printf("\x1B[31mClosed exchange\x1B[0m")
 	x.observers.Trigger(&ExchangeClosedEvent{x, err})
 }
 
@@ -624,6 +627,7 @@ func (x *Exchange) unregister_channel(channelId uint32) {
 		delete(x.channels, channelId)
 		x.reset_expire()
 
+		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", entry.c.typ, entry.c.id)
 		x.observers.Trigger(&ChannelClosedEvent{entry.c})
 	}
 
@@ -691,6 +695,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	x.reset_expire()
 	x.mtx.Unlock()
 
+	x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, c.id)
 	x.observers.Trigger(&ChannelOpenedEvent{c})
 	return c, nil
 }

@@ -133,6 +133,13 @@ func (c *Channel) RemoteIdent() *Ident {
 	return c.x.RemoteIdent()
 }
 
+func (c *Channel) Exchange() *Exchange {
+	if x, ok := c.x.(*Exchange); ok && x != nil {
+		return x
+	}
+	return nil
+}
+
 func (e *Endpoint) Open(ident *Ident, typ string, reliable bool) (*Channel, error) {
 	x, err := e.Dial(ident)
 	if err != nil {
