@@ -31,6 +31,7 @@ func FromEndpoint(e *e3x.Endpoint) Mesh {
 type Mesh interface {
 	Link(ident *e3x.Ident, pkt *lob.Packet) (Tag, error)
 	HasLink(hashname.H) bool
+	Exchange(hashname.H) *e3x.Exchange
 }
 
 type mesh struct {
@@ -48,9 +49,10 @@ type Tag struct {
 }
 
 type link struct {
-	ident   *e3x.Ident
-	channel *e3x.Channel
-	tags    map[uint64]bool
+	ident    *e3x.Ident
+	exchange *e3x.Exchange
+	channel  *e3x.Channel
+	tags     map[uint64]bool
 }
 
 type opLink struct {
@@ -89,11 +91,12 @@ func (m *mesh) Start() error { return nil }
 func (m *mesh) Stop() error  { return nil }
 
 func (m *mesh) on_exchange_closed(evt *e3x.ExchangeClosedEvent) {
+	m.unlink(evt.Exchange.RemoteHashname())
+}
+
+func (m *mesh) unlink(hn hashname.H) {
 	m.mtx.Lock()
-	var (
-		hn   = evt.Exchange.RemoteHashname()
-		link = m.links[hn]
-	)
+	link := m.links[hn]
 	delete(m.links, hn)
 	m.mtx.Unlock()
 
@@ -110,14 +113,31 @@ func (m *mesh) HasLink(h hashname.H) bool {
 	return f && len(l.tags) > 0 && l.channel != nil
 }
 
-func (m *mesh) Link(addr *e3x.Ident, pkt *lob.Packet) (Tag, error) {
+func (m *mesh) Exchange(h hashname.H) *e3x.Exchange {
 	m.mtx.Lock()
 	defer m.mtx.Unlock()
 
-	l := m.links[addr.Hashname()]
+	l, f := m.links[h]
+	if !f || l == nil {
+		return nil
+	}
+
+	return l.exchange
+}
+
+func (m *mesh) Link(ident *e3x.Ident, pkt *lob.Packet) (Tag, error) {
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
+	l := m.links[ident.Hashname()]
 
 	if l == nil {
-		c, err := m.endpoint.Open(addr, "link", false)
+		x, err := m.endpoint.Dial(ident)
+		if err != nil {
+			return Tag{}, err
+		}
+
+		c, err := x.Open("link", false)
 		if err != nil {
 			return Tag{}, err
 		}
@@ -138,25 +158,25 @@ func (m *mesh) Link(addr *e3x.Ident, pkt *lob.Packet) (Tag, error) {
 		}
 
 		// authenticate peer
-		if m.accept != nil && !m.accept(addr, pkt, nil) {
+		if m.accept != nil && !m.accept(ident, pkt, nil) {
 			c.Errorf("access denied")
 			return Tag{}, ErrNotAuthorized
 		}
 
-		l = &link{addr, c, make(map[uint64]bool)}
-		m.links[addr.Hashname()] = l
+		go m.keepChannelOpen(c)
+
+		l = &link{ident, x, c, make(map[uint64]bool)}
+		m.links[ident.Hashname()] = l
 	}
 
 	m.last_tag_id++
-	t := Tag{addr.Hashname(), m.last_tag_id, m}
+	t := Tag{ident.Hashname(), m.last_tag_id, m}
 	l.tags[m.last_tag_id] = true
 
 	return t, nil
 }
 
 func (m *mesh) handle_link(ch *e3x.Channel) {
-	m.mtx.Lock()
-	defer m.mtx.Unlock()
 
 	pkt, err := ch.ReadPacket()
 	if err != nil {
@@ -177,11 +197,15 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 		return
 	}
 
+	m.mtx.Lock()
+	defer m.mtx.Unlock()
+
 	l := m.links[ch.RemoteHashname()]
 	if l == nil {
 		l = &link{
-			ident: ch.RemoteIdent(),
-			tags:  make(map[uint64]bool),
+			exchange: ch.Exchange(),
+			ident:    ch.RemoteIdent(),
+			tags:     make(map[uint64]bool),
 		}
 		m.links[ch.RemoteHashname()] = l
 	}
@@ -190,27 +214,45 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 		l.channel = nil
 	}
 	l.channel = ch
+
+	go m.keepChannelOpen(ch)
 }
 
 func (t Tag) Release() {
-	m := t.mesh
+	var (
+		m = t.mesh
+		c *e3x.Channel
+	)
+
+	if m == nil {
+		return
+	}
 
 	m.mtx.Lock()
-	defer m.mtx.Unlock()
-
 	l := m.links[t.hashname]
-	if l == nil {
-		return
+	if l != nil {
+		if l.tags[t.id] {
+			delete(l.tags, t.id)
+		}
+		if len(l.tags) == 0 {
+			delete(m.links, t.hashname)
+			c = l.channel
+		}
 	}
+	m.mtx.Unlock()
 
-	if !l.tags[t.id] {
-		return
+	if c != nil {
+		c.Close()
 	}
+}
 
-	delete(l.tags, t.id)
+func (m *mesh) keepChannelOpen(c *e3x.Channel) {
+	defer m.unlink(c.RemoteHashname())
 
-	if len(l.tags) == 0 {
-		l.channel.Close()
-		delete(m.links, t.hashname)
+	for {
+		_, err := c.ReadPacket()
+		if err != nil {
+			return
+		}
 	}
 }
