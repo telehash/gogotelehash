@@ -255,7 +255,7 @@ func (e *Endpoint) on_exchange_closed(event *ExchangeClosedEvent) {
 	entry := e.hashnames[event.Exchange.remoteIdent.Hashname()]
 	if entry != nil {
 		delete(e.hashnames, event.Exchange.remoteIdent.Hashname())
-		delete(e.tokens, entry.x.token)
+		delete(e.tokens, entry.x.LocalToken())
 	}
 
 }
@@ -292,14 +292,6 @@ func (e *Endpoint) received_handshake(op opRead) {
 		return // drop
 	}
 
-	entry = e.tokens[token]
-	if entry != nil {
-		// tracef("received_handshake() => found token %x", token)
-		entry.x.received(op)
-		// tracef("received_handshake() => done %x", token)
-		return
-	}
-
 	localIdent, err = e.LocalIdent()
 	if err != nil {
 		tracef("received_handshake() => drop // no local address")
@@ -329,13 +321,12 @@ func (e *Endpoint) received_handshake(op opRead) {
 	entry = e.hashnames[hn]
 	if entry != nil {
 		// tracef("received_handshake() => found hashname %x %s", token, hn)
-		e.tokens[token] = entry
 		entry.x.received(op)
 		// tracef("received_handshake() => done %x", token)
 		return
 	}
 
-	x, err = newExchange(localIdent, nil, handshake, token,
+	x, err = newExchange(localIdent, nil, handshake,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		tracef("received_handshake() => invalid exchange err=%s", err)
@@ -348,7 +339,7 @@ func (e *Endpoint) received_handshake(op opRead) {
 
 	// tracef("received_handshake() => registered %x %s", token, hn)
 	e.hashnames[hn] = entry
-	e.tokens[token] = entry
+	e.tokens[x.LocalToken()] = entry
 	x.state = ExchangeDialing
 	x.received(op)
 	// tracef("received_handshake() => done %x", token)
@@ -416,7 +407,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 		return
 	}
 
-	x, err = newExchange(localIdent, op.ident, nil, cipherset.ZeroToken,
+	x, err = newExchange(localIdent, op.ident, nil,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
 		op.cErr <- err
@@ -424,6 +415,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	entry.x = x
+	e.tokens[x.LocalToken()] = entry
 	e.hashnames[op.ident.hashname] = entry
 
 	op.x = x

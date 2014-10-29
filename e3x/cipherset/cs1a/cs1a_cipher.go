@@ -266,14 +266,14 @@ func (s *state) IsHigh() bool {
 	return false
 }
 
-func (s *state) SenderToken() cipherset.Token {
+func (s *state) LocalToken() cipherset.Token {
 	if s.localToken != nil {
 		return *s.localToken
 	}
 	return cipherset.ZeroToken
 }
 
-func (s *state) ReceiverToken() cipherset.Token {
+func (s *state) RemoteToken() cipherset.Token {
 	if s.remoteToken != nil {
 		return *s.remoteToken
 	}
@@ -348,7 +348,7 @@ func (s *state) CanEncryptHandshake() bool {
 }
 
 func (s *state) CanEncryptPacket() bool {
-	return s.lineEncryptionKey != nil
+	return s.lineEncryptionKey != nil && s.remoteToken != nil
 }
 
 func (s *state) CanDecryptMessage() bool {
@@ -360,7 +360,7 @@ func (s *state) CanDecryptHandshake() bool {
 }
 
 func (s *state) CanDecryptPacket() bool {
-	return s.lineDecryptionKey != nil
+	return s.lineDecryptionKey != nil && s.localToken != nil
 }
 
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
@@ -496,7 +496,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	body = bufpool.GetBuffer()[:16+4+len(inner)+4]
 
 	// copy token
-	copy(body[:16], (*s.localToken)[:])
+	copy(body[:16], (*s.remoteToken)[:])
 
 	// copy nonce
 	copy(body[16:16+4], nonce[:])
@@ -546,7 +546,7 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	)
 
 	// compare token
-	if !bytes.Equal(pkt.Body[:16], (*s.remoteToken)[:]) {
+	if !bytes.Equal(pkt.Body[:16], (*s.localToken)[:]) {
 		return nil, cipherset.ErrInvalidPacket
 	}
 
