@@ -10,14 +10,15 @@ import (
 	"github.com/telehash/gogotelehash/modules/bridge"
 )
 
-func (p *peers) peerWithHashname(via *e3x.Addr, to hashname.H) error {
-	localAddr, err := p.e.LocalAddr()
+func (mod *module) introduceVia(router *e3x.Exchange, to hashname.H) error {
+	localIdent, err := mod.e.LocalIdentity()
 	if err != nil {
 		return err
 	}
 
-	keys := localAddr.Keys()
+	keys := localIdent.Keys()
 	parts := hashname.PartsFromKeys(keys)
+	forgetter := e3x.ForgetterFromEndpoint(mod.e)
 
 	for csid, key := range keys {
 		inner := &lob.Packet{}
@@ -35,7 +36,7 @@ func (p *peers) peerWithHashname(via *e3x.Addr, to hashname.H) error {
 			return err
 		}
 
-		ch, err := p.e.Open(via, "peer", false)
+		ch, err := router.Open("peer", false)
 		if err != nil {
 			return err
 		}
@@ -45,17 +46,17 @@ func (p *peers) peerWithHashname(via *e3x.Addr, to hashname.H) error {
 		pkt.Header().SetString("peer", string(to))
 		ch.WritePacket(pkt)
 
-		e3x.ForgetterFromEndpoint(p.e).ForgetChannel(ch)
+		forgetter.ForgetChannel(ch)
 	}
 
 	return nil
 }
 
-func (p *peers) handle_peer(ch *e3x.Channel) {
-	defer e3x.ForgetterFromEndpoint(p.e).ForgetChannel(ch)
+func (mod *module) handle_peer(ch *e3x.Channel) {
+	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
 
 	// MUST allow router role
-	if p.config.DisableRouter {
+	if mod.config.DisableRouter {
 		return
 	}
 
@@ -71,16 +72,16 @@ func (p *peers) handle_peer(ch *e3x.Channel) {
 	peer := hashname.H(peerStr)
 
 	// MUST have link to either endpoint
-	if !p.m.HasLink(ch.RemoteHashname()) && !p.m.HasLink(peer) {
+	if !mod.m.HasLink(ch.RemoteHashname()) && !mod.m.HasLink(peer) {
 		return
 	}
 
 	// MUST pass firewall
-	if p.config.AllowPeer != nil && !p.config.AllowPeer(ch.RemoteHashname(), peer) {
+	if mod.config.AllowPeer != nil && !mod.config.AllowPeer(ch.RemoteHashname(), peer) {
 		return
 	}
 
-	ex := p.m.Exchange(peer)
+	ex := mod.m.Exchange(peer)
 	if ex == nil {
 		// resolve?
 		return
@@ -89,8 +90,8 @@ func (p *peers) handle_peer(ch *e3x.Channel) {
 	token := cipherset.ExtractToken(pkt.Body)
 	if token != cipherset.ZeroToken {
 		// add bridge
-		bridge.FromEndpoint(p.e).RouteToken(token, ex)
+		bridge.FromEndpoint(mod.e).RouteToken(token, ex)
 	}
 
-	p.connect(ex, pkt.Body)
+	mod.connect(ex, pkt.Body)
 }

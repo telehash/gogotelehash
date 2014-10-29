@@ -9,13 +9,13 @@ import (
 	"github.com/telehash/gogotelehash/lob"
 )
 
-func (p *peers) connect(ex *e3x.Exchange, inner []byte) error {
+func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
 	ch, err := ex.Open("connect", false)
 	if err != nil {
 		return err
 	}
 
-	defer e3x.ForgetterFromEndpoint(p.e).ForgetChannel(ch)
+	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
 
 	pkt := &lob.Packet{Body: inner}
 	err = ch.WritePacket(pkt)
@@ -26,16 +26,16 @@ func (p *peers) connect(ex *e3x.Exchange, inner []byte) error {
 	return nil
 }
 
-func (p *peers) handle_connect(ch *e3x.Channel) {
-	defer e3x.ForgetterFromEndpoint(p.e).ForgetChannel(ch)
+func (mod *module) handle_connect(ch *e3x.Channel) {
+	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
 
 	var (
-		from      hashname.H
-		localAddr *e3x.Addr
-		err       error
+		from       hashname.H
+		localIdent *e3x.Identity
+		err        error
 	)
 
-	localAddr, err = p.e.LocalAddr()
+	localIdent, err = mod.e.LocalIdentity()
 	if err != nil {
 		return
 	}
@@ -54,7 +54,7 @@ func (p *peers) handle_connect(ch *e3x.Channel) {
 		// handshake
 		var (
 			csid = inner.Head[0]
-			key  = localAddr.Keys()[csid]
+			key  = localIdent.Keys()[csid]
 		)
 		if key == nil {
 			return
@@ -106,7 +106,7 @@ func (p *peers) handle_connect(ch *e3x.Channel) {
 		return
 	}
 
-	if p.config.AllowConnect != nil && !p.config.AllowConnect(from, ch.RemoteHashname()) {
+	if mod.config.AllowConnect != nil && !mod.config.AllowConnect(from, ch.RemoteHashname()) {
 		return
 	}
 

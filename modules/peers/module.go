@@ -13,9 +13,10 @@ type Config struct {
 }
 
 type Peers interface {
+	// Dial(dst, via *e3x.Identity) (*e3x.Exchange, error)
 }
 
-type peers struct {
+type module struct {
 	e      *e3x.Endpoint
 	m      mesh.Mesh
 	config Config
@@ -35,31 +36,31 @@ func FromEndpoint(e *e3x.Endpoint) Peers {
 		return nil
 	}
 
-	return mod.(*peers)
+	return mod.(*module)
 }
 
-func newPeers(e *e3x.Endpoint, cnf Config) *peers {
-	return &peers{
+func newPeers(e *e3x.Endpoint, cnf Config) *module {
+	return &module{
 		e:      e,
 		config: cnf,
 	}
 }
 
-func (p *peers) Init() error {
-	p.m = mesh.FromEndpoint(p.e)
-	if p.m == nil {
+func (mod *module) Init() error {
+	mod.m = mesh.FromEndpoint(mod.e)
+	if mod.m == nil {
 		panic("the peers module requires the mesh module")
 	}
 
-	p.e.AddHandler("peer", e3x.HandlerFunc(p.handle_peer))
-	p.e.AddHandler("connect", e3x.HandlerFunc(p.handle_connect))
+	mod.e.AddHandler("peer", e3x.HandlerFunc(mod.handle_peer))
+	mod.e.AddHandler("connect", e3x.HandlerFunc(mod.handle_connect))
 	return nil
 }
 
-func (p *peers) Start() error {
+func (mod *module) Start() error {
 	return nil
 }
 
-func (p *peers) Stop() error {
+func (mod *module) Stop() error {
 	return nil
 }

@@ -70,8 +70,8 @@ type Exchange struct {
 	lastLocalSeq  uint32
 	lastRemoteSeq uint32
 	nextSeq       uint32
-	localIdent    *Ident
-	remoteIdent   *Ident
+	localIdent    *Identity
+	remoteIdent   *Identity
 	csid          uint8
 	cipher        cipherset.State
 	nextChannelID uint32
@@ -110,9 +110,7 @@ func (x *Exchange) String() string {
 }
 
 func newExchange(
-	localIdent *Ident,
-	remoteIdent *Ident,
-	handshake cipherset.Handshake,
+	localIdent *Identity, remoteIdent *Identity, handshake cipherset.Handshake,
 	transportWriter transportWriter,
 	observers Observers,
 	handlers map[string]Handler,
@@ -209,6 +207,7 @@ func (x *Exchange) dial() error {
 	return nil
 }
 
+// RemoteHashname returns the hashname of the remote peer.
 func (x *Exchange) RemoteHashname() hashname.H {
 	x.mtx.Lock()
 	hn := x.remoteIdent.Hashname()
@@ -216,13 +215,15 @@ func (x *Exchange) RemoteHashname() hashname.H {
 	return hn
 }
 
-func (x *Exchange) RemoteIdent() *Ident {
+// RemoteIdentity returns the Identity of the remote peer.
+func (x *Exchange) RemoteIdentity() *Identity {
 	x.mtx.Lock()
 	ident := x.remoteIdent.withPaths(x.addressBook.KnownAddresses())
 	x.mtx.Unlock()
 	return ident
 }
 
+// ActivePath returns the path that is currently used for channel packets.
 func (x *Exchange) ActivePath() transports.Addr {
 	x.mtx.Lock()
 	addr := x.addressBook.ActiveAddress()
@@ -292,7 +293,7 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 	}
 
 	if x.remoteIdent == nil {
-		ident, err := NewIdent(
+		ident, err := NewIdentity(
 			cipherset.Keys{x.csid: handshake.PublicKey()},
 			handshake.Parts(),
 			[]transports.Addr{op.src},
@@ -341,15 +342,10 @@ func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
-		pkt     = &lob.Packet{Head: []byte{x.csid}}
 		pktData []byte
 		addrs   []transports.Addr
 		err     error
 	)
-
-	if seq == 0 {
-		seq = x.getNextSeq()
-	}
 
 	if addr != nil {
 		addrs = append(addrs, addr)
@@ -358,17 +354,10 @@ func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 		addrs = x.addressBook.HandshakeAddresses()
 	}
 
-	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
+	pktData, err = x.generateHandshake(seq)
 	if err != nil {
 		return err
 	}
-
-	pktData, err = lob.Encode(pkt)
-	if err != nil {
-		return err
-	}
-
-	x.lastLocalSeq = seq
 
 	for _, addr := range addrs {
 		err := x.transportWriter.WriteMessage(pktData, addr)
@@ -661,6 +650,7 @@ func (x *Exchange) waitDone() {
 	x.mtx.Unlock()
 }
 
+// Open a channel.
 func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	var (
 		c     *Channel
@@ -695,17 +685,58 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	return c, nil
 }
 
+// LocalToken returns the token identifying the local side of the exchange.
 func (x *Exchange) LocalToken() cipherset.Token {
 	return x.cipher.LocalToken()
 }
 
+// RemoteToken returns the token identifying the remote side of the exchange.
 func (x *Exchange) RemoteToken() cipherset.Token {
 	return x.cipher.RemoteToken()
 }
 
+// AddPathCandidate adds a new path tto the exchange. The path is
+// only used when it performs better than any other paths.
 func (x *Exchange) AddPathCandidate(addr transports.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	x.addressBook.AddAddress(addr)
+}
+
+// GenerateHandshake can be used to generate a new handshake packet.
+// This is useful when the exchange doesn't know where to send the handshakes yet.
+func (x *Exchange) GenerateHandshake() ([]byte, error) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	return x.generateHandshake(0)
+}
+
+func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
+	var (
+		pkt     = &lob.Packet{Head: []byte{x.csid}}
+		pktData []byte
+		err     error
+	)
+
+	if seq == 0 {
+		seq = x.getNextSeq()
+	}
+
+	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
+	if err != nil {
+		return nil, err
+	}
+
+	pktData, err = lob.Encode(pkt)
+	if err != nil {
+		return nil, err
+	}
+
+	if x.lastLocalSeq < seq {
+		x.lastLocalSeq = seq
+	}
+
+	return pktData, nil
 }
