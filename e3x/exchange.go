@@ -70,7 +70,6 @@ type Exchange struct {
 	last_local_seq  uint32
 	last_remote_seq uint32
 	next_seq        uint32
-	token           cipherset.Token
 	localIdent      *Ident
 	remoteIdent     *Ident
 	csid            uint8
@@ -114,7 +113,6 @@ func newExchange(
 	localIdent *Ident,
 	remoteIdent *Ident,
 	handshake cipherset.Handshake,
-	token cipherset.Token,
 	transportWriter transportWriter,
 	observers Observers,
 	handlers map[string]Handler,
@@ -182,7 +180,6 @@ func newExchange(
 		}
 
 		x.log = log.To(hn)
-		x.token = token
 		x.cipher = cipher
 		x.csid = csid
 		x.addressBook = newAddressBook(x.log)
@@ -305,7 +302,6 @@ func (x *Exchange) received_handshake(op opRead) bool {
 			return false
 		}
 		x.remoteIdent = ident
-		x.token = cipherset.ExtractToken(op.msg)
 	}
 
 	// tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
@@ -700,12 +696,12 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	return c, nil
 }
 
-func (x *Exchange) SenderToken() cipherset.Token {
-	return x.cipher.SenderToken()
+func (x *Exchange) LocalToken() cipherset.Token {
+	return x.cipher.LocalToken()
 }
 
-func (x *Exchange) ReceiverToken() cipherset.Token {
-	return x.cipher.ReceiverToken()
+func (x *Exchange) RemoteToken() cipherset.Token {
+	return x.cipher.RemoteToken()
 }
 
 func (x *Exchange) AddPathCandidate(addr transports.Addr) {

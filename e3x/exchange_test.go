@@ -48,7 +48,7 @@ func TestBasicExchange(t *testing.T) {
 
 	A.t, B.t = openPipeTransport("A", "B")
 
-	A.x, err = newExchange(A.a, B.a, nil, cipherset.ZeroToken, A.t, observers, nil,
+	A.x, err = newExchange(A.a, B.a, nil, A.t, observers, nil,
 		logs.Module("e3x").From(A.a.Hashname()).To(B.a.Hashname()))
 	assert.NoError(err)
 
@@ -57,7 +57,6 @@ func TestBasicExchange(t *testing.T) {
 	go func() {
 		var (
 			handshake cipherset.Handshake
-			token     cipherset.Token
 			err       error
 			buf       = make([]byte, 64*1024)
 			src       transports.Addr
@@ -74,9 +73,7 @@ func TestBasicExchange(t *testing.T) {
 		assert.Equal(0x3a, buf[2])
 		handshake, err = cipherset.DecryptHandshake(0x3a, B.a.keys[0x3a], buf[3:])
 		if assert.NoError(err) {
-			token = cipherset.ExtractToken(buf)
-
-			B.x, err = newExchange(B.a, nil, handshake, token, B.t, observers, nil,
+			B.x, err = newExchange(B.a, nil, handshake, B.t, observers, nil,
 				logs.Module("e3x").From(B.a.Hashname()).To(A.a.Hashname()))
 			assert.NoError(err)
 

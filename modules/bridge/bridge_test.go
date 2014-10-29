@@ -118,8 +118,8 @@ func TestBridge(t *testing.T) {
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
-	bridge.RouteToken(ABex.SenderToken(), RBex)
-	bridge.RouteToken(ABex.ReceiverToken(), RAex)
+	bridge.RouteToken(ABex.LocalToken(), RAex)
+	bridge.RouteToken(ABex.RemoteToken(), RBex)
 	ABex.AddPathCandidate(BRex.ActivePath())
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
