@@ -12,6 +12,7 @@ import (
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports/inproc"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/logs"
@@ -33,6 +34,7 @@ func with_endpoint(t *testing.T, f func(e *Endpoint)) {
 		tc  = mux.Config{
 			udp.Config{Network: "udp4"},
 			udp.Config{Network: "udp6"},
+			inproc.Config{},
 		}
 	)
 

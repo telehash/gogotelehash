@@ -8,6 +8,7 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
+	"github.com/telehash/gogotelehash/transports/inproc"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/logs"
@@ -28,8 +29,8 @@ func TestSimpleEndpoint(t *testing.T) {
 	kb, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
 
-	ea := New(cipherset.Keys{0x3a: ka}, mux.Config{udp.Config{}})
-	eb := New(cipherset.Keys{0x3a: kb}, mux.Config{udp.Config{}})
+	ea := New(cipherset.Keys{0x3a: ka}, mux.Config{udp.Config{}, inproc.Config{}})
+	eb := New(cipherset.Keys{0x3a: kb}, mux.Config{udp.Config{}, inproc.Config{}})
 
 	registerEventLoggers(ea, t)
 	registerEventLoggers(eb, t)
