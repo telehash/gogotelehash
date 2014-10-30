@@ -49,7 +49,7 @@ func TestBridge(t *testing.T) {
 	}
 
 	A := e3x.New(randomKeys(0x3a), udp.Config{})
-	B := e3x.New(randomKeys(0x3a), fw.Config{udp.Config{}, fw.RuleFunc(blacklistRule)})
+	B := e3x.New(randomKeys(0x3a), fw.Config{Config: udp.Config{}, Rule: fw.RuleFunc(blacklistRule)})
 
 	R := e3x.New(randomKeys(0x3a), udp.Config{})
 	Register(R)

@@ -9,15 +9,20 @@ var (
 	_ Rule = (*negateRule)(nil)
 )
 
+// The RuleFunc type is an adapter to allow the use of ordinary functions as firewall rules.
 type RuleFunc func(p []byte, src transports.Addr) bool
 
+// Match calls r(p, src) and returns its result.
 func (r RuleFunc) Match(p []byte, src transports.Addr) bool {
 	return r(p, src)
 }
 
 var (
+	// None doesn't match any input.
 	None Rule = matchNoneRule("deny all")
-	All  Rule = matchAllRule("allow all")
+
+	// All matches any input.
+	All Rule = matchAllRule("allow all")
 )
 
 type (
@@ -65,6 +70,8 @@ func WhenNone(rules ...Rule) Rule {
 	return Negate(WhenAll(rules...))
 }
 
+// WhenAny returns a Rule that matches when any sub-rule matches.
+// When rules is empty it returns the None rule.
 func WhenAny(rules ...Rule) Rule {
 	if len(rules) == 0 {
 		return None
@@ -84,6 +91,7 @@ func WhenAny(rules ...Rule) Rule {
 	})
 }
 
+// From returns a Rule that matches when the source address equals addr.
 func From(addr transports.Addr) Rule {
 	return RuleFunc(func(p []byte, src transports.Addr) bool {
 		return transports.EqualAddr(src, addr)

@@ -1,4 +1,4 @@
-// Cipher Set 3a implementation.
+// Package cs3a implements Cipher Set 3a.
 //
 // Reference
 //

@@ -26,13 +26,13 @@ type MockExchange struct {
 	mock.Mock
 }
 
-func (m *MockExchange) deliver_packet(pkt *lob.Packet) error {
+func (m *MockExchange) deliverPacket(pkt *lob.Packet) error {
 	args := m.Called(pkt)
 	return args.Error(0)
 }
 
-func (m *MockExchange) unregister_channel(channelId uint32) {
-	m.Called(channelId)
+func (m *MockExchange) unregisterChannel(channelID uint32) {
+	m.Called(channelID)
 }
 
 func (m *MockExchange) RemoteIdent() *Ident {
@@ -167,10 +167,10 @@ func (m mockAddr) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&desc)
 }
 
-func (a mockAddr) Equal(x transports.Addr) bool {
+func (m mockAddr) Equal(x transports.Addr) bool {
 	b, ok := x.(mockAddr)
 	if !ok {
 		return false
 	}
-	return a == b
+	return m == b
 }

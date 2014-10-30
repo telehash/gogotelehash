@@ -66,19 +66,19 @@ type Exchange struct {
 	mtx      sync.Mutex
 	cndState *sync.Cond
 
-	state           ExchangeState
-	last_local_seq  uint32
-	last_remote_seq uint32
-	next_seq        uint32
-	localIdent      *Ident
-	remoteIdent     *Ident
-	csid            uint8
-	cipher          cipherset.State
-	next_channel_id uint32
-	channels        map[uint32]*channelEntry
-	addressBook     *addressBook
-	handlers        map[string]Handler
-	err             error
+	state         ExchangeState
+	lastLocalSeq  uint32
+	lastRemoteSeq uint32
+	nextSeq       uint32
+	localIdent    *Ident
+	remoteIdent   *Ident
+	csid          uint8
+	cipher        cipherset.State
+	nextChannelID uint32
+	channels      map[uint32]*channelEntry
+	addressBook   *addressBook
+	handlers      map[string]Handler
+	err           error
 
 	transportWriter transportWriter
 	observers       Observers
@@ -129,11 +129,11 @@ func newExchange(
 
 	x.cndState = sync.NewCond(&x.mtx)
 
-	x.tBreak = time.AfterFunc(2*60*time.Second, x.on_break)
-	x.tExpire = time.AfterFunc(60*time.Second, x.on_expire)
-	x.tDeliverHandshake = time.AfterFunc(60*time.Second, x.on_deliver_handshake)
-	x.reset_expire()
-	x.reschedule_handshake()
+	x.tBreak = time.AfterFunc(2*60*time.Second, x.onBreak)
+	x.tExpire = time.AfterFunc(60*time.Second, x.onExpire)
+	x.tDeliverHandshake = time.AfterFunc(60*time.Second, x.onDeliverHandshake)
+	x.resetExpire()
+	x.rescheduleHandshake()
 
 	if localIdent == nil {
 		panic("missing local addr")
@@ -194,8 +194,8 @@ func (x *Exchange) dial() error {
 
 	if x.state == 0 {
 		x.state = ExchangeDialing
-		x.deliver_handshake(0, nil)
-		x.reschedule_handshake()
+		x.deliverHandshake(0, nil)
+		x.rescheduleHandshake()
 	}
 
 	for x.state == ExchangeDialing {
@@ -232,15 +232,15 @@ func (x *Exchange) ActivePath() transports.Addr {
 
 func (x *Exchange) received(op opRead) {
 	if len(op.msg) >= 3 && op.msg[1] == 1 {
-		x.received_handshake(op)
+		x.receivedHandshake(op)
 	} else {
-		x.received_packet(op)
+		x.receivedPacket(op)
 	}
 
 	bufpool.PutBuffer(op.msg)
 }
 
-func (x *Exchange) received_handshake(op opRead) bool {
+func (x *Exchange) receivedHandshake(op opRead) bool {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
@@ -276,7 +276,7 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	// tracef("(id=%d) receiving_handshake(%p) seq=%v", x.addressBook.id, x, handshake.At())
 
 	seq = handshake.At()
-	if seq < x.last_remote_seq {
+	if seq < x.lastRemoteSeq {
 		tracef("handshake: invalid (%s)", "seq already seen")
 		return false
 	}
@@ -307,18 +307,18 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	// tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
 
 	if x.isLocalSeq(seq) {
-		x.reset_break()
+		x.resetBreak()
 		x.addressBook.ReceivedHandshake(op.src)
 	} else {
 		x.addressBook.AddAddress(op.src)
-		x.deliver_handshake(seq, op.src)
+		x.deliverHandshake(seq, op.src)
 	}
 
 	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
 		// tracef("(id=%d) opened", x.addressBook.id)
 
 		x.state = ExchangeIdle
-		x.reset_expire()
+		x.resetExpire()
 		x.cndState.Broadcast()
 
 		x.log.Printf("\x1B[32mOpened exchange\x1B[0m")
@@ -328,37 +328,37 @@ func (x *Exchange) received_handshake(op opRead) bool {
 	return true
 }
 
-func (x *Exchange) on_deliver_handshake() {
+func (x *Exchange) onDeliverHandshake() {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	x.reschedule_handshake()
-	x.deliver_handshake(0, nil)
+	x.rescheduleHandshake()
+	x.deliverHandshake(0, nil)
 }
 
-func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
+func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 	// tracef("(id=%d) delivering_handshake(%p, spray=%v, addr=%s)",
 	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
-		pkt     = &lob.Packet{Head: []byte{e.csid}}
+		pkt     = &lob.Packet{Head: []byte{x.csid}}
 		pktData []byte
 		addrs   []transports.Addr
 		err     error
 	)
 
 	if seq == 0 {
-		seq = e.getNextSeq()
+		seq = x.getNextSeq()
 	}
 
 	if addr != nil {
 		addrs = append(addrs, addr)
 	} else {
-		e.addressBook.NextHandshakeEpoch()
-		addrs = e.addressBook.HandshakeAddresses()
+		x.addressBook.NextHandshakeEpoch()
+		addrs = x.addressBook.HandshakeAddresses()
 	}
 
-	pkt.Body, err = e.cipher.EncryptHandshake(seq, e.localIdent.parts)
+	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
 	if err != nil {
 		return err
 	}
@@ -368,39 +368,39 @@ func (e *Exchange) deliver_handshake(seq uint32, addr transports.Addr) error {
 		return err
 	}
 
-	e.last_local_seq = seq
+	x.lastLocalSeq = seq
 
 	for _, addr := range addrs {
-		err := e.transportWriter.WriteMessage(pktData, addr)
+		err := x.transportWriter.WriteMessage(pktData, addr)
 		if err == nil {
-			e.addressBook.SentHandshake(addr)
+			x.addressBook.SentHandshake(addr)
 		}
 	}
 
 	return nil
 }
 
-func (e *Exchange) reschedule_handshake() {
-	if e.nextHandshake <= 0 {
-		e.nextHandshake = 4
+func (x *Exchange) rescheduleHandshake() {
+	if x.nextHandshake <= 0 {
+		x.nextHandshake = 4
 	} else {
-		e.nextHandshake = e.nextHandshake * 2
+		x.nextHandshake = x.nextHandshake * 2
 	}
 
-	if e.nextHandshake > 60 {
-		e.nextHandshake = 60
+	if x.nextHandshake > 60 {
+		x.nextHandshake = 60
 	}
 
-	if n := e.nextHandshake / 3; n > 0 {
-		e.nextHandshake -= rand.Intn(n)
+	if n := x.nextHandshake / 3; n > 0 {
+		x.nextHandshake -= rand.Intn(n)
 	}
 
-	var d = time.Duration(e.nextHandshake) * time.Second
-	// tracef("(id=%d) reschedule_handshake(%s)", e.addressBook.id, d)
-	e.tDeliverHandshake.Reset(d)
+	var d = time.Duration(x.nextHandshake) * time.Second
+	// tracef("(id=%d) reschedule_handshake(%s)",x.addressBook.id, d)
+	x.tDeliverHandshake.Reset(d)
 }
 
-func (x *Exchange) received_packet(op opRead) {
+func (x *Exchange) receivedPacket(op opRead) {
 	pkt, err := lob.Decode(op.msg)
 	if err != nil {
 		return // drop
@@ -462,7 +462,7 @@ func (x *Exchange) received_packet(op opRead) {
 			entry = &channelEntry{c}
 
 			x.channels[c.id] = entry
-			x.reset_expire()
+			x.resetExpire()
 
 			x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, cid)
 			x.observers.Trigger(&ChannelOpenedEvent{c})
@@ -472,10 +472,10 @@ func (x *Exchange) received_packet(op opRead) {
 		x.mtx.Unlock()
 	}
 
-	entry.c.received_packet(pkt)
+	entry.c.receivedPacket(pkt)
 }
 
-func (x *Exchange) deliver_packet(pkt *lob.Packet) error {
+func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
 	x.mtx.Lock()
 	for x.state == ExchangeDialing {
 		x.cndState.Wait()
@@ -525,29 +525,29 @@ func (x *Exchange) expire(err error) {
 	x.mtx.Unlock()
 
 	for _, e := range x.channels {
-		e.c.on_close_deadline_reached()
+		e.c.onCloseDeadlineReached()
 	}
 
 	x.log.Printf("\x1B[31mClosed exchange\x1B[0m")
 	x.observers.Trigger(&ExchangeClosedEvent{x, err})
 }
 
-func (e *Exchange) getNextSeq() uint32 {
-	seq := e.next_seq
+func (x *Exchange) getNextSeq() uint32 {
+	seq := x.nextSeq
 	if n := uint32(time.Now().Unix()); seq < n {
 		seq = n
 	}
-	if seq < e.last_local_seq {
-		seq = e.last_local_seq + 1
+	if seq < x.lastLocalSeq {
+		seq = x.lastLocalSeq + 1
 	}
-	if seq < e.last_remote_seq {
-		seq = e.last_remote_seq + 1
+	if seq < x.lastRemoteSeq {
+		seq = x.lastRemoteSeq + 1
 	}
 	if seq == 0 {
 		seq++
 	}
 
-	if e.cipher.IsHigh() {
+	if x.cipher.IsHigh() {
 		// must be odd
 		if seq%2 == 0 {
 			seq++
@@ -559,7 +559,7 @@ func (e *Exchange) getNextSeq() uint32 {
 		}
 	}
 
-	e.next_seq = seq + 2
+	x.nextSeq = seq + 2
 	return seq
 }
 
@@ -567,27 +567,26 @@ func (x *Exchange) isLocalSeq(seq uint32) bool {
 	if x.cipher.IsHigh() {
 		// must be odd
 		return seq%2 == 1
-	} else {
-		// must be even
-		return seq%2 == 0
 	}
+	// must be even
+	return seq%2 == 0
 }
 
-func (x *Exchange) on_expire() {
+func (x *Exchange) onExpire() {
 	if x == nil {
 		return
 	}
 	x.expire(nil)
 }
 
-func (x *Exchange) on_break() {
+func (x *Exchange) onBreak() {
 	if x == nil {
 		return
 	}
 	x.expire(BrokenExchangeError(x.remoteIdent.Hashname()))
 }
 
-func (x *Exchange) reset_expire() {
+func (x *Exchange) resetExpire() {
 	active := len(x.channels) > 0
 
 	if active {
@@ -611,17 +610,17 @@ func (x *Exchange) reset_expire() {
 	}
 }
 
-func (x *Exchange) reset_break() {
+func (x *Exchange) resetBreak() {
 	x.tBreak.Reset(2 * 60 * time.Second)
 }
 
-func (x *Exchange) unregister_channel(channelId uint32) {
+func (x *Exchange) unregisterChannel(channelID uint32) {
 	x.mtx.Lock()
 
-	entry := x.channels[channelId]
+	entry := x.channels[channelID]
 	if entry != nil {
-		delete(x.channels, channelId)
-		x.reset_expire()
+		delete(x.channels, channelID)
+		x.resetExpire()
 
 		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", entry.c.typ, entry.c.id)
 		x.observers.Trigger(&ChannelClosedEvent{entry.c})
@@ -630,8 +629,8 @@ func (x *Exchange) unregister_channel(channelId uint32) {
 	x.mtx.Unlock()
 }
 
-func (x *Exchange) nextChannelId() uint32 {
-	id := x.next_channel_id
+func (x *Exchange) getNextChannelID() uint32 {
+	id := x.nextChannelID
 
 	if id == 0 {
 		// zero is not valid
@@ -650,7 +649,7 @@ func (x *Exchange) nextChannelId() uint32 {
 		}
 	}
 
-	x.next_channel_id = id + 2
+	x.nextChannelID = id + 2
 	return id
 }
 
@@ -685,10 +684,10 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 		return nil, BrokenExchangeError(x.remoteIdent.Hashname())
 	}
 
-	c.id = x.nextChannelId()
+	c.id = x.getNextChannelID()
 	entry = &channelEntry{c}
 	x.channels[c.id] = entry
-	x.reset_expire()
+	x.resetExpire()
 	x.mtx.Unlock()
 
 	x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, c.id)

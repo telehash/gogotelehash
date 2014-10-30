@@ -106,10 +106,10 @@ func (p Parts) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (p Keys) MarshalJSON() ([]byte, error) {
-	m := make(map[string]string, len(p))
-	for k, v := range p {
-		m[hex.EncodeToString([]byte{k})] = v.String()
+func (k Keys) MarshalJSON() ([]byte, error) {
+	m := make(map[string]string, len(k))
+	for csid, v := range k {
+		m[hex.EncodeToString([]byte{csid})] = v.String()
 	}
 	return json.Marshal(m)
 }
@@ -168,7 +168,7 @@ func (p PrivateKeys) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
-func (k *PrivateKeys) UnmarshalJSON(data []byte) error {
+func (p *PrivateKeys) UnmarshalJSON(data []byte) error {
 	type pair struct {
 		Pub string `json:"pub,omitempty"`
 		Prv string `json:"prv,omitempty"`
@@ -184,22 +184,22 @@ func (k *PrivateKeys) UnmarshalJSON(data []byte) error {
 	}
 
 	y := make(PrivateKeys, len(x))
-	*k = y
-	for k, p := range x {
-		if len(k) != 2 {
+	*p = y
+	for csidHex, pair := range x {
+		if len(csidHex) != 2 {
 			return ErrInvalidKeys
 		}
 
-		if p.Pub == "" {
+		if pair.Pub == "" {
 			return ErrInvalidKeys
 		}
 
-		csid, err := hex.DecodeString(k)
+		csid, err := hex.DecodeString(csidHex)
 		if err != nil {
 			return ErrInvalidKeys
 		}
 
-		key, err := DecodeKey(csid[0], p.Pub, p.Prv)
+		key, err := DecodeKey(csid[0], pair.Pub, pair.Prv)
 		if err != nil {
 			return err
 		}
@@ -252,9 +252,9 @@ func (p Parts) ApplyToHeader(h lob.Header) {
 	}
 }
 
-func (p Keys) ApplyToHeader(h lob.Header) {
-	for k, v := range p {
-		h.Set(hex.EncodeToString([]byte{k}), v.String())
+func (k Keys) ApplyToHeader(h lob.Header) {
+	for csid, v := range k {
+		h.Set(hex.EncodeToString([]byte{csid}), v.String())
 	}
 }
 

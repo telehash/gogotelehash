@@ -1,4 +1,4 @@
-// UDP transport implementation.
+// Package udp implements the UDP transport.
 //
 // The UDP transport is NAT-able.
 package udp
@@ -23,7 +23,7 @@ func init() {
 //   e3x.New(keys, udp.Config{})
 type Config struct {
 	// Can be set to UDPv4, UDPv6 or can be left blank.
-	// The zero valu will bind the transport to both UDPv4 and UDPv6
+	// Defaults to UDPv4
 	Network string
 
 	// Can be set to an address and/or port.
@@ -58,7 +58,9 @@ var (
 )
 
 const (
+	// UDPv4 is used for IPv4 UDP networks
 	UDPv4 = "udp4"
+	// UDPv6 is used for IPv6 UDP networks
 	UDPv6 = "udp6"
 )
 

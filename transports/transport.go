@@ -1,4 +1,4 @@
-// Generic interfaces for implementing telehash transports
+// Package transports implements Generic interfaces for telehash transports
 //
 // Transports must implement the Config and Transport interfaces. Endpoints
 // are responsible for actually managing the transports.
@@ -10,7 +10,11 @@ import (
 	"errors"
 )
 
+// ErrClosed is returned by a transport when it is not open.
 var ErrClosed = errors.New("use of closed network connection")
+
+// ErrInvalidAddr is returned by a transport when the provided address cannot be
+// handled by the transport.
 var ErrInvalidAddr = errors.New("transports: invalid address")
 
 // Config must be implemented by transport packages

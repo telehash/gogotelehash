@@ -31,7 +31,7 @@ func discoverUPNP_IG1() <-chan NAT {
 			dev.Root.Device.VisitServices(func(srv *goupnp.Service) {
 				switch srv.ServiceType {
 				case internetgateway1.URN_WANIPConnection_1:
-					client := &internetgateway1.WANIPConnection1{goupnp.ServiceClient{
+					client := &internetgateway1.WANIPConnection1{ServiceClient: goupnp.ServiceClient{
 						SOAPClient: srv.NewSOAPClient(),
 						RootDevice: dev.Root,
 						Service:    srv,
@@ -43,7 +43,7 @@ func discoverUPNP_IG1() <-chan NAT {
 					}
 
 				case internetgateway1.URN_WANPPPConnection_1:
-					client := &internetgateway1.WANPPPConnection1{goupnp.ServiceClient{
+					client := &internetgateway1.WANPPPConnection1{ServiceClient: goupnp.ServiceClient{
 						SOAPClient: srv.NewSOAPClient(),
 						RootDevice: dev.Root,
 						Service:    srv,
@@ -80,7 +80,7 @@ func discoverUPNP_IG2() <-chan NAT {
 			dev.Root.Device.VisitServices(func(srv *goupnp.Service) {
 				switch srv.ServiceType {
 				case internetgateway2.URN_WANIPConnection_1:
-					client := &internetgateway2.WANIPConnection1{goupnp.ServiceClient{
+					client := &internetgateway2.WANIPConnection1{ServiceClient: goupnp.ServiceClient{
 						SOAPClient: srv.NewSOAPClient(),
 						RootDevice: dev.Root,
 						Service:    srv,
@@ -92,7 +92,7 @@ func discoverUPNP_IG2() <-chan NAT {
 					}
 
 				case internetgateway2.URN_WANIPConnection_2:
-					client := &internetgateway2.WANIPConnection2{goupnp.ServiceClient{
+					client := &internetgateway2.WANIPConnection2{ServiceClient: goupnp.ServiceClient{
 						SOAPClient: srv.NewSOAPClient(),
 						RootDevice: dev.Root,
 						Service:    srv,
@@ -104,7 +104,7 @@ func discoverUPNP_IG2() <-chan NAT {
 					}
 
 				case internetgateway2.URN_WANPPPConnection_1:
-					client := &internetgateway2.WANPPPConnection1{goupnp.ServiceClient{
+					client := &internetgateway2.WANPPPConnection1{ServiceClient: goupnp.ServiceClient{
 						SOAPClient: srv.NewSOAPClient(),
 						RootDevice: dev.Root,
 						Service:    srv,

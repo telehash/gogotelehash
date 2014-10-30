@@ -147,8 +147,6 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 
 		// continue reading messages
 	}
-
-	panic("unreachable")
 }
 
 func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {

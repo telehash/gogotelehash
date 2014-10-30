@@ -28,6 +28,6 @@ func (mod *modTransports) Init() error  { return nil }
 func (mod *modTransports) Start() error { return nil }
 func (mod *modTransports) Stop() error  { return nil }
 
-func (m *modTransports) Wrap(f func(transports.Config) transports.Config) {
-	m.e.transportConfig = f(m.e.transportConfig)
+func (mod *modTransports) Wrap(f func(transports.Config) transports.Config) {
+	mod.e.transportConfig = f(mod.e.transportConfig)
 }

@@ -1,4 +1,4 @@
-// Hashname
+// Package hashname provides the Hashname type and its derivation functions.
 //
 // See: https://github.com/telehash/telehash.org/tree/558332cd82dec3b619d194d42b3d16618f077e0f/v3/hashname
 package hashname
@@ -12,13 +12,22 @@ import (
 	"github.com/telehash/gogotelehash/util/base32util"
 )
 
+// ErrNoIntermediateParts is returned when deriving a Hashname
 var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")
+
+// ErrInvalidIntermediatePart is returned when deriving a Hashname
 var ErrInvalidIntermediatePart = errors.New("hashname: invalid intermediate part")
-var ErrInvalidIntermediatePartId = errors.New("hashname: invalid intermediate part id")
+
+// ErrInvalidIntermediatePartID is returned when deriving a Hashname
+var ErrInvalidIntermediatePartID = errors.New("hashname: invalid intermediate part id")
+
+// ErrInvalidKey is returned when deriving a Hashname
 var ErrInvalidKey = errors.New("hashname: invalid key")
 
+// H represents a hashname.
 type H string
 
+// FromIntermediates derives a hashname from its intermediate parts.
 func FromIntermediates(parts cipherset.Parts) (H, error) {
 	if len(parts) == 0 {
 		return "", ErrNoIntermediateParts
@@ -63,6 +72,7 @@ func FromIntermediates(parts cipherset.Parts) (H, error) {
 	return H(base32util.EncodeToString(buf[:32])), nil
 }
 
+// FromKeys derives a hashname from its public keys.
 func FromKeys(keys cipherset.Keys) (H, error) {
 	var (
 		hash          = sha256.New()
@@ -81,6 +91,7 @@ func FromKeys(keys cipherset.Keys) (H, error) {
 	return FromIntermediates(intermediates)
 }
 
+// PartsFromKeys derives the intermediate parts from their respectve public keys.
 func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
 	var (
 		hash          = sha256.New()
@@ -99,6 +110,7 @@ func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
 	return intermediates
 }
 
+// FromKeyAndIntermediates derives a hasname from a public key and some intermediate parts.
 func FromKeyAndIntermediates(id uint8, key []byte, intermediates cipherset.Parts) (H, error) {
 	var (
 		all          = make(cipherset.Parts, len(intermediates)+1)
@@ -112,8 +124,4 @@ func FromKeyAndIntermediates(id uint8, key []byte, intermediates cipherset.Parts
 	all[id] = intermediate
 
 	return FromIntermediates(all)
-}
-
-func (h H) Less(b H) bool {
-	return h < b
 }
