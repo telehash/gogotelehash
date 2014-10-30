@@ -73,14 +73,14 @@ func TestBasicUnrealiable(t *testing.T) {
 		pkt = &lob.Packet{Body: []byte("ping")}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetString("type", "ping")
-		x.On("deliver_packet", pkt).Return(nil)
+		x.On("deliverPacket", pkt).Return(nil)
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetBool("end", true)
-		x.On("deliver_packet", pkt).Return(nil)
+		x.On("deliverPacket", pkt).Return(nil)
 
-		x.On("unregister_channel", uint32(0)).Return().Once()
+		x.On("unregisterChannel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(
@@ -126,32 +126,32 @@ func TestBasicRealiable(t *testing.T) {
 		pkt.Header().SetString("type", "ping")
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("seq", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 0)
 		pkt.Header().SetUint32Slice("miss", []uint32{1})
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 1)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("seq", 1)
 		pkt.Header().SetBool("end", true)
 		pkt.Header().SetInt("ack", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
-		x.On("unregister_channel", uint32(0)).Return().Once()
+		x.On("unregisterChannel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(
