@@ -1,9 +1,13 @@
 package e3x
 
+// Forgetter exposes the ForgetChannel method
 type Forgetter interface {
+	// ForgetChannel makes the endpoint drop this channel.
+	// This method is ment to be used only when you know what you are doing.
 	ForgetChannel(ch *Channel)
 }
 
+// ForgetterFromEndpoint returns the Forgetter module for Endpoint.
 func ForgetterFromEndpoint(e *Endpoint) Forgetter {
 	mod := e.Module(modForgetterKey)
 	if mod == nil {

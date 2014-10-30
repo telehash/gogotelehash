@@ -12,9 +12,12 @@ type Observers interface {
 	// Where T is a observable event.
 	Register(f interface{})
 
+	// Trigger an event.
+	// Only use this module when you know what you are doeing.
 	Trigger(event interface{})
 }
 
+// ObserversFromEndpoint returns the Observers module for Endpoint.
 func ObserversFromEndpoint(e *Endpoint) Observers {
 	mod := e.Module(modObserversKey)
 	if mod == nil {

@@ -4,10 +4,15 @@ import (
 	"github.com/telehash/gogotelehash/transports"
 )
 
+// Transports exposes the Wrap method
 type Transports interface {
-	Wrap(func(transports.Config) transports.Config)
+	// Wrap must be called durring a Module.Init call. The existing endpoint
+	// transport will be passed to and a valid transport must be returned.
+	// Only use this module when you know what you are doeing.
+	Wrap(f func(transports.Config) transports.Config)
 }
 
+// TransportsFromEndpoint returns the Transports module for Endpoint.
 func TransportsFromEndpoint(e *Endpoint) Transports {
 	mod := e.Module(modTransportsKey)
 	if mod == nil {

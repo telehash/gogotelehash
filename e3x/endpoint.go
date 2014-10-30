@@ -107,6 +107,7 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	return e
 }
 
+// AddHandler registers a channel handler.
 func (e *Endpoint) AddHandler(typ string, h Handler) {
 	e.handlers[typ] = h
 }
