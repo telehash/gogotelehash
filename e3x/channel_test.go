@@ -125,18 +125,7 @@ func TestBasicRealiable(t *testing.T) {
 		pkt = &lob.Packet{Body: []byte("ping")}
 		pkt.Header().SetString("type", "ping")
 		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("seq", 0)
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("ack", 0)
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("ack", 0)
-		pkt.Header().SetUint32Slice("miss", []uint32{1})
+		pkt.Header().SetInt("seq", 1)
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
@@ -146,9 +135,20 @@ func TestBasicRealiable(t *testing.T) {
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("seq", 1)
+		pkt.Header().SetInt("ack", 1)
+		pkt.Header().SetUint32Slice("miss", []uint32{1})
+		x.On("deliverPacket", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("ack", 2)
+		x.On("deliverPacket", pkt).Return(nil).Once()
+
+		pkt = &lob.Packet{}
+		pkt.Header().SetInt("c", 0)
+		pkt.Header().SetInt("seq", 2)
 		pkt.Header().SetBool("end", true)
-		pkt.Header().SetInt("ack", 0)
+		pkt.Header().SetInt("ack", 1)
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		x.On("unregisterChannel", uint32(0)).Return().Once()
@@ -163,8 +163,8 @@ func TestBasicRealiable(t *testing.T) {
 	assert.NoError(err)
 
 	pkt = &lob.Packet{Body: []byte("pong")}
-	pkt.Header().SetUint32("seq", 0)
-	pkt.Header().SetUint32("ack", 0)
+	pkt.Header().SetUint32("seq", 1)
+	pkt.Header().SetUint32("ack", 1)
 	c.receivedPacket(pkt)
 
 	pkt, err = c.ReadPacket()
@@ -178,8 +178,8 @@ func TestBasicRealiable(t *testing.T) {
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetBool("end", true)
-		pkt.Header().SetUint32("seq", 1)
-		pkt.Header().SetUint32("ack", 1)
+		pkt.Header().SetUint32("seq", 2)
+		pkt.Header().SetUint32("ack", 2)
 		c.receivedPacket(pkt)
 	}()
 

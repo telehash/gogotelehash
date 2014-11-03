@@ -33,6 +33,8 @@ func (err *BrokenChannelError) Error() string {
 const (
 	cReadBufferSize  = 100
 	cWriteBufferSize = 100
+	cBlankSeq        = uint32(0)
+	cInitialSeq      = uint32(1)
 )
 
 type Channel struct {
@@ -49,12 +51,12 @@ type Channel struct {
 	reliable   bool
 	broken     bool
 
-	oSeq         int // highest seq in write stream
-	iBufferedSeq int // highest buffered seq in read stream
-	iSeenSeq     int // highest seen seq in read stream
-	iSeq         int // highest seq in read stream
-	oAckedSeq    int // highest acked seq in write stream
-	iAckedSeq    int // highest acked seq in read stream
+	oSeq         uint32 // highest seq in write stream
+	iBufferedSeq uint32 // highest buffered seq in read stream
+	iSeenSeq     uint32 // highest seen seq in read stream
+	iSeq         uint32 // highest seq in read stream
+	oAckedSeq    uint32 // highest acked seq in write stream
+	iAckedSeq    uint32 // highest acked seq in read stream
 
 	deliveredEnd bool
 	receivedEnd  bool
@@ -106,12 +108,12 @@ func newChannel(
 		serverside:   serverside,
 		readBuffer:   make(map[uint32]*readBufferEntry, cReadBufferSize),
 		writeBuffer:  make(map[uint32]*writeBufferEntry, cWriteBufferSize),
-		oSeq:         -1,
-		iBufferedSeq: -1,
-		iSeenSeq:     -1,
-		iSeq:         -1,
-		oAckedSeq:    -1,
-		iAckedSeq:    -1,
+		oSeq:         cBlankSeq,
+		iBufferedSeq: cBlankSeq,
+		iSeenSeq:     cBlankSeq,
+		iSeq:         cBlankSeq,
+		oAckedSeq:    cBlankSeq,
+		iAckedSeq:    cBlankSeq,
 	}
 
 	c.cndRead = sync.NewCond(&c.mtx)
@@ -173,14 +175,14 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 }
 
 func (c *Channel) blockWrite() bool {
-	if c.serverside && c.iSeq == -1 {
+	if c.serverside && c.iSeq == cBlankSeq {
 		// tracef("WritePacket() => opening")
 		// When a server channel did not (yet) read an initial packet
 		// then all writes must be deferred.
 		return true
 	}
 
-	if !c.serverside && c.iSeq == -1 && c.oSeq >= 0 {
+	if !c.serverside && c.iSeq == cBlankSeq && c.oSeq >= cInitialSeq {
 		// tracef("WritePacket() => opening")
 		// When a client channel sent a packet but did not yet read a response
 		// to the initial packet then subsequent writes must be deferred.
@@ -222,9 +224,9 @@ func (c *Channel) write(pkt *lob.Packet) error {
 	c.oSeq++
 	pkt.Header().SetUint32("c", c.id)
 	if c.reliable {
-		pkt.Header().SetUint32("seq", uint32(c.oSeq))
+		pkt.Header().SetUint32("seq", c.oSeq)
 	}
-	if !c.serverside && c.oSeq == 0 {
+	if !c.serverside && c.oSeq == cInitialSeq {
 		pkt.Header().SetString("type", c.typ)
 	}
 
@@ -236,7 +238,7 @@ func (c *Channel) write(pkt *lob.Packet) error {
 
 	if c.reliable {
 		c.applyAckHeaders(pkt)
-		c.writeBuffer[uint32(c.oSeq)] = &writeBufferEntry{pkt, end, time.Time{}}
+		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}}
 
 		if c.tResend == nil {
 			c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
@@ -250,7 +252,7 @@ func (c *Channel) write(pkt *lob.Packet) error {
 		return err
 	}
 
-	if c.oSeq == 0 && c.serverside {
+	if c.oSeq == cInitialSeq && c.serverside {
 		c.unsetOpenDeadline()
 	}
 
@@ -298,21 +300,21 @@ func (c *Channel) blockRead() bool {
 		return false
 	}
 
-	if c.serverside && c.oSeq == -1 && c.iSeq >= 0 {
+	if c.serverside && c.oSeq == cBlankSeq && c.iSeq >= cInitialSeq {
 		// tracef("server.ReadPacket() => opening")
 		// When a server channel read a packet but did not yet respond
 		// to the initial packet then subsequent reads must be deferred.
 		return true
 	}
 
-	if !c.serverside && c.oSeq == -1 {
+	if !c.serverside && c.oSeq == cBlankSeq {
 		// tracef("client.ReadPacket() => opening")
 		// When a client channel did not (yet) send an initial packet
 		// then all reads must be deferred.
 		return true
 	}
 
-	rSeq := uint32(c.iSeq + 1)
+	rSeq := c.iSeq + 1
 	if c.readBuffer[rSeq] == nil {
 		// tracef("ReadPacket() => blocking")
 		// Packet has not yet been received
@@ -345,7 +347,7 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		return nil, io.EOF
 	}
 
-	rSeq := uint32(c.iSeq + 1)
+	rSeq := c.iSeq + 1
 	e := c.readBuffer[rSeq]
 
 	{ // clean headers
@@ -368,10 +370,10 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 }
 
 func (c *Channel) readPacket() {
-	rSeq := uint32(c.iSeq + 1)
+	rSeq := c.iSeq + 1
 	e := c.readBuffer[rSeq]
 
-	c.iSeq = int(rSeq)
+	c.iSeq = rSeq
 	delete(c.readBuffer, rSeq)
 
 	if e.end {
@@ -379,7 +381,7 @@ func (c *Channel) readPacket() {
 		c.readEnd = true
 	}
 
-	if c.iSeq == 0 && !c.serverside {
+	if c.iSeq == cInitialSeq && !c.serverside {
 		c.unsetOpenDeadline()
 	}
 
@@ -413,7 +415,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 	if !c.reliable {
 		// unreliable channels (internaly) emulate reliable channels.
-		seq = uint32(c.iBufferedSeq + 1)
+		seq = c.iBufferedSeq + 1
 		hasSeq = true
 
 	} else {
@@ -424,14 +426,14 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 				changed bool
 			)
 
-			if c.oAckedSeq < int(ack) {
-				c.oAckedSeq = int(ack)
+			if c.oAckedSeq < ack {
+				c.oAckedSeq = ack
 				changed = true
 			}
 
-			for i := oldAck + 1; i <= int(ack); i++ {
+			for i := oldAck + 1; i <= ack; i++ {
 				// tracef("W-BUF->DEL(%d)", i)
-				delete(c.writeBuffer, uint32(i))
+				delete(c.writeBuffer, i)
 				changed = true
 			}
 
@@ -459,12 +461,12 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		return
 	}
 
-	if c.reliable && c.iSeenSeq < int(seq) {
+	if c.reliable && c.iSeenSeq < seq {
 		// record highest seen seq
-		c.iSeenSeq = int(seq)
+		c.iSeenSeq = seq
 	}
 
-	if int(seq) <= c.iSeq {
+	if seq <= c.iSeq {
 		// tracef("ReceivePacket() => drop // seq is already read")
 		// drop: the reader already read a packet with this seq
 		c.mtx.Unlock()
@@ -485,8 +487,8 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		return
 	}
 
-	if c.iBufferedSeq < int(seq) {
-		c.iBufferedSeq = int(seq)
+	if c.iBufferedSeq < seq {
+		c.iBufferedSeq = seq
 	}
 	if end && hasEnd {
 		c.receivedEnd = true
@@ -640,8 +642,8 @@ func (c *Channel) buildMissList() []uint32 {
 		last = c.iSeq
 	)
 	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
-		if _, p := c.readBuffer[uint32(i)]; !p {
-			miss = append(miss, uint32(i-last))
+		if _, p := c.readBuffer[i]; !p {
+			miss = append(miss, i-last)
 			last = i
 		}
 	}
@@ -674,8 +676,8 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 		}
 
 		// tracef("MISS->SND(%d)", seq)
-		if c.iSeq >= 0 {
-			e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+		if c.iSeq >= cInitialSeq {
+			e.pkt.Header().SetUint32("ack", c.iSeq)
 		}
 		if len(omiss) > 0 {
 			e.pkt.Header().SetUint32Slice("miss", omiss)
@@ -690,14 +692,14 @@ func (c *Channel) resendLastPacket() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
-	e := c.writeBuffer[uint32(c.oSeq)]
+	e := c.writeBuffer[c.oSeq]
 	if e == nil {
 		return
 	}
 
 	omiss := c.buildMissList()
-	if c.iSeq >= 0 {
-		e.pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	if c.iSeq >= cInitialSeq {
+		e.pkt.Header().SetUint32("ack", c.iSeq)
 	}
 	if len(omiss) > 0 {
 		e.pkt.Header().SetUint32Slice("miss", omiss)
@@ -717,7 +719,7 @@ func (c *Channel) maybeDeliverAck() {
 		return
 	}
 
-	if c.iSeq < 0 {
+	if c.iSeq < cInitialSeq {
 		return // nothing to ack
 	}
 
@@ -751,13 +753,13 @@ func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
 		return
 	}
 
-	if c.iSeq == -1 {
+	if c.iSeq == cBlankSeq {
 		// nothin to ack
 		return
 	}
 
-	if c.iSeq >= 0 {
-		pkt.Header().SetUint32("ack", uint32(c.iSeq))
+	if c.iSeq >= cInitialSeq {
+		pkt.Header().SetUint32("ack", c.iSeq)
 	}
 	if l := c.buildMissList(); len(l) > 0 {
 		pkt.Header().SetUint32Slice("miss", c.buildMissList())
