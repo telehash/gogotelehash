@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	c_MAX_ADDRESS_BOOK_ENTRIES = 16
+	cMaxAddressBookEntries = 16
 )
 
 type addressBook struct {
@@ -27,9 +27,9 @@ type addressBookEntry struct {
 	Reachable   bool
 	GotResponse bool
 
-	latency      time.Duration
-	samples      [16]time.Duration
-	sample_count int
+	latency     time.Duration
+	samples     [16]time.Duration
+	sampleCount int
 }
 
 func newAddressBook(log *logs.Logger) *addressBook {
@@ -159,8 +159,8 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 func (book *addressBook) updateActive() {
 	sort.Sort(sortedAddressBookEntries(book.known))
 
-	if len(book.known) > c_MAX_ADDRESS_BOOK_ENTRIES {
-		book.known = book.known[:c_MAX_ADDRESS_BOOK_ENTRIES]
+	if len(book.known) > cMaxAddressBookEntries {
+		book.known = book.known[:cMaxAddressBookEntries]
 	}
 
 	var oldActive = book.active
@@ -192,9 +192,9 @@ func (a *addressBookEntry) String() string {
 }
 
 func (a *addressBookEntry) AddLatencySample(d time.Duration) {
-	idx := a.sample_count % 16
+	idx := a.sampleCount % 16
 	a.samples[idx] = d
-	a.sample_count++
+	a.sampleCount++
 	a.latency = 0
 	for _, d := range a.samples {
 		a.latency += d

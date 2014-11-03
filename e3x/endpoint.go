@@ -13,21 +13,22 @@ import (
 	"github.com/telehash/gogotelehash/util/logs"
 )
 
-type EndpointState uint8
+type endpointState uint8
 
 const (
-	UnknownEndpointState EndpointState = iota
-	RunningEndpointState
-	TerminatedEndpointState
-	BrokenEndpointState
+	endpointStateUnknown endpointState = iota
+	endpointStateRunning
+	endpointStateTerminated
+	endpointStateBroken
 )
 
 var errDeferred = errors.New("e3x: deferred operation")
 
+// Endpoint represents a Telehash endpoint.
 type Endpoint struct {
 	stateMtx sync.Mutex
 	wg       sync.WaitGroup
-	state    EndpointState
+	state    endpointState
 	err      error
 
 	hashname        hashname.H
@@ -97,7 +98,7 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	e.log = logs.Module("e3x").From(e.hashname)
 
 	observers := &modObservers{}
-	observers.Register(e.on_exchange_closed)
+	observers.Register(e.onExchangeClosed)
 
 	e.Use(modObserversKey, observers)
 	e.Use(modForgetterKey, &modForgetter{e})
@@ -106,6 +107,7 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	return e
 }
 
+// AddHandler registers a channel handler.
 func (e *Endpoint) AddHandler(typ string, h Handler) {
 	e.handlers[typ] = h
 }
@@ -132,11 +134,11 @@ func (e *Endpoint) Start() error {
 }
 
 func (e *Endpoint) start() error {
-	if e.state == BrokenEndpointState {
+	if e.state == endpointStateBroken {
 		return e.err
 	}
 
-	if e.state != UnknownEndpointState {
+	if e.state != endpointStateUnknown {
 		panic("e3x: Endpoint cannot be started more than once")
 	}
 
@@ -199,10 +201,10 @@ func (e *Endpoint) stop() error {
 		close(e.cTerminate)
 	}
 
-	if e.state == RunningEndpointState {
-		e.state = TerminatedEndpointState
+	if e.state == endpointStateRunning {
+		e.state = endpointStateTerminated
 	} else {
-		e.state = BrokenEndpointState
+		e.state = endpointStateBroken
 	}
 
 	e.wg.Wait()
@@ -218,10 +220,10 @@ func (e *Endpoint) run() {
 
 		case <-e.cTerminate:
 			for _, e := range e.hashnames {
-				e.x.on_break()
+				e.x.onBreak()
 			}
 			for _, e := range e.tokens {
-				e.x.on_break()
+				e.x.onBreak()
 			}
 			e.transport.Close() //TODO handle err
 			return
@@ -250,7 +252,7 @@ func (e *Endpoint) runReader() {
 	}
 }
 
-func (e *Endpoint) on_exchange_closed(event *ExchangeClosedEvent) {
+func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 
 	entry := e.hashnames[event.Exchange.remoteIdent.Hashname()]
 	if entry != nil {
@@ -262,18 +264,18 @@ func (e *Endpoint) on_exchange_closed(event *ExchangeClosedEvent) {
 
 func (e *Endpoint) received(op opRead) {
 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
-		e.received_handshake(op)
+		e.receivedHandshake(op)
 		return
 	}
 
 	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
-		e.received_packet(op)
+		e.receivedPacket(op)
 	}
 
 	// drop
 }
 
-func (e *Endpoint) received_handshake(op opRead) {
+func (e *Endpoint) receivedHandshake(op opRead) {
 	var (
 		entry      *exchangeEntry
 		x          *Exchange
@@ -345,7 +347,7 @@ func (e *Endpoint) received_handshake(op opRead) {
 	// tracef("received_handshake() => done %x", token)
 }
 
-func (e *Endpoint) received_packet(op opRead) {
+func (e *Endpoint) receivedPacket(op opRead) {
 	var (
 		token = cipherset.ExtractToken(op.msg)
 	)
@@ -426,7 +428,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 func (e *Endpoint) Use(key interface{}, mod Module) {
 	e.stateMtx.Lock()
 	defer e.stateMtx.Unlock()
-	if e.state != UnknownEndpointState {
+	if e.state != endpointStateUnknown {
 		panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
 	}
 	if _, found := e.modules[key]; found {

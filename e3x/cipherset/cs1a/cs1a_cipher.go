@@ -1,4 +1,4 @@
-// Cipher Set 1a implementation.
+// Package cs1a implements Cipher Set 1a.
 package cs1a
 
 import (
@@ -47,9 +47,9 @@ func (h *handshake) PublicKey() cipherset.Key {
 	return h.key
 }
 
-func (h *handshake) At() uint32  { return h.at }
-func (k *handshake) CSID() uint8 { return 0x1a }
-func (k *cipher) CSID() uint8    { return 0x1a }
+func (h *handshake) At() uint32 { return h.at }
+func (*handshake) CSID() uint8  { return 0x1a }
+func (*cipher) CSID() uint8     { return 0x1a }
 
 func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
 	return decodeKey(pub, prv)
@@ -74,23 +74,23 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 	}
 
 	var (
-		ctLen         = len(p) - (21 + 4 + 4)
-		out           = make([]byte, ctLen)
-		localKey_, _  = localKey.(*key)
-		remoteKey_, _ = remoteKey.(*key)
-		remoteLineKey = p[:21]
-		iv            = p[21 : 21+4]
-		ciphertext    = p[21+4 : 21+4+ctLen]
-		mac           = p[21+4+ctLen:]
+		ctLen            = len(p) - (21 + 4 + 4)
+		out              = make([]byte, ctLen)
+		cs1aLocalKey, _  = localKey.(*key)
+		cs1aRemoteKey, _ = remoteKey.(*key)
+		remoteLineKey    = p[:21]
+		iv               = p[21 : 21+4]
+		ciphertext       = p[21+4 : 21+4+ctLen]
+		mac              = p[21+4+ctLen:]
 	)
 
-	if localKey_ == nil || remoteKey_ == nil {
+	if cs1aLocalKey == nil || cs1aRemoteKey == nil {
 		return nil, cipherset.ErrInvalidState
 	}
 
 	{ // verify mac
 		macKey := ecdh.ComputeShared(secp160r1.P160(),
-			remoteKey_.pub.x, remoteKey_.pub.y, localKey_.prv.d)
+			cs1aRemoteKey.pub.x, cs1aRemoteKey.pub.y, cs1aLocalKey.prv.d)
 		macKey = append(macKey, iv...)
 
 		h := hmac.New(sha256.New, macKey)
@@ -106,7 +106,7 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		shared := ecdh.ComputeShared(secp160r1.P160(), ephemX, ephemY, localKey_.prv.d)
+		shared := ecdh.ComputeShared(secp160r1.P160(), ephemX, ephemY, cs1aLocalKey.prv.d)
 		if shared == nil {
 			return nil, cipherset.ErrInvalidMessage
 		}
@@ -144,7 +144,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	var (
 		ctLen             = len(p) - (21 + 4 + 4)
 		out               = make([]byte, ctLen)
-		localKey_, _      = localKey.(*key)
+		cs1aLocalKey, _   = localKey.(*key)
 		remoteKey         *key
 		remoteLineKey     *key
 		hshake            *handshake
@@ -154,7 +154,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 		mac               = p[21+4+ctLen:]
 	)
 
-	if localKey_ == nil {
+	if cs1aLocalKey == nil {
 		return nil, cipherset.ErrInvalidState
 	}
 
@@ -164,7 +164,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		shared := ecdh.ComputeShared(secp160r1.P160(), ephemX, ephemY, localKey_.prv.d)
+		shared := ecdh.ComputeShared(secp160r1.P160(), ephemX, ephemY, cs1aLocalKey.prv.d)
 		if shared == nil {
 			return nil, cipherset.ErrInvalidMessage
 		}
@@ -233,7 +233,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 		copy(nonce[:], iv)
 
 		macKey := ecdh.ComputeShared(secp160r1.P160(),
-			remoteKey.pub.x, remoteKey.pub.y, localKey_.prv.d)
+			remoteKey.pub.x, remoteKey.pub.y, cs1aLocalKey.prv.d)
 		macKey = append(macKey, nonce[:]...)
 
 		h := hmac.New(sha256.New, macKey)
@@ -257,7 +257,7 @@ type state struct {
 	lineDecryptionKey []byte
 }
 
-func (k *state) CSID() uint8 { return 0x1a }
+func (*state) CSID() uint8 { return 0x1a }
 
 func (s *state) IsHigh() bool {
 	if s.localKey != nil && s.remoteKey != nil {

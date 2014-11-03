@@ -43,9 +43,9 @@ func (h *handshake) PublicKey() cipherset.Key {
 	return h.key
 }
 
-func (h *handshake) At() uint32  { return h.at }
-func (k *handshake) CSID() uint8 { return 0x3a }
-func (k *cipher) CSID() uint8    { return 0x3a }
+func (h *handshake) At() uint32 { return h.at }
+func (*handshake) CSID() uint8  { return 0x3a }
+func (*cipher) CSID() uint8     { return 0x3a }
 
 func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
 	var (
@@ -99,20 +99,20 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 	}
 
 	var (
-		ctLen         = len(p) - (32 + 4 + 16)
-		out           = make([]byte, ctLen)
-		localKey_, _  = localKey.(*key)
-		remoteKey_, _ = remoteKey.(*key)
-		mac           [16]byte
-		nonce         [24]byte
-		macKey        [32]byte
-		agreedKey     [32]byte
-		remoteLineKey [32]byte
-		ciphertext    []byte
-		ok            bool
+		ctLen            = len(p) - (32 + 4 + 16)
+		out              = make([]byte, ctLen)
+		cs3aLocalKey, _  = localKey.(*key)
+		cs3aRemoteKey, _ = remoteKey.(*key)
+		mac              [16]byte
+		nonce            [24]byte
+		macKey           [32]byte
+		agreedKey        [32]byte
+		remoteLineKey    [32]byte
+		ciphertext       []byte
+		ok               bool
 	)
 
-	if localKey_ == nil || remoteKey_ == nil {
+	if cs3aLocalKey == nil || cs3aRemoteKey == nil {
 		return nil, cipherset.ErrInvalidState
 	}
 
@@ -122,7 +122,7 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 	ciphertext = p[32+4 : 32+4+ctLen]
 
 	{ // make macKey
-		box.Precompute(&macKey, remoteKey_.pub, localKey_.prv)
+		box.Precompute(&macKey, cs3aRemoteKey.pub, cs3aLocalKey.prv)
 
 		var (
 			sha = sha256.New()
@@ -138,7 +138,7 @@ func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]
 	}
 
 	// make agreedKey
-	box.Precompute(&agreedKey, &remoteLineKey, localKey_.prv)
+	box.Precompute(&agreedKey, &remoteLineKey, cs3aLocalKey.prv)
 
 	// decode BODY
 	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
@@ -155,23 +155,23 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	}
 
 	var (
-		ctLen         = len(p) - (32 + 4 + 16)
-		out           = make([]byte, ctLen)
-		handshake     = &handshake{}
-		localKey_, _  = localKey.(*key)
-		at            uint32
-		hasAt         bool
-		mac           [16]byte
-		nonce         [24]byte
-		macKey        [32]byte
-		agreedKey     [32]byte
-		remoteKey     [32]byte
-		remoteLineKey [32]byte
-		ciphertext    []byte
-		ok            bool
+		ctLen           = len(p) - (32 + 4 + 16)
+		out             = make([]byte, ctLen)
+		handshake       = &handshake{}
+		cs3aLocalKey, _ = localKey.(*key)
+		at              uint32
+		hasAt           bool
+		mac             [16]byte
+		nonce           [24]byte
+		macKey          [32]byte
+		agreedKey       [32]byte
+		remoteKey       [32]byte
+		remoteLineKey   [32]byte
+		ciphertext      []byte
+		ok              bool
 	)
 
-	if localKey_ == nil {
+	if cs3aLocalKey == nil {
 		return nil, cipherset.ErrInvalidState
 	}
 
@@ -181,7 +181,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	ciphertext = p[32+4 : 32+4+ctLen]
 
 	// make agreedKey
-	box.Precompute(&agreedKey, &remoteLineKey, localKey_.prv)
+	box.Precompute(&agreedKey, &remoteLineKey, cs3aLocalKey.prv)
 
 	// decode BODY
 	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
@@ -219,7 +219,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	}
 
 	{ // make macKey
-		box.Precompute(&macKey, &remoteKey, localKey_.prv)
+		box.Precompute(&macKey, &remoteKey, cs3aLocalKey.prv)
 
 		var (
 			sha = sha256.New()
@@ -250,7 +250,7 @@ type state struct {
 	nonce             *[24]byte
 }
 
-func (k *state) CSID() uint8 { return 0x3a }
+func (*state) CSID() uint8 { return 0x3a }
 
 func (s *state) IsHigh() bool {
 	if s.localKey != nil && s.remoteKey != nil {
@@ -570,15 +570,15 @@ type key struct {
 
 func makeKey(prv, pub *[32]byte) *key {
 	if prv != nil {
-		prv_ := new([32]byte)
-		copy((*prv_)[:], (*prv)[:])
-		prv = prv_
+		prvCopy := new([32]byte)
+		copy((*prvCopy)[:], (*prv)[:])
+		prv = prvCopy
 	}
 
 	if pub != nil {
-		pub_ := new([32]byte)
-		copy((*pub_)[:], (*pub)[:])
-		pub = pub_
+		pubCopy := new([32]byte)
+		copy((*pubCopy)[:], (*pub)[:])
+		pub = pubCopy
 	}
 
 	return &key{pub: pub, prv: prv}

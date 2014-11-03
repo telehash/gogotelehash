@@ -1,4 +1,4 @@
-// Mux transport wrapper.
+// Package mux implements a transport muxer.
 //
 // This package provides a transport that transparently merges multiple sub-transports
 // as-if they are one.
@@ -37,6 +37,7 @@ type readOp struct {
 	err error
 }
 
+// Open opens the sub-transports.
 func (c Config) Open() (transports.Transport, error) {
 	m := &muxer{}
 	m.cRead = make(chan readOp)

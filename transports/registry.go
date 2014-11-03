@@ -6,6 +6,8 @@ import (
 
 var addressDecoders = map[string]AddrDecoder{}
 
+// AddrDecoder takes JSON data and unmarshals it into an Addr.
+// The decoder function must return an error when the JSON object structure is invalid.
 type AddrDecoder func([]byte) (Addr, error)
 
 // RegisterAddrDecoder registers an AddrDecoder

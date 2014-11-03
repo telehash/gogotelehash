@@ -1,4 +1,4 @@
-// Telehash: Length-Object-Binary Encoding (Packet Format).
+// Package lob implemnets the Length-Object-Binary encoding (Packet Format).
 //
 // Reference
 //
@@ -13,8 +13,10 @@ import (
 	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
+// ErrInvalidPacket is returned by Decode
 var ErrInvalidPacket = errors.New("lob: invalid packet")
 
+// Packet represents a packet.
 type Packet struct {
 	raw  []byte
 	json Header
@@ -22,6 +24,7 @@ type Packet struct {
 	Body []byte
 }
 
+// Decode a packet
 func Decode(p []byte) (*Packet, error) {
 	var (
 		length int
@@ -60,6 +63,7 @@ func Decode(p []byte) (*Packet, error) {
 	return &Packet{raw: p, Head: head, json: dict, Body: body}, nil
 }
 
+// Encode a packet
 func Encode(pkt *Packet) ([]byte, error) {
 	var (
 		head []byte
@@ -100,21 +104,28 @@ func Encode(pkt *Packet) ([]byte, error) {
 	return p, nil
 }
 
+// Header returns the packet JSON header if present.
 func (p *Packet) Header() Header {
+	if p.Head != nil {
+		return nil
+	}
 	if p.json == nil {
 		p.json = make(Header)
 	}
 	return p.json
 }
 
+// Free the packets backing buffer back to the buffer pool.
 func (p *Packet) Free() {
 	if p.raw != nil {
 		bufpool.PutBuffer(p.raw)
 	}
 }
 
+// Header represents a packet header.
 type Header map[string]interface{}
 
+// Get the value for key k. found is false if k is not present.
 func (h Header) Get(k string) (v interface{}, found bool) {
 	if h == nil {
 		return nil, false
@@ -123,6 +134,7 @@ func (h Header) Get(k string) (v interface{}, found bool) {
 	return v, found
 }
 
+// Set a the header k to v.
 func (h Header) Set(k string, v interface{}) {
 	if h == nil {
 		return
@@ -130,6 +142,7 @@ func (h Header) Set(k string, v interface{}) {
 	h[k] = v
 }
 
+// GetString returns the string value for key k. found is false if k is not present.
 func (h Header) GetString(k string) (v string, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
@@ -142,10 +155,12 @@ func (h Header) GetString(k string) (v string, found bool) {
 	return x, true
 }
 
+// SetString a the header k to v.
 func (h Header) SetString(k string, v string) {
 	h.Set(k, v)
 }
 
+// GetBool returns the bool value for key k. found is false if k is not present.
 func (h Header) GetBool(k string) (v bool, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
@@ -158,10 +173,12 @@ func (h Header) GetBool(k string) (v bool, found bool) {
 	return x, true
 }
 
+// SetBool a the header k to v.
 func (h Header) SetBool(k string, v bool) {
 	h.Set(k, v)
 }
 
+// GetInt returns the int value for key k. found is false if k is not present.
 func (h Header) GetInt(k string) (v int, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
@@ -197,10 +214,12 @@ func (h Header) GetInt(k string) (v int, found bool) {
 	}
 }
 
+// SetInt a the header k to v.
 func (h Header) SetInt(k string, v int) {
 	h.Set(k, v)
 }
 
+// GetUint32 returns the uint32 value for key k. found is false if k is not present.
 func (h Header) GetUint32(k string) (v uint32, found bool) {
 	x, ok := h.GetInt(k)
 	if !ok || x < 0 {
@@ -209,10 +228,12 @@ func (h Header) GetUint32(k string) (v uint32, found bool) {
 	return uint32(x), true
 }
 
+// SetUint32 a the header k to v.
 func (h Header) SetUint32(k string, v uint32) {
 	h.SetInt(k, int(v))
 }
 
+// GetUint32Slice returns the []uint32 value for key k. found is false if k is not present.
 func (h Header) GetUint32Slice(k string) (v []uint32, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
@@ -233,6 +254,7 @@ func (h Header) GetUint32Slice(k string) (v []uint32, found bool) {
 	return z, true
 }
 
+// SetUint32Slice a the header k to v.
 func (h Header) SetUint32Slice(k string, v []uint32) {
 	h.Set(k, v)
 }

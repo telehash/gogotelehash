@@ -39,9 +39,8 @@ func (e *ExchangeOpenedEvent) String() string {
 func (e *ExchangeClosedEvent) String() string {
 	if e.Reason == nil {
 		return fmt.Sprintf("exchange closed: %s", e.Exchange)
-	} else {
-		return fmt.Sprintf("exchange closed: %s (reason=%s)", e.Exchange, e.Reason)
 	}
+	return fmt.Sprintf("exchange closed: %s (reason=%s)", e.Exchange, e.Reason)
 }
 
 func (e *ChannelOpenedEvent) String() string {

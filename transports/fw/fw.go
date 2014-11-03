@@ -9,12 +9,15 @@ var (
 	_ transports.Transport = (*firewall)(nil)
 )
 
+// Config for the fw transport.
 type Config struct {
-	Config transports.Config
-	Allow  Rule
+	Config transports.Config // the sub-transport configuration
+	Allow  Rule              // the firewall rule.
 }
 
+// Rule must be implemented by rule objects.
 type Rule interface {
+	// Match must return true when p and/or src match the rule.
 	Match(p []byte, src transports.Addr) bool
 }
 
@@ -23,6 +26,7 @@ type firewall struct {
 	rule Rule
 }
 
+// Open opens the sub-transport
 func (c Config) Open() (transports.Transport, error) {
 	t, err := c.Config.Open()
 	if err != nil {
@@ -49,8 +53,6 @@ func (fw *firewall) ReadMessage(p []byte) (n int, src transports.Addr, err error
 
 		// continue
 	}
-
-	panic("unreachable")
 }
 
 func (fw *firewall) WriteMessage(p []byte, dst transports.Addr) error {

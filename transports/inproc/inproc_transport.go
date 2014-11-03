@@ -38,15 +38,15 @@ var (
 var (
 	mtx    sync.RWMutex
 	pipes  = map[uint32]*transport{}
-	netxId uint32
+	netxID uint32
 )
 
 // Open opens the transport.
 func (c Config) Open() (transports.Transport, error) {
 	mtx.Lock()
-	id := netxId
+	id := netxID
 	t := &transport{id, make(chan packet, 10)}
-	netxId++
+	netxID++
 	pipes[id] = t
 	mtx.Unlock()
 

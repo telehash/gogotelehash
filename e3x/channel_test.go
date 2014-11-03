@@ -18,15 +18,15 @@ import (
 	"github.com/telehash/gogotelehash/util/logs"
 )
 
-func with_two_endpoints(t *testing.T, f func(a, b *Endpoint)) {
-	with_endpoint(t, func(a *Endpoint) {
-		with_endpoint(t, func(b *Endpoint) {
+func withTwoEndpoints(t *testing.T, f func(a, b *Endpoint)) {
+	withEndpoint(t, func(a *Endpoint) {
+		withEndpoint(t, func(b *Endpoint) {
 			f(a, b)
 		})
 	})
 }
 
-func with_endpoint(t *testing.T, f func(e *Endpoint)) {
+func withEndpoint(t *testing.T, f func(e *Endpoint)) {
 	var (
 		err error
 		key cipherset.Key
@@ -73,14 +73,14 @@ func TestBasicUnrealiable(t *testing.T) {
 		pkt = &lob.Packet{Body: []byte("ping")}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetString("type", "ping")
-		x.On("deliver_packet", pkt).Return(nil)
+		x.On("deliverPacket", pkt).Return(nil)
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetBool("end", true)
-		x.On("deliver_packet", pkt).Return(nil)
+		x.On("deliverPacket", pkt).Return(nil)
 
-		x.On("unregister_channel", uint32(0)).Return().Once()
+		x.On("unregisterChannel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(
@@ -91,7 +91,7 @@ func TestBasicUnrealiable(t *testing.T) {
 	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
 	assert.NoError(err)
 
-	c.received_packet(&lob.Packet{Body: []byte("pong")})
+	c.receivedPacket(&lob.Packet{Body: []byte("pong")})
 
 	pkt, err = c.ReadPacket()
 	assert.NoError(err)
@@ -102,7 +102,7 @@ func TestBasicUnrealiable(t *testing.T) {
 
 	pkt = &lob.Packet{}
 	pkt.Header().SetBool("end", true)
-	c.received_packet(pkt)
+	c.receivedPacket(pkt)
 
 	err = c.Close()
 	assert.NoError(err)
@@ -126,32 +126,32 @@ func TestBasicRealiable(t *testing.T) {
 		pkt.Header().SetString("type", "ping")
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("seq", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 0)
 		pkt.Header().SetUint32Slice("miss", []uint32{1})
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("ack", 1)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
 		pkt.Header().SetInt("c", 0)
 		pkt.Header().SetInt("seq", 1)
 		pkt.Header().SetBool("end", true)
 		pkt.Header().SetInt("ack", 0)
-		x.On("deliver_packet", pkt).Return(nil).Once()
+		x.On("deliverPacket", pkt).Return(nil).Once()
 
-		x.On("unregister_channel", uint32(0)).Return().Once()
+		x.On("unregisterChannel", uint32(0)).Return().Once()
 	}
 
 	c = newChannel(
@@ -165,7 +165,7 @@ func TestBasicRealiable(t *testing.T) {
 	pkt = &lob.Packet{Body: []byte("pong")}
 	pkt.Header().SetUint32("seq", 0)
 	pkt.Header().SetUint32("ack", 0)
-	c.received_packet(pkt)
+	c.receivedPacket(pkt)
 
 	pkt, err = c.ReadPacket()
 	assert.NoError(err)
@@ -180,7 +180,7 @@ func TestBasicRealiable(t *testing.T) {
 		pkt.Header().SetBool("end", true)
 		pkt.Header().SetUint32("seq", 1)
 		pkt.Header().SetUint32("ack", 1)
-		c.received_packet(pkt)
+		c.receivedPacket(pkt)
 	}()
 
 	err = c.Close()
@@ -192,7 +192,7 @@ func TestBasicRealiable(t *testing.T) {
 func TestPingPong(t *testing.T) {
 	logs.ResetLogger()
 
-	with_two_endpoints(t, func(A, B *Endpoint) {
+	withTwoEndpoints(t, func(A, B *Endpoint) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
@@ -241,7 +241,7 @@ func TestPingPong(t *testing.T) {
 func TestPingPongReliable(t *testing.T) {
 	logs.ResetLogger()
 
-	with_two_endpoints(t, func(A, B *Endpoint) {
+	withTwoEndpoints(t, func(A, B *Endpoint) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
@@ -297,7 +297,7 @@ func TestFloodReliable(t *testing.T) {
 		t.Skip("this is a long running test.")
 	}
 
-	with_two_endpoints(t, func(A, B *Endpoint) {
+	withTwoEndpoints(t, func(A, B *Endpoint) {
 		var (
 			assert = assert.New(t)
 			c      *Channel
@@ -340,7 +340,7 @@ func TestFloodReliable(t *testing.T) {
 		assert.NoError(err)
 		tracef("C> TX open")
 
-		lastId := -1
+		lastID := -1
 		for {
 			pkt, err = c.ReadPacket()
 			if err == io.EOF {
@@ -353,8 +353,8 @@ func TestFloodReliable(t *testing.T) {
 			}
 			if pkt != nil {
 				id, _ := pkt.Header().GetInt("flood_id")
-				assert.True(lastId < id)
-				lastId = id
+				assert.True(lastID < id)
+				lastID = id
 				tracef("C> RX %d", id)
 			}
 		}

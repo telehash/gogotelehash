@@ -1,4 +1,4 @@
-// NAT port mapping transport wrapper.
+// Package nat privides NAT port mapping for transports that support it.
 //
 // This packages provides transparent NAT port mapping for the
 // sub-transports that support it.
@@ -57,6 +57,7 @@ type natMapping struct {
 	stale    bool
 }
 
+// Open opens the sub-transport and starts the port mapper.
 func (c Config) Open() (transports.Transport, error) {
 	t, err := c.Config.Open()
 	if err != nil {
@@ -145,8 +146,6 @@ func (t *transport) runDiscoverMode() bool {
 			return false // not done
 		}
 	}
-
-	panic("unreachable")
 }
 
 func asNATableAddr(addr transports.Addr) (string, net.IP, int) {
@@ -173,12 +172,12 @@ func (t *transport) updateKnownAddresses(known map[string]bool) bool {
 	}
 
 	for _, addr := range t.t.LocalAddresses() {
-		proto, ip, internal_port := asNATableAddr(addr)
+		proto, ip, internalPort := asNATableAddr(addr)
 		if proto == "" {
 			continue
 		}
 
-		key := mappingKey(proto, ip, internal_port)
+		key := mappingKey(proto, ip, internalPort)
 
 		if _, found := known[key]; !found {
 			changed = true
@@ -224,8 +223,6 @@ func (t *transport) runMappingMode() bool {
 			return false // not done
 		}
 	}
-
-	panic("unreachable")
 }
 
 func (t *transport) discoverNAT() {
@@ -255,13 +252,13 @@ func (t *transport) updateMappings() {
 	}
 	t.mtx.Unlock()
 
-	external_ip, err := t.nat.GetExternalAddress()
+	externalIP, err := t.nat.GetExternalAddress()
 	if err != nil {
 		t.nat = nil
 		return
 	}
 
-	internal_ip, err := t.nat.GetInternalAddress()
+	internalIP, err := t.nat.GetInternalAddress()
 	if err != nil {
 		t.nat = nil
 		return
@@ -274,27 +271,27 @@ func (t *transport) updateMappings() {
 			continue // not a natble address
 		}
 
-		proto, ip, internal_port := nataddr.InternalAddr()
-		if proto == "" || ip == nil || internal_port <= 0 {
+		proto, ip, internalPort := nataddr.InternalAddr()
+		if proto == "" || ip == nil || internalPort <= 0 {
 			continue // not a natble address
 		}
 
-		if !ip.Equal(internal_ip) {
+		if !ip.Equal(internalIP) {
 			continue // not a natble address
 		}
 
-		key := mappingKey(proto, ip, internal_port)
+		key := mappingKey(proto, ip, internalPort)
 		if m := t.mapping[key]; m != nil {
 			m.stale = false
 			continue // Already exists
 		}
 
-		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Minute)
+		externalPort, err := t.nat.AddPortMapping(proto, internalPort, "Telehash", 60*time.Minute)
 		if err != nil {
 			continue // unable to map address
 		}
 
-		globaddr := nataddr.MakeGlobal(external_ip, external_port)
+		globaddr := nataddr.MakeGlobal(externalIP, externalPort)
 		if globaddr == nil {
 			continue // unable to map address
 		}
@@ -312,12 +309,12 @@ func (t *transport) updateMappings() {
 			continue
 		}
 
-		proto, _, internal_port := nataddr.InternalAddr()
-		if proto == "" || internal_port <= 0 {
+		proto, _, internalPort := nataddr.InternalAddr()
+		if proto == "" || internalPort <= 0 {
 			continue
 		}
 
-		t.nat.DeletePortMapping(proto, internal_port)
+		t.nat.DeletePortMapping(proto, internalPort)
 		delete(mapping, key)
 	}
 
@@ -340,13 +337,13 @@ func (t *transport) refreshMapping() {
 	}
 	t.mtx.Unlock()
 
-	external_ip, err := t.nat.GetExternalAddress()
+	externalIP, err := t.nat.GetExternalAddress()
 	if err != nil {
 		t.nat = nil
 		return
 	}
 
-	internal_ip, err := t.nat.GetInternalAddress()
+	internalIP, err := t.nat.GetInternalAddress()
 	if err != nil {
 		t.nat = nil
 		return
@@ -354,25 +351,25 @@ func (t *transport) refreshMapping() {
 
 	// remap addrs
 	for key, m := range mapping {
-		proto, ip, internal_port := asNATableAddr(m.internal)
+		proto, ip, internalPort := asNATableAddr(m.internal)
 		if proto == "" {
 			droplist = append(droplist, key)
 			continue
 		}
 
 		// did our internal ip change?
-		if !ip.Equal(internal_ip) {
+		if !ip.Equal(internalIP) {
 			droplist = append(droplist, key)
 			continue
 		}
 
-		external_port, err := t.nat.AddPortMapping(proto, internal_port, "Telehash", 60*time.Minute)
+		externalPort, err := t.nat.AddPortMapping(proto, internalPort, "Telehash", 60*time.Minute)
 		if err != nil {
 			droplist = append(droplist, key)
 			continue
 		}
 
-		globaddr := m.internal.(NATableAddr).MakeGlobal(external_ip, external_port)
+		globaddr := m.internal.(NATableAddr).MakeGlobal(externalIP, externalPort)
 		if globaddr == nil {
 			droplist = append(droplist, key)
 			continue
@@ -390,6 +387,6 @@ func (t *transport) refreshMapping() {
 	t.mtx.Unlock()
 }
 
-func mappingKey(proto string, ip net.IP, internal_port int) string {
-	return fmt.Sprintf("%s:%s:%d", proto, ip, internal_port)
+func mappingKey(proto string, ip net.IP, internalPort int) string {
+	return fmt.Sprintf("%s:%s:%d", proto, ip, internalPort)
 }
