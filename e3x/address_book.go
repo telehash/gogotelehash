@@ -19,6 +19,10 @@ type addressBook struct {
 	unsupported []string
 }
 
+const (
+	ewma_α = 0.45
+)
+
 type addressBookEntry struct {
 	Address     transports.Addr
 	LastAttempt time.Time
@@ -27,9 +31,8 @@ type addressBookEntry struct {
 	Reachable   bool
 	GotResponse bool
 
-	latency     time.Duration
-	samples     [16]time.Duration
-	sampleCount int
+	latency time.Duration
+	ewma    time.Duration
 }
 
 func newAddressBook(log *logs.Logger) *addressBook {
@@ -127,7 +130,7 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	book.known = append(book.known, e)
 	book.updateActive()
 
-	book.log.Printf("\x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", e, e.latency)
+	book.log.Printf("\x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
 }
 
 func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
@@ -152,7 +155,7 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 	e.Reachable = true
 	e.GotResponse = true
 
-	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m)", e, e.latency)
+	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
 	book.updateActive()
 }
 
@@ -192,21 +195,13 @@ func (a *addressBookEntry) String() string {
 }
 
 func (a *addressBookEntry) AddLatencySample(d time.Duration) {
-	idx := a.sampleCount % 16
-	a.samples[idx] = d
-	a.sampleCount++
-	a.latency = 0
-	for _, d := range a.samples {
-		a.latency += d
-	}
-	a.latency /= 16
+	a.latency = d
+	a.ewma = time.Duration(ewma_α*float64(d) + (1.0-ewma_α)*float64(a.ewma))
 }
 
 func (a *addressBookEntry) InitSamples() {
-	for i := range a.samples {
-		a.samples[i] = 125 * time.Millisecond
-	}
 	a.latency = 125 * time.Millisecond
+	a.ewma = 125 * time.Millisecond
 }
 
 type sortedAddressBookEntries []*addressBookEntry
@@ -221,5 +216,5 @@ func (s sortedAddressBookEntries) Less(i, j int) bool {
 		return false
 	}
 
-	return s[i].latency < s[j].latency
+	return s[i].ewma < s[j].ewma
 }
