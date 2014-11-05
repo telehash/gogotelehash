@@ -1,3 +1,4 @@
+// Package nat implements NAT handling facilities
 package nat
 
 import (
@@ -8,22 +9,33 @@ import (
 	"time"
 )
 
-var ErrNoExternalAddress = errors.New("nat: no external address")
-var ErrNoInternalAddress = errors.New("nat: no internal address")
-var ErrNoNATFound = errors.New("nat: no NAT found")
+var ErrNoExternalAddress = errors.New("no external address")
+var ErrNoInternalAddress = errors.New("no internal address")
+var ErrNoNATFound = errors.New("no NAT found")
 
 // protocol is either "udp" or "tcp"
 type NAT interface {
+	// Type returns the kind of NAT port mapping service that is used
 	Type() string
+
+	// GetDeviceAddress returns the internal address of the gateway device.
 	GetDeviceAddress() (addr net.IP, err error)
-	GetInternalAddress() (addr net.IP, err error)
+
+	// GetExternalAddress returns the external address of the gateway device.
 	GetExternalAddress() (addr net.IP, err error)
 
+	// GetInternalAddress returns the address of the local host.
+	GetInternalAddress() (addr net.IP, err error)
+
+	// AddPortMapping maps a port on the local host to an external port.
 	AddPortMapping(protocol string, internalPort int, description string, timeout time.Duration) (mappedExternalPort int, err error)
+
+	// DeletePortMapping removes a port mapping.
 	DeletePortMapping(protocol string, internalPort int) (err error)
 }
 
-func Discover() (NAT, error) {
+// DiscoverGateway attempts to find a gateway device.
+func DiscoverGateway() (NAT, error) {
 	select {
 	case nat := <-discoverUPNP_IG1():
 		return nat, nil
