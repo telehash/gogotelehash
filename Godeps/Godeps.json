@@ -36,6 +36,10 @@
 			"Rev": "7fb3e64728058525f5940d913d0b854474dcd66a"
 		},
 		{
+			"ImportPath": "github.com/fd/go-nat",
+			"Rev": "50e7633d5f27d81490026a13e5b92d2e42d8c6bb"
+		},
+		{
 			"ImportPath": "github.com/huin/goupnp",
 			"Rev": "ecfaac0e3a7f89c42ebfa85a6546cd2c58b2fd89"
 		},

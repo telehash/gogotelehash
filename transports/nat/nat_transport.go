@@ -10,8 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/fd/go-nat"
+
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/nat"
 )
 
 var (
@@ -226,7 +227,7 @@ func (t *transport) runMappingMode() bool {
 }
 
 func (t *transport) discoverNAT() {
-	nat, err := nat.Discover()
+	nat, err := nat.DiscoverGateway()
 	if err != nil {
 		return
 	}
