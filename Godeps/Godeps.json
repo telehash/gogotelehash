@@ -7,28 +7,18 @@
 	"Deps": [
 		{
 			"ImportPath": "code.google.com/p/go.crypto/curve25519",
-			"Comment": "null-213",
-			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
-		},
-		{
-			"ImportPath": "code.google.com/p/go.crypto/nacl/box",
-			"Comment": "null-213",
-			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+			"Comment": "null-218",
+			"Rev": "f3cebac2bd11c2bf03c15bfa4c66688ad02a0a40"
 		},
 		{
 			"ImportPath": "code.google.com/p/go.crypto/nacl/secretbox",
-			"Comment": "null-213",
-			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+			"Comment": "null-218",
+			"Rev": "f3cebac2bd11c2bf03c15bfa4c66688ad02a0a40"
 		},
 		{
-			"ImportPath": "code.google.com/p/go.crypto/poly1305",
-			"Comment": "null-213",
-			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
-		},
-		{
-			"ImportPath": "code.google.com/p/go.crypto/salsa20",
-			"Comment": "null-213",
-			"Rev": "aa2644fe4aa50e3b38d75187b4799b1f0c9ddcef"
+			"ImportPath": "code.google.com/p/go.crypto/salsa20/salsa",
+			"Comment": "null-218",
+			"Rev": "f3cebac2bd11c2bf03c15bfa4c66688ad02a0a40"
 		},
 		{
 			"ImportPath": "github.com/docopt/docopt-go",
@@ -66,6 +56,21 @@
 		{
 			"ImportPath": "github.com/stretchr/testify/suite",
 			"Rev": "d6577e08ec30538639ac0ea38b562b6f250e9055"
+		},
+		{
+			"ImportPath": "golang.org/x/crypto/nacl/box",
+			"Comment": "null-231",
+			"Rev": "88f995681294397936c136182f54e1f6891db323"
+		},
+		{
+			"ImportPath": "golang.org/x/crypto/poly1305",
+			"Comment": "null-218",
+			"Rev": "f3cebac2bd11c2bf03c15bfa4c66688ad02a0a40"
+		},
+		{
+			"ImportPath": "golang.org/x/crypto/salsa20",
+			"Comment": "null-231",
+			"Rev": "88f995681294397936c136182f54e1f6891db323"
 		}
 	]
 }

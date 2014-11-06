@@ -6,8 +6,8 @@ import (
 	"crypto/sha256"
 	"io"
 
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/nacl/box"
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/poly1305"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/nacl/box"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/poly1305"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/lob"

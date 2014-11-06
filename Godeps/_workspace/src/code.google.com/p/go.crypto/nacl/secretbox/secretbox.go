@@ -18,7 +18,7 @@ This package is interoperable with NaCl: http://nacl.cr.yp.to/secretbox.html.
 package secretbox
 
 import (
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/poly1305"
+	"code.google.com/p/go.crypto/poly1305"
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/salsa20/salsa"
 )
 
