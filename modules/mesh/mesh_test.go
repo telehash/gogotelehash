@@ -10,9 +10,6 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/logs"
-
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 var log = logs.Module("test")

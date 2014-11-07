@@ -14,8 +14,6 @@ import (
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
 	"github.com/telehash/gogotelehash/transports/udp"
-
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func main() {
