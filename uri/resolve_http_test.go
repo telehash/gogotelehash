@@ -9,9 +9,6 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/transports/udp"
-
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func Test_resolveHTTP(t *testing.T) {
