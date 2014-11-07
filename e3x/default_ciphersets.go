@@ -1,4 +1,4 @@
-package gogotelehash
+package e3x
 
 import (
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
