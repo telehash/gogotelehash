@@ -39,6 +39,8 @@ func resolveHTTP(uri *URI) (*e3x.Ident, error) {
 	return ident, nil
 }
 
+// WellKnown returns an http.Handler which will serve the /.well-known/mesh.json
+// document for Endpoint.
 func WellKnown(e *e3x.Endpoint) http.Handler {
 	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		if req.Method != "GET" {

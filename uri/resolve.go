@@ -4,6 +4,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 )
 
+// Resolve resolves a URI into an Identity.
 func Resolve(uri *URI) (*e3x.Ident, error) {
 	// Resolve order:
 	// - .public (if available)

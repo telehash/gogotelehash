@@ -5,6 +5,7 @@ import (
 	"strings"
 )
 
+// Parse parses a Telehash URI.
 func Parse(rawstr string) (*URI, error) {
 	if !strings.Contains(rawstr, "://") {
 		rawstr = "mesh://" + rawstr
