@@ -10,8 +10,6 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
-
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 const usage = `Telehash key generation tool.

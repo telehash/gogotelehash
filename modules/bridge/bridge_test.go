@@ -7,8 +7,6 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/fw"
