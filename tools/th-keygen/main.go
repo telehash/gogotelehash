@@ -8,6 +8,7 @@ import (
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/docopt/docopt-go"
 
+	_ "github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 )
@@ -39,6 +40,12 @@ func main() {
 			Keys     cipherset.PrivateKeys `json:"keys,omitempty"`
 		}
 	)
+
+	{ // CS 1a
+		k, err := cipherset.GenerateKey(0x1a)
+		assert(err)
+		keys[0x1a] = k
+	}
 
 	{ // CS 3a
 		k, err := cipherset.GenerateKey(0x3a)

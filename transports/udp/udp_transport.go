@@ -43,6 +43,25 @@ type addr struct {
 	net.UDPAddr
 }
 
+func NewAddr(ip net.IP, port uint16) (transports.Addr, error) {
+	if ip == nil || port == 0 {
+		return nil, errors.New("udp: invalid address")
+	}
+
+	a := &addr{}
+
+	a.IP = ip
+	a.Port = int(port)
+
+	if ip.To4() == nil {
+		a.net = UDPv6
+	} else {
+		a.net = UDPv4
+	}
+
+	return a, nil
+}
+
 type transport struct {
 	net   string
 	laddr *net.UDPAddr
