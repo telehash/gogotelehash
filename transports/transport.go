@@ -8,6 +8,8 @@ package transports
 
 import (
 	"errors"
+
+	"github.com/telehash/gogotelehash/hashname"
 )
 
 // ErrClosed is returned by a transport when it is not open.
@@ -56,6 +58,13 @@ type Addr interface {
 	// Equal returns true if other is equal to this Addr.
 	// Don't use this method directly instead use EqualAddr(a, b).
 	Equal(other Addr) bool
+
+	// Associate binds an address to a hashname. It must return a new copy of the address.
+	// This allows transports to know which hashname a packet is send to.
+	Associate(hn hashname.H) Addr
+
+	// Hashname must return the associated hashname.
+	Hashname() hashname.H
 }
 
 // EqualAddr returns true if a and b are equal Addr.
@@ -67,6 +76,9 @@ func EqualAddr(a, b Addr) bool {
 		return false
 	}
 	if a.Network() != b.Network() {
+		return false
+	}
+	if a.Hashname() != b.Hashname() {
 		return false
 	}
 	return a.Equal(b)
