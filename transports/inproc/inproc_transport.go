@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"sync"
 
+	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 )
@@ -16,6 +17,7 @@ type Config struct {
 }
 
 type addr struct {
+	hn hashname.H
 	id uint32
 }
 
@@ -63,7 +65,7 @@ func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
 	copy(p, pkt.buf)
 	bufpool.PutBuffer(pkt.buf)
 
-	return n, &addr{pkt.from}, nil
+	return n, &addr{"", pkt.from}, nil
 }
 
 func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
@@ -94,7 +96,7 @@ func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
 
 func (t *transport) LocalAddresses() []transports.Addr {
 	return []transports.Addr{
-		&addr{t.id},
+		&addr{"", t.id},
 	}
 }
 
@@ -138,4 +140,15 @@ func (a *addr) String() string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func (a *addr) Associate(hn hashname.H) transports.Addr {
+	b := new(addr)
+	*b = *a
+	b.hn = hn
+	return b
+}
+
+func (a *addr) Hashname() hashname.H {
+	return a.hn
 }

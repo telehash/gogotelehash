@@ -10,6 +10,7 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/mock"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 )
@@ -58,8 +59,8 @@ func openPipeTransport(lid, rid string) (l, r transports.Transport) {
 		panic(err)
 	}
 
-	l = &pipeTransport{mockAddr(lid), mockAddr(rid), r1, w2}
-	r = &pipeTransport{mockAddr(rid), mockAddr(lid), r2, w1}
+	l = &pipeTransport{mockAddr{lid, ""}, mockAddr{rid, ""}, r1, w2}
+	r = &pipeTransport{mockAddr{rid, ""}, mockAddr{lid, ""}, r2, w1}
 	return
 }
 
@@ -131,7 +132,7 @@ func makeIdent(name string) *Ident {
 	}
 
 	ident, err := NewIdent(cipherset.Keys{0x3a: key}, nil, []transports.Addr{
-		mockAddr(name),
+		mockAddr{name, ""},
 	})
 	if err != nil {
 		panic(err)
@@ -140,7 +141,10 @@ func makeIdent(name string) *Ident {
 	return ident
 }
 
-type mockAddr string
+type mockAddr struct {
+	name string
+	hn   hashname.H
+}
 
 func (m mockAddr) Network() string {
 	return "mock"
@@ -161,7 +165,7 @@ func (m mockAddr) MarshalJSON() ([]byte, error) {
 		Name string `json:"name"`
 	}{
 		Type: "mock",
-		Name: string(m),
+		Name: m.name,
 	}
 
 	return json.Marshal(&desc)
@@ -173,4 +177,13 @@ func (m mockAddr) Equal(x transports.Addr) bool {
 		return false
 	}
 	return m == b
+}
+
+func (m mockAddr) Associate(hn hashname.H) transports.Addr {
+	m.hn = hn
+	return m
+}
+
+func (m mockAddr) Hashname() hashname.H {
+	return m.hn
 }

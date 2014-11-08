@@ -158,7 +158,7 @@ func newExchange(
 		x.csid = csid
 
 		for _, addr := range remoteIdent.addrs {
-			x.addressBook.AddAddress(addr)
+			x.addressBook.AddAddress(addr.Associate(remoteIdent.Hashname()))
 		}
 	}
 
@@ -310,8 +310,9 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		x.resetBreak()
 		x.addressBook.ReceivedHandshake(op.src)
 	} else {
-		x.addressBook.AddAddress(op.src)
-		x.deliverHandshake(seq, op.src)
+		addr := op.src.Associate(x.remoteIdent.Hashname())
+		x.addressBook.AddAddress(addr)
+		x.deliverHandshake(seq, addr)
 	}
 
 	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
@@ -707,5 +708,5 @@ func (x *Exchange) AddPathCandidate(addr transports.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	x.addressBook.AddAddress(addr)
+	x.addressBook.AddAddress(addr.Associate(x.remoteIdent.Hashname()))
 }
