@@ -7,7 +7,10 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/logs"
 )
+
+var mainLog = logs.Module("peers")
 
 func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
 	ch, err := ex.Open("connect", false)
@@ -30,9 +33,11 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
 
 	var (
-		from       hashname.H
-		localIdent *e3x.Identity
-		err        error
+		from        hashname.H
+		localIdent  *e3x.Identity
+		remoteIdent *e3x.Identity
+		handshake   cipherset.Handshake
+		err         error
 	)
 
 	localIdent, err = mod.e.LocalIdentity()
@@ -60,12 +65,19 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 			return
 		}
 
-		handshake, err := cipherset.DecryptHandshake(csid, key, inner.Body)
+		handshake, err = cipherset.DecryptHandshake(csid, key, inner.Body)
 		if err != nil {
 			return
 		}
 
 		from, err = hashname.FromIntermediates(handshake.Parts())
+		if err != nil {
+			return
+		}
+
+		remoteIdent, err = e3x.NewIdentity(cipherset.Keys{
+			handshake.CSID(): handshake.PublicKey(),
+		}, handshake.Parts(), nil)
 		if err != nil {
 			return
 		}
@@ -100,6 +112,16 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		}
 
 		from = hn
+
+		pubKey, err := cipherset.DecodeKeyBytes(csid, inner.Body, nil)
+		if err != nil {
+			return
+		}
+
+		remoteIdent, err = e3x.NewIdentity(cipherset.Keys{csid: pubKey}, parts, nil)
+		if err != nil {
+			return
+		}
 	}
 
 	if from == "" {
@@ -110,5 +132,48 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		return
 	}
 
-	panic("tap the packet into the endpoint")
+	x, err := mod.e.GetExchange(remoteIdent)
+	if err != nil {
+		return
+	}
+
+	// when the BODY contains a handshake
+	if handshake != nil {
+		resp, ok := x.ApplyHandshake(handshake)
+		if !ok {
+			return
+		}
+
+		if resp != nil {
+			err = mod.peerVia(ch.Exchange(), from, resp)
+			if err != nil {
+				return
+			}
+		}
+
+		x.AddPathCandidate(&addr{
+			ch.Exchange().RemoteHashname(),
+			ch.Exchange().ActivePath(),
+		})
+	}
+
+	// when the BODY contains a key packet
+	if handshake == nil {
+		pkt, err := x.GenerateHandshake()
+		if err != nil {
+			return
+		}
+
+		err = mod.peerVia(ch.Exchange(), from, pkt)
+		if err != nil {
+			return
+		}
+
+		x.AddPathCandidate(&addr{
+			ch.Exchange().RemoteHashname(),
+			ch.Exchange().ActivePath(),
+		})
+	}
+
+	// Notify on-exchange callbacks
 }

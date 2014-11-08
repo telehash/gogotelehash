@@ -16,29 +16,20 @@ type key struct {
 	prv struct{ d []byte }
 }
 
-func decodeKey(pub, prv string) (*key, error) {
+func decodeKeyBytes(pub, prv []byte) (*key, error) {
 	var (
 		k = &key{}
 	)
 
-	if pub != "" {
-		data, err := base32util.DecodeString(pub)
-		if err != nil {
-			return nil, cipherset.ErrInvalidKey
-		}
-
-		k.pub.x, k.pub.y = eccp.Unmarshal(secp160r1.P160(), data)
+	if len(pub) != 0 {
+		k.pub.x, k.pub.y = eccp.Unmarshal(secp160r1.P160(), pub)
 		if k.pub.x == nil || k.pub.y == nil {
 			return nil, cipherset.ErrInvalidKey
 		}
 	}
 
-	if prv != "" {
-		data, err := base32util.DecodeString(prv)
-		if err != nil {
-			return nil, cipherset.ErrInvalidKey
-		}
-		k.prv.d = data
+	if len(prv) != 0 {
+		k.prv.d = prv
 	}
 
 	return k, nil

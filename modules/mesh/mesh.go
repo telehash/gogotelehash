@@ -110,7 +110,7 @@ func (m *mesh) HasLink(h hashname.H) bool {
 	defer m.mtx.Unlock()
 
 	l, f := m.links[h]
-	return f && len(l.tags) > 0 && l.channel != nil
+	return f && l.channel != nil
 }
 
 func (m *mesh) Exchange(h hashname.H) *e3x.Exchange {

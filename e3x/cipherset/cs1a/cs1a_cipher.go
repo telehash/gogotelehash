@@ -51,8 +51,8 @@ func (h *handshake) At() uint32 { return h.at }
 func (*handshake) CSID() uint8  { return 0x1a }
 func (*cipher) CSID() uint8     { return 0x1a }
 
-func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
-	return decodeKey(pub, prv)
+func (c *cipher) DecodeKeyBytes(pub, prv []byte) (cipherset.Key, error) {
+	return decodeKeyBytes(pub, prv)
 }
 
 func (c *cipher) GenerateKey() (cipherset.Key, error) {

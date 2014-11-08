@@ -372,24 +372,13 @@ func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
 	return i.Identify(e)
 }
 
-func (e *Endpoint) Dial(i Identifier) (*Exchange, error) {
-	if i == nil || e == nil {
-		return nil, os.ErrInvalid
-	}
-
-	identity, err := e.Identify(i)
-	if err != nil {
-		return nil, err
-	}
-
+// GetExchange returns the exchange for identity. If the exchange already exists
+// it is simply returned otherwise a new exchange is created and registered.
+// Not that this GetExchange does not Dial.
+func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
 	op := opMakeExchange{identity, nil, make(chan error)}
 	e.cMakeExchange <- &op
-	err = <-op.cErr
-	if err != nil {
-		return nil, err
-	}
-
-	err = op.x.dial()
+	err := <-op.cErr
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +386,40 @@ func (e *Endpoint) Dial(i Identifier) (*Exchange, error) {
 	return op.x, nil
 }
 
+// Dial will lookup the identity of identifier, get the exchange for the identity
+// and dial the exchange.
+func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
+	if identifier == nil || e == nil {
+		return nil, os.ErrInvalid
+	}
+
+	var (
+		identity *Identity
+		x        *Exchange
+		err      error
+	)
+
+	identity, err = e.Identify(identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	x, err = e.GetExchange(identity)
+	if err != nil {
+		return nil, err
+	}
+
+	err = x.Dial()
+	if err != nil {
+		return nil, err
+	}
+
+	return x, nil
+}
+
 func (e *Endpoint) dial(op *opMakeExchange) {
+
+	// Check for existing exchange
 	if entry, found := e.hashnames[op.ident.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil
@@ -412,12 +434,14 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 		err error
 	)
 
+	// Get local identity
 	localIdent, err = e.LocalIdentity()
 	if err != nil {
 		op.cErr <- err
 		return
 	}
 
+	// Make a new exchange struct
 	x, err = newExchange(localIdent, op.ident, nil,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
@@ -425,6 +449,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 		return
 	}
 
+	// register the new exchange
 	entry.x = x
 	e.tokens[x.LocalToken()] = entry
 	e.hashnames[op.ident.hashname] = entry

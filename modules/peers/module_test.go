@@ -50,6 +50,16 @@ func TestPeers(t *testing.T) {
 		}
 	}
 
+	{
+		ident, err := R.LocalIdentity()
+		if assert.NoError(err) {
+			peers := FromEndpoint(A)
+			ex, err := peers.IntroduceVia(B.LocalHashname(), ident)
+			assert.NoError(err)
+			assert.NotNil(ex)
+		}
+	}
+
 	fase1 := time.After(130 * time.Second) // should stay alive for atleast 2 minutes
 	fase2 := time.After(260 * time.Second) // after two more minutes the exchange must expire
 	<-fase1

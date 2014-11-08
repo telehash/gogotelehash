@@ -47,34 +47,26 @@ func (h *handshake) At() uint32 { return h.at }
 func (*handshake) CSID() uint8  { return 0x3a }
 func (*cipher) CSID() uint8     { return 0x3a }
 
-func (c *cipher) DecodeKey(pub, prv string) (cipherset.Key, error) {
+func (c *cipher) DecodeKeyBytes(pub, prv []byte) (cipherset.Key, error) {
 	var (
 		pubKey *[32]byte
 		prvKey *[32]byte
 	)
 
-	if pub != "" {
-		data, err := base32util.DecodeString(pub)
-		if err != nil {
-			return nil, cipherset.ErrInvalidKey
-		}
-		if len(data) != 32 {
+	if len(pub) != 0 {
+		if len(pub) != 32 {
 			return nil, cipherset.ErrInvalidKey
 		}
 		pubKey = new([32]byte)
-		copy((*pubKey)[:], data)
+		copy((*pubKey)[:], pub)
 	}
 
-	if prv != "" {
-		data, err := base32util.DecodeString(prv)
-		if err != nil {
-			return nil, cipherset.ErrInvalidKey
-		}
-		if len(data) != 32 {
+	if len(prv) != 0 {
+		if len(prv) != 32 {
 			return nil, cipherset.ErrInvalidKey
 		}
 		prvKey = new([32]byte)
-		copy((*prvKey)[:], data)
+		copy((*prvKey)[:], prv)
 	}
 
 	return &key{pub: pubKey, prv: prvKey}, nil

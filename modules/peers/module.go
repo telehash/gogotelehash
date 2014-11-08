@@ -13,7 +13,8 @@ type Config struct {
 }
 
 type Peers interface {
-	// Dial(dst, via *e3x.Identity) (*e3x.Exchange, error)
+	IntroduceVia(dst hashname.H, router *e3x.Identity) (*e3x.Exchange, error)
+	// DialVia(dst, router *e3x.Identity) (*e3x.Exchange, error)
 }
 
 type module struct {
@@ -63,4 +64,18 @@ func (mod *module) Start() error {
 
 func (mod *module) Stop() error {
 	return nil
+}
+
+func (mod *module) IntroduceVia(dst hashname.H, via *e3x.Identity) (*e3x.Exchange, error) {
+	router, err := mod.e.Dial(via)
+	if err != nil {
+		return nil, err
+	}
+
+	err = mod.introduceVia(router, dst)
+	if err != nil {
+		return nil, err
+	}
+
+	return nil, nil
 }

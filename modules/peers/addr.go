@@ -1,6 +1,8 @@
 package peers
 
 import (
+	"encoding/json"
+
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 )
@@ -11,13 +13,14 @@ var (
 
 type addr struct {
 	router hashname.H
+	path   transports.Addr
 }
 
 func (*addr) Network() string {
 	return "peer"
 }
 
-func (*addr) String() string {
+func (a *addr) String() string {
 	data, err := a.MarshalJSON()
 	if err != nil {
 		panic(err)
@@ -30,13 +33,13 @@ func (a *addr) MarshalJSON() ([]byte, error) {
 		Type string `json:"type"`
 		Hn   string `json:"hn"`
 	}{
-		Type: a.net,
+		Type: a.Network(),
 		Hn:   string(a.router),
 	}
 	return json.Marshal(&desc)
 }
 
-func (a *addr) Equal(x Addr) bool {
+func (a *addr) Equal(x transports.Addr) bool {
 	b := x.(*addr)
 
 	if a.router != b.router {

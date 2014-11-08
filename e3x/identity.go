@@ -32,10 +32,6 @@ func NewIdentity(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.
 		return nil, ErrNoKeys
 	}
 
-	if len(ident.addrs) == 0 {
-		return nil, ErrNoAddress
-	}
-
 	if ident.parts == nil {
 		ident.parts = make(cipherset.Parts, len(ident.keys))
 	}
