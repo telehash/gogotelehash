@@ -49,7 +49,7 @@
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/nacl/box",
-			"Comment": "null-231",
+			"Comment": "null-233",
 			"Rev": "8fec09c61d5d66f460d227fd1df3473d7e015bc6"
 		},
 		{
@@ -59,12 +59,12 @@
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/poly1305",
-			"Comment": "null-218",
+			"Comment": "null-233",
 			"Rev": "8fec09c61d5d66f460d227fd1df3473d7e015bc6"
 		},
 		{
 			"ImportPath": "golang.org/x/crypto/salsa20",
-			"Comment": "null-231",
+			"Comment": "null-233",
 			"Rev": "8fec09c61d5d66f460d227fd1df3473d7e015bc6"
 		}
 	]
