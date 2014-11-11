@@ -12,8 +12,8 @@ var (
 )
 
 type addr struct {
+	target hashname.H
 	router hashname.H
-	path   transports.Addr
 }
 
 func (*addr) Network() string {
@@ -47,4 +47,15 @@ func (a *addr) Equal(x transports.Addr) bool {
 	}
 
 	return true
+}
+
+func (a *addr) Associate(hn hashname.H) transports.Addr {
+	b := new(addr)
+	*b = *a
+	b.target = hn
+	return b
+}
+
+func (a *addr) Hashname() hashname.H {
+	return a.target
 }

@@ -1,7 +1,6 @@
 package e3x
 
 import (
-	"errors"
 	"os"
 	"sync"
 
@@ -22,8 +21,6 @@ const (
 	endpointStateBroken
 )
 
-var errDeferred = errors.New("e3x: deferred operation")
-
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
 	stateMtx sync.Mutex
@@ -40,7 +37,6 @@ type Endpoint struct {
 
 	cTerminate     chan struct{}
 	cMakeExchange  chan *opMakeExchange
-	cLookupIdent   chan *opLookupIdent
 	cTransportRead chan opRead
 	tokens         map[cipherset.Token]*exchangeEntry
 	hashnames      map[hashname.H]*exchangeEntry
@@ -64,11 +60,6 @@ type opMakeExchange struct {
 	ident *Identity
 	x     *Exchange
 	cErr  chan error
-}
-
-type opLookupIdent struct {
-	hashname hashname.H
-	cIdent   chan *Identity
 }
 
 type opRead struct {
@@ -145,7 +136,6 @@ func (e *Endpoint) start() error {
 	e.tokens = make(map[cipherset.Token]*exchangeEntry)
 	e.hashnames = make(map[hashname.H]*exchangeEntry)
 	e.cMakeExchange = make(chan *opMakeExchange)
-	e.cLookupIdent = make(chan *opLookupIdent)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportRead = make(chan opRead)
 
@@ -233,9 +223,6 @@ func (e *Endpoint) run() {
 
 		case op := <-e.cTransportRead:
 			e.received(op)
-
-		case op := <-e.cLookupIdent:
-			e.lookupIdent(op)
 
 		}
 	}
@@ -473,41 +460,4 @@ func (e *Endpoint) Use(key interface{}, mod Module) {
 
 func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
-}
-
-func (e *Endpoint) Resolve(hn hashname.H) (*Identity, error) {
-	var (
-		ident *Identity
-	)
-
-	if ident == nil {
-		op := opLookupIdent{hashname: hn, cIdent: make(chan *Identity)}
-		e.cLookupIdent <- &op
-		ident = <-op.cIdent
-	}
-
-	if ident == nil {
-		return nil, ErrNoAddress
-	}
-
-	return ident, nil
-}
-
-func (e *Endpoint) lookupIdent(op *opLookupIdent) {
-	entry, found := e.hashnames[op.hashname]
-	if !found || entry == nil {
-		op.cIdent <- nil
-		return
-	}
-
-	op.cIdent <- entry.x.RemoteIdentity()
-}
-
-func waitForError(c <-chan error) error {
-	for err := range c {
-		if err != errDeferred {
-			return err
-		}
-	}
-	panic("unreachable")
 }

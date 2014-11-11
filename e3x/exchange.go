@@ -657,14 +657,14 @@ func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
 // ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
 // handshake is accepted err is nil. When the handshake is a request-handshake
 // and it is accepted response will contain a response-handshake packet.
-func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake) (response []byte, ok bool) {
+func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	return x.applyHandshake(handshake)
+	return x.applyHandshake(handshake, src)
 }
 
-func (x *Exchange) applyHandshake(handshake cipherset.Handshake) (response []byte, ok bool) {
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
 	var (
 		seq uint32
 		err error
@@ -703,9 +703,15 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake) (response []byt
 		x.remoteIdent = ident
 	}
 
+	srcAddr := src.Associate(x.remoteIdent.Hashname())
+
 	if x.isLocalSeq(seq) {
 		x.resetBreak()
+		x.addressBook.ReceivedHandshake(srcAddr)
+
 	} else {
+		x.addressBook.AddAddress(srcAddr)
+
 		response, err = x.generateHandshake(seq)
 		if err != nil {
 			// drop; invalid identity
@@ -758,18 +764,13 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		return false
 	}
 
-	resp, ok := x.applyHandshake(handshake)
+	resp, ok := x.applyHandshake(handshake, op.src)
 	if !ok {
 		return false
 	}
 
-	addr := op.src.Associate(x.remoteIdent.Hashname())
-	if x.isLocalSeq(handshake.At()) {
-		x.resetBreak()
-		x.addressBook.ReceivedHandshake(addr)
-	} else {
-		x.addressBook.AddAddress(addr)
-		x.transportWriter.WriteMessage(resp, addr)
+	if resp != nil {
+		x.transportWriter.WriteMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
 	}
 
 	return true

@@ -97,6 +97,9 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 
 	ex := mod.m.Exchange(peer)
 	if ex == nil {
+		ex, _ = mod.e.Dial(e3x.HashnameIdentifier(peer))
+	}
+	if ex == nil {
 		log.Printf("drop: no exchange to target")
 		// resolve?
 		return

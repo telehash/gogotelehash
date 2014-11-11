@@ -55,10 +55,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	} else {
 		// Use resolver provider by Endpoint
-		ident, err = rt.Endpoint.Resolve(hashname)
-		if err != nil {
-			return nil, err
-		}
+		panic("thtp needs a proper host identifier")
 
 	}
 

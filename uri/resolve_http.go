@@ -9,7 +9,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 )
 
-func resolveHTTP(uri *URI) (*e3x.Ident, error) {
+func resolveHTTP(uri *URI) (*e3x.Identity, error) {
 	resp, err := http.Get("http://" + uri.Canonical + "/.well-known/mesh.json")
 	if err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func resolveHTTP(uri *URI) (*e3x.Ident, error) {
 		return nil, fmt.Errorf("unexpected content type: %q", typ)
 	}
 
-	var ident *e3x.Ident
+	var ident *e3x.Identity
 
 	err = json.NewDecoder(resp.Body).Decode(&ident)
 	if err != nil {
@@ -52,7 +52,7 @@ func WellKnown(e *e3x.Endpoint) http.Handler {
 			return
 		}
 
-		ident, err := e.LocalIdent()
+		ident, err := e.LocalIdentity()
 		if err != nil {
 			http.NotFound(rw, req)
 			return

@@ -139,7 +139,11 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 
 	// when the BODY contains a handshake
 	if handshake != nil {
-		resp, ok := x.ApplyHandshake(handshake)
+		routerAddr := &addr{
+			router: ch.Exchange().RemoteHashname(),
+		}
+
+		resp, ok := x.ApplyHandshake(handshake, routerAddr)
 		if !ok {
 			return
 		}
@@ -150,11 +154,6 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 				return
 			}
 		}
-
-		x.AddPathCandidate(&addr{
-			ch.Exchange().RemoteHashname(),
-			ch.Exchange().ActivePath(),
-		})
 	}
 
 	// when the BODY contains a key packet
@@ -170,10 +169,10 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		}
 
 		x.AddPathCandidate(&addr{
-			ch.Exchange().RemoteHashname(),
-			ch.Exchange().ActivePath(),
+			router: ch.Exchange().RemoteHashname(),
 		})
 	}
 
 	// Notify on-exchange callbacks
+	mod.getIntroduction(from).resolve(x, nil)
 }
