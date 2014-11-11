@@ -13,7 +13,7 @@ import (
 	"github.com/telehash/gogotelehash/transports/udp"
 )
 
-func resolveSRV(uri *URI, proto string) (*e3x.Ident, error) {
+func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 	// ignore port
 	host, _, _ := net.SplitHostPort(uri.Canonical)
 	if host == "" {
@@ -169,7 +169,7 @@ func resolveSRV(uri *URI, proto string) (*e3x.Ident, error) {
 		}
 	}
 
-	ident, err := e3x.NewIdent(keys, nil, addrs)
+	ident, err := e3x.NewIdentity(keys, nil, addrs)
 	if err != nil {
 		return nil, err
 	}

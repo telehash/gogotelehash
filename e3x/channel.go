@@ -80,7 +80,7 @@ type Channel struct {
 type exchangeI interface {
 	deliverPacket(pkt *lob.Packet) error
 	unregisterChannel(channelID uint32)
-	RemoteIdent() *Ident
+	RemoteIdentity() *Identity
 }
 
 type readBufferEntry struct {
@@ -131,8 +131,8 @@ func (c *Channel) RemoteHashname() hashname.H {
 	return c.hashname
 }
 
-func (c *Channel) RemoteIdent() *Ident {
-	return c.x.RemoteIdent()
+func (c *Channel) RemoteIdentity() *Identity {
+	return c.x.RemoteIdentity()
 }
 
 func (c *Channel) Exchange() *Exchange {
@@ -142,8 +142,8 @@ func (c *Channel) Exchange() *Exchange {
 	return nil
 }
 
-func (e *Endpoint) Open(ident *Ident, typ string, reliable bool) (*Channel, error) {
-	x, err := e.Dial(ident)
+func (e *Endpoint) Open(i Identifier, typ string, reliable bool) (*Channel, error) {
+	x, err := e.Dial(i)
 	if err != nil {
 		return nil, err
 	}

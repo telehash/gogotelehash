@@ -28,19 +28,30 @@ func GenerateKey(csid uint8) (Key, error) {
 func DecodeKey(csid uint8, pub, prv string) (Key, error) {
 	c := ciphers[csid]
 
+	pubKey, err := base32util.DecodeString(pub)
+	if err != nil {
+		return nil, ErrInvalidKey
+	}
+	prvKey, err := base32util.DecodeString(prv)
+	if err != nil {
+		return nil, ErrInvalidKey
+	}
+
 	if c == nil {
-		pubKey, err := base32util.DecodeString(pub)
-		if err != nil {
-			return nil, ErrInvalidKey
-		}
-		prvKey, err := base32util.DecodeString(prv)
-		if err != nil {
-			return nil, ErrInvalidKey
-		}
 		return opaqueKey{csid, pubKey, prvKey}, nil
 	}
 
-	return c.DecodeKey(pub, prv)
+	return c.DecodeKeyBytes(pubKey, prvKey)
+}
+
+func DecodeKeyBytes(csid uint8, pub, prv []byte) (Key, error) {
+	c := ciphers[csid]
+
+	if c == nil {
+		return opaqueKey{csid, pub, prv}, nil
+	}
+
+	return c.DecodeKeyBytes(pub, prv)
 }
 
 func DecryptMessage(csid uint8, localKey, remoteKey Key, p []byte) ([]byte, error) {

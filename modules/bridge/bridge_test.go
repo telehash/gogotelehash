@@ -92,11 +92,11 @@ func TestBridge(t *testing.T) {
 	assert.NoError(B.Start())
 	assert.NoError(R.Start())
 
-	Aident, err := A.LocalIdent()
+	Aident, err := A.LocalIdentity()
 	assert.NoError(err)
-	Bident, err := B.LocalIdent()
+	Bident, err := B.LocalIdentity()
 	assert.NoError(err)
-	Rident, err := R.LocalIdent()
+	Rident, err := R.LocalIdentity()
 	assert.NoError(err)
 
 	ABex, err := A.Dial(Bident)

@@ -12,17 +12,17 @@ import (
 var ErrNoKeys = errors.New("e3x: no keys")
 var ErrNoAddress = errors.New("e3x: no addresses")
 
-type Ident struct {
+type Identity struct {
 	hashname hashname.H
 	keys     cipherset.Keys
 	parts    cipherset.Parts
 	addrs    []transports.Addr
 }
 
-func NewIdent(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Addr) (*Ident, error) {
+func NewIdentity(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Addr) (*Identity, error) {
 	var err error
 
-	ident := &Ident{
+	ident := &Identity{
 		keys:  keys,
 		parts: parts,
 		addrs: addrs,
@@ -30,10 +30,6 @@ func NewIdent(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Add
 
 	if len(ident.keys) == 0 {
 		return nil, ErrNoKeys
-	}
-
-	if len(ident.addrs) == 0 {
-		return nil, ErrNoAddress
 	}
 
 	if ident.parts == nil {
@@ -52,25 +48,25 @@ func NewIdent(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Add
 	return ident, nil
 }
 
-func (ident *Ident) Hashname() hashname.H {
-	return ident.hashname
+func (i *Identity) Hashname() hashname.H {
+	return i.hashname
 }
 
-func (ident *Ident) String() string {
-	return string(ident.hashname)
+func (i *Identity) String() string {
+	return string(i.hashname)
 }
 
-func (ident *Ident) MarshalJSON() ([]byte, error) {
+func (i *Identity) MarshalJSON() ([]byte, error) {
 	var jsonAddr = struct {
 		Hashname hashname.H        `json:"hashname"`
 		Keys     cipherset.Keys    `json:"keys"`
 		Parts    cipherset.Parts   `json:"parts"`
 		Addrs    []transports.Addr `json:"paths"`
-	}{ident.hashname, ident.keys, ident.parts, ident.addrs}
+	}{i.hashname, i.keys, i.parts, i.addrs}
 	return json.Marshal(&jsonAddr)
 }
 
-func (ident *Ident) UnmarshalJSON(p []byte) error {
+func (i *Identity) UnmarshalJSON(p []byte) error {
 	var jsonAddr struct {
 		Hashname hashname.H        `json:"hashname"`
 		Keys     cipherset.Keys    `json:"keys"`
@@ -92,28 +88,32 @@ func (ident *Ident) UnmarshalJSON(p []byte) error {
 		addrs = append(addrs, addr)
 	}
 
-	b, err := NewIdent(jsonAddr.Keys, jsonAddr.Parts, addrs)
+	b, err := NewIdentity(jsonAddr.Keys, jsonAddr.Parts, addrs)
 	if err != nil {
 		return err
 	}
 
-	*ident = *b
+	*i = *b
 	return nil
 }
 
-func (ident *Ident) withPaths(paths []transports.Addr) *Ident {
-	return &Ident{
-		hashname: ident.hashname,
-		keys:     ident.keys,
-		parts:    ident.parts,
+func (i *Identity) withPaths(paths []transports.Addr) *Identity {
+	return &Identity{
+		hashname: i.hashname,
+		keys:     i.keys,
+		parts:    i.parts,
 		addrs:    paths,
 	}
 }
 
-func (ident *Ident) Keys() cipherset.Keys {
-	return ident.keys
+func (i *Identity) Keys() cipherset.Keys {
+	return i.keys
 }
 
-func (ident *Ident) Addresses() []transports.Addr {
-	return ident.addrs
+func (i *Identity) Addresses() []transports.Addr {
+	return i.addrs
+}
+
+func (i *Identity) Identify(e *Endpoint) (*Identity, error) {
+	return i, nil
 }

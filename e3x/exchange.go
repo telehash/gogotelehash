@@ -70,8 +70,8 @@ type Exchange struct {
 	lastLocalSeq  uint32
 	lastRemoteSeq uint32
 	nextSeq       uint32
-	localIdent    *Ident
-	remoteIdent   *Ident
+	localIdent    *Identity
+	remoteIdent   *Identity
 	csid          uint8
 	cipher        cipherset.State
 	nextChannelID uint32
@@ -110,9 +110,7 @@ func (x *Exchange) String() string {
 }
 
 func newExchange(
-	localIdent *Ident,
-	remoteIdent *Ident,
-	handshake cipherset.Handshake,
+	localIdent *Identity, remoteIdent *Identity, handshake cipherset.Handshake,
 	transportWriter transportWriter,
 	observers Observers,
 	handlers map[string]Handler,
@@ -188,7 +186,8 @@ func newExchange(
 	return x, nil
 }
 
-func (x *Exchange) dial() error {
+// Dial exchanges the initial handshakes. It will timeout after 2 minutes.
+func (x *Exchange) Dial() error {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
@@ -209,6 +208,7 @@ func (x *Exchange) dial() error {
 	return nil
 }
 
+// RemoteHashname returns the hashname of the remote peer.
 func (x *Exchange) RemoteHashname() hashname.H {
 	x.mtx.Lock()
 	hn := x.remoteIdent.Hashname()
@@ -216,13 +216,15 @@ func (x *Exchange) RemoteHashname() hashname.H {
 	return hn
 }
 
-func (x *Exchange) RemoteIdent() *Ident {
+// RemoteIdentity returns the Identity of the remote peer.
+func (x *Exchange) RemoteIdentity() *Identity {
 	x.mtx.Lock()
 	ident := x.remoteIdent.withPaths(x.addressBook.KnownAddresses())
 	x.mtx.Unlock()
 	return ident
 }
 
+// ActivePath returns the path that is currently used for channel packets.
 func (x *Exchange) ActivePath() transports.Addr {
 	x.mtx.Lock()
 	addr := x.addressBook.ActiveAddress()
@@ -240,95 +242,6 @@ func (x *Exchange) received(op opRead) {
 	bufpool.PutBuffer(op.msg)
 }
 
-func (x *Exchange) receivedHandshake(op opRead) bool {
-	x.mtx.Lock()
-	defer x.mtx.Unlock()
-
-	var (
-		pkt       *lob.Packet
-		handshake cipherset.Handshake
-		csid      uint8
-		seq       uint32
-		err       error
-	)
-
-	if len(op.msg) < 3 {
-		return false
-	}
-
-	pkt, err = lob.Decode(op.msg)
-	if err != nil {
-		tracef("handshake: invalid (%s)", err)
-		return false
-	}
-
-	if len(pkt.Head) != 1 {
-		tracef("handshake: invalid (%s)", "wrong header length")
-		return false
-	}
-	csid = uint8(pkt.Head[0])
-
-	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
-	if err != nil {
-		tracef("handshake: invalid (%s)", err)
-		return false
-	}
-	// tracef("(id=%d) receiving_handshake(%p) seq=%v", x.addressBook.id, x, handshake.At())
-
-	seq = handshake.At()
-	if seq < x.lastRemoteSeq {
-		tracef("handshake: invalid (%s)", "seq already seen")
-		return false
-	}
-
-	if csid != x.csid {
-		tracef("handshake: invalid (%s)", "wrong csid")
-		return false
-	}
-
-	if !x.cipher.ApplyHandshake(handshake) {
-		tracef("handshake: invalid (%s)", "wrong handshake")
-		return false
-	}
-
-	if x.remoteIdent == nil {
-		ident, err := NewIdent(
-			cipherset.Keys{x.csid: handshake.PublicKey()},
-			handshake.Parts(),
-			[]transports.Addr{op.src},
-		)
-		if err != nil {
-			tracef("handshake: invalid (%s)", err)
-			return false
-		}
-		x.remoteIdent = ident
-	}
-
-	// tracef("(id=%d) seq=%d state=%v isLocalSeq=%v", x.addressBook.id, seq, x.state, x.isLocalSeq(seq))
-
-	if x.isLocalSeq(seq) {
-		x.resetBreak()
-		x.addressBook.ReceivedHandshake(op.src)
-	} else {
-		addr := op.src.Associate(x.remoteIdent.Hashname())
-		x.addressBook.AddAddress(addr)
-		x.deliverHandshake(seq, addr)
-	}
-
-	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
-		// tracef("(id=%d) opened", x.addressBook.id)
-
-		x.state = ExchangeIdle
-		x.resetExpire()
-		x.cndState.Broadcast()
-
-		x.log.Printf("\x1B[32mOpened exchange\x1B[0m")
-		x.observers.Trigger(&ExchangeOpenedEvent{x})
-	}
-
-	return true
-}
-
 func (x *Exchange) onDeliverHandshake() {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
@@ -342,15 +255,10 @@ func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
-		pkt     = &lob.Packet{Head: []byte{x.csid}}
 		pktData []byte
 		addrs   []transports.Addr
 		err     error
 	)
-
-	if seq == 0 {
-		seq = x.getNextSeq()
-	}
 
 	if addr != nil {
 		addrs = append(addrs, addr)
@@ -359,17 +267,10 @@ func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 		addrs = x.addressBook.HandshakeAddresses()
 	}
 
-	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
+	pktData, err = x.generateHandshake(seq)
 	if err != nil {
 		return err
 	}
-
-	pktData, err = lob.Encode(pkt)
-	if err != nil {
-		return err
-	}
-
-	x.lastLocalSeq = seq
 
 	for _, addr := range addrs {
 		err := x.transportWriter.WriteMessage(pktData, addr)
@@ -662,6 +563,7 @@ func (x *Exchange) waitDone() {
 	x.mtx.Unlock()
 }
 
+// Open a channel.
 func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	var (
 		c     *Channel
@@ -696,17 +598,180 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	return c, nil
 }
 
+// LocalToken returns the token identifying the local side of the exchange.
 func (x *Exchange) LocalToken() cipherset.Token {
 	return x.cipher.LocalToken()
 }
 
+// RemoteToken returns the token identifying the remote side of the exchange.
 func (x *Exchange) RemoteToken() cipherset.Token {
 	return x.cipher.RemoteToken()
 }
 
+// AddPathCandidate adds a new path tto the exchange. The path is
+// only used when it performs better than any other paths.
 func (x *Exchange) AddPathCandidate(addr transports.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	x.addressBook.AddAddress(addr.Associate(x.remoteIdent.Hashname()))
+}
+
+// GenerateHandshake can be used to generate a new handshake packet.
+// This is useful when the exchange doesn't know where to send the handshakes yet.
+func (x *Exchange) GenerateHandshake() ([]byte, error) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	return x.generateHandshake(0)
+}
+
+func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
+	var (
+		pkt     = &lob.Packet{Head: []byte{x.csid}}
+		pktData []byte
+		err     error
+	)
+
+	if seq == 0 {
+		seq = x.getNextSeq()
+	}
+
+	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
+	if err != nil {
+		return nil, err
+	}
+
+	pktData, err = lob.Encode(pkt)
+	if err != nil {
+		return nil, err
+	}
+
+	if x.lastLocalSeq < seq {
+		x.lastLocalSeq = seq
+	}
+
+	return pktData, nil
+}
+
+// ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
+// handshake is accepted err is nil. When the handshake is a request-handshake
+// and it is accepted response will contain a response-handshake packet.
+func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	return x.applyHandshake(handshake, src)
+}
+
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
+	var (
+		seq uint32
+		err error
+	)
+
+	if handshake == nil {
+		return nil, false
+	}
+
+	seq = handshake.At()
+	if seq <= x.lastRemoteSeq {
+		// drop; a newer packet has already been processed
+		return nil, false
+	}
+
+	if handshake.CSID() != x.csid {
+		// drop; wrong csid
+		return nil, false
+	}
+
+	if !x.cipher.ApplyHandshake(handshake) {
+		// drop; handshake was rejected by the cipherset
+		return nil, false
+	}
+
+	if x.remoteIdent == nil {
+		ident, err := NewIdentity(
+			cipherset.Keys{handshake.CSID(): handshake.PublicKey()},
+			handshake.Parts(),
+			nil,
+		)
+		if err != nil {
+			// drop; invalid identity
+			return nil, false
+		}
+		x.remoteIdent = ident
+	}
+
+	srcAddr := src.Associate(x.remoteIdent.Hashname())
+
+	if x.isLocalSeq(seq) {
+		x.resetBreak()
+		x.addressBook.ReceivedHandshake(srcAddr)
+
+	} else {
+		x.addressBook.AddAddress(srcAddr)
+
+		response, err = x.generateHandshake(seq)
+		if err != nil {
+			// drop; invalid identity
+			return nil, false
+		}
+	}
+
+	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
+		x.state = ExchangeIdle
+		x.resetExpire()
+		x.cndState.Broadcast()
+
+		x.log.Printf("\x1B[32mOpened exchange\x1B[0m")
+		x.observers.Trigger(&ExchangeOpenedEvent{x})
+	}
+
+	return response, true
+}
+
+func (x *Exchange) receivedHandshake(op opRead) bool {
+	x.mtx.Lock()
+	defer x.mtx.Unlock()
+
+	var (
+		pkt       *lob.Packet
+		handshake cipherset.Handshake
+		csid      uint8
+		err       error
+	)
+
+	if len(op.msg) < 3 {
+		return false
+	}
+
+	pkt, err = lob.Decode(op.msg)
+	if err != nil {
+		tracef("handshake: invalid (%s)", err)
+		return false
+	}
+
+	if len(pkt.Head) != 1 {
+		tracef("handshake: invalid (%s)", "wrong header length")
+		return false
+	}
+	csid = uint8(pkt.Head[0])
+
+	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
+	if err != nil {
+		tracef("handshake: invalid (%s)", err)
+		return false
+	}
+
+	resp, ok := x.applyHandshake(handshake, op.src)
+	if !ok {
+		return false
+	}
+
+	if resp != nil {
+		x.transportWriter.WriteMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
+	}
+
+	return true
 }

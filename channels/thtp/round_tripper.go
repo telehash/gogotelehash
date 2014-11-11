@@ -23,7 +23,7 @@ type RoundTripper struct {
 }
 
 type Resolver interface {
-	Resolve(hn hashname.H) (*e3x.Ident, error)
+	Resolve(hn hashname.H) (*e3x.Identity, error)
 }
 
 func NewClient(e *e3x.Endpoint) *http.Client {
@@ -41,7 +41,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var (
 		hashname = hashname.H(req.URL.Host)
 		c        *e3x.Channel
-		ident    *e3x.Ident
+		ident    *e3x.Identity
 		resp     *http.Response
 		err      error
 	)
@@ -55,10 +55,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	} else {
 		// Use resolver provider by Endpoint
-		ident, err = rt.Endpoint.Resolve(hashname)
-		if err != nil {
-			return nil, err
-		}
+		panic("thtp needs a proper host identifier")
 
 	}
 

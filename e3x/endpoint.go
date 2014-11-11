@@ -1,7 +1,6 @@
 package e3x
 
 import (
-	"errors"
 	"os"
 	"sync"
 
@@ -22,8 +21,6 @@ const (
 	endpointStateBroken
 )
 
-var errDeferred = errors.New("e3x: deferred operation")
-
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
 	stateMtx sync.Mutex
@@ -40,7 +37,6 @@ type Endpoint struct {
 
 	cTerminate     chan struct{}
 	cMakeExchange  chan *opMakeExchange
-	cLookupIdent   chan *opLookupIdent
 	cTransportRead chan opRead
 	tokens         map[cipherset.Token]*exchangeEntry
 	hashnames      map[hashname.H]*exchangeEntry
@@ -61,14 +57,9 @@ type opReceived struct {
 }
 
 type opMakeExchange struct {
-	ident *Ident
+	ident *Identity
 	x     *Exchange
 	cErr  chan error
-}
-
-type opLookupIdent struct {
-	hashname hashname.H
-	cIdent   chan *Ident
 }
 
 type opRead struct {
@@ -116,8 +107,8 @@ func (e *Endpoint) LocalHashname() hashname.H {
 	return e.hashname
 }
 
-func (e *Endpoint) LocalIdent() (*Ident, error) {
-	return NewIdent(e.keys, nil, e.transport.LocalAddresses())
+func (e *Endpoint) LocalIdentity() (*Identity, error) {
+	return NewIdentity(e.keys, nil, e.transport.LocalAddresses())
 }
 
 func (e *Endpoint) Start() error {
@@ -145,7 +136,6 @@ func (e *Endpoint) start() error {
 	e.tokens = make(map[cipherset.Token]*exchangeEntry)
 	e.hashnames = make(map[hashname.H]*exchangeEntry)
 	e.cMakeExchange = make(chan *opMakeExchange)
-	e.cLookupIdent = make(chan *opLookupIdent)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportRead = make(chan opRead)
 
@@ -234,9 +224,6 @@ func (e *Endpoint) run() {
 		case op := <-e.cTransportRead:
 			e.received(op)
 
-		case op := <-e.cLookupIdent:
-			e.lookupIdent(op)
-
 		}
 	}
 }
@@ -279,7 +266,7 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 	var (
 		entry      *exchangeEntry
 		x          *Exchange
-		localIdent *Ident
+		localIdent *Identity
 		csid       uint8
 		localKey   cipherset.Key
 		handshake  cipherset.Handshake
@@ -294,7 +281,7 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		return // drop
 	}
 
-	localIdent, err = e.LocalIdent()
+	localIdent, err = e.LocalIdentity()
 	if err != nil {
 		tracef("received_handshake() => drop // no local address")
 		return // drop
@@ -368,19 +355,17 @@ func (e *Endpoint) receivedPacket(op opRead) {
 	entry.x.received(op)
 }
 
-func (e *Endpoint) Dial(ident *Ident) (*Exchange, error) {
-	if ident == nil {
-		return nil, os.ErrInvalid
-	}
+func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
+	return i.Identify(e)
+}
 
-	op := opMakeExchange{ident, nil, make(chan error)}
+// GetExchange returns the exchange for identity. If the exchange already exists
+// it is simply returned otherwise a new exchange is created and registered.
+// Not that this GetExchange does not Dial.
+func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
+	op := opMakeExchange{identity, nil, make(chan error)}
 	e.cMakeExchange <- &op
 	err := <-op.cErr
-	if err != nil {
-		return nil, err
-	}
-
-	err = op.x.dial()
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +373,40 @@ func (e *Endpoint) Dial(ident *Ident) (*Exchange, error) {
 	return op.x, nil
 }
 
+// Dial will lookup the identity of identifier, get the exchange for the identity
+// and dial the exchange.
+func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
+	if identifier == nil || e == nil {
+		return nil, os.ErrInvalid
+	}
+
+	var (
+		identity *Identity
+		x        *Exchange
+		err      error
+	)
+
+	identity, err = e.Identify(identifier)
+	if err != nil {
+		return nil, err
+	}
+
+	x, err = e.GetExchange(identity)
+	if err != nil {
+		return nil, err
+	}
+
+	err = x.Dial()
+	if err != nil {
+		return nil, err
+	}
+
+	return x, nil
+}
+
 func (e *Endpoint) dial(op *opMakeExchange) {
+
+	// Check for existing exchange
 	if entry, found := e.hashnames[op.ident.hashname]; found {
 		op.x = entry.x
 		op.cErr <- nil
@@ -397,18 +415,20 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 
 	var (
 		entry      = &exchangeEntry{}
-		localIdent *Ident
+		localIdent *Identity
 		x          *Exchange
 
 		err error
 	)
 
-	localIdent, err = e.LocalIdent()
+	// Get local identity
+	localIdent, err = e.LocalIdentity()
 	if err != nil {
 		op.cErr <- err
 		return
 	}
 
+	// Make a new exchange struct
 	x, err = newExchange(localIdent, op.ident, nil,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
@@ -416,6 +436,7 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 		return
 	}
 
+	// register the new exchange
 	entry.x = x
 	e.tokens[x.LocalToken()] = entry
 	e.hashnames[op.ident.hashname] = entry
@@ -439,41 +460,4 @@ func (e *Endpoint) Use(key interface{}, mod Module) {
 
 func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
-}
-
-func (e *Endpoint) Resolve(hn hashname.H) (*Ident, error) {
-	var (
-		ident *Ident
-	)
-
-	if ident == nil {
-		op := opLookupIdent{hashname: hn, cIdent: make(chan *Ident)}
-		e.cLookupIdent <- &op
-		ident = <-op.cIdent
-	}
-
-	if ident == nil {
-		return nil, ErrNoAddress
-	}
-
-	return ident, nil
-}
-
-func (e *Endpoint) lookupIdent(op *opLookupIdent) {
-	entry, found := e.hashnames[op.hashname]
-	if !found || entry == nil {
-		op.cIdent <- nil
-		return
-	}
-
-	op.cIdent <- entry.x.RemoteIdent()
-}
-
-func waitForError(c <-chan error) error {
-	for err := range c {
-		if err != errDeferred {
-			return err
-		}
-	}
-	panic("unreachable")
 }

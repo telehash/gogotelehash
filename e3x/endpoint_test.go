@@ -42,10 +42,10 @@ func TestSimpleEndpoint(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	identA, err := ea.LocalIdent()
+	identA, err := ea.LocalIdentity()
 	assert.NoError(err)
 
-	identB, err := eb.LocalIdent()
+	identB, err := eb.LocalIdentity()
 	assert.NoError(err)
 
 	tracef("HELLO")

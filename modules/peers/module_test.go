@@ -1,4 +1,4 @@
-package mesh
+package peers
 
 import (
 	"testing"
@@ -8,8 +8,13 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/modules/bridge"
+	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/logs"
+
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
+	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 var log = logs.Module("test")
@@ -19,22 +24,39 @@ func TestPeers(t *testing.T) {
 
 	A := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
 	B := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
+	R := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
 
-	Register(A, nil)
-	Register(B, nil)
+	bridge.Register(R)
+	mesh.Register(A, nil)
+	mesh.Register(B, nil)
+	mesh.Register(R, nil)
+	Register(A, Config{})
+	Register(B, Config{})
+	Register(R, Config{})
 
 	assert.NoError(A.Start())
 	assert.NoError(B.Start())
+	assert.NoError(R.Start())
 
-	var AB_tag Tag
+	var BR_tag mesh.Tag
 	{
-		ident, err := B.LocalIdentity()
+		ident, err := R.LocalIdentity()
 		if assert.NoError(err) {
-			m := FromEndpoint(A)
-			AB_tag, err = m.Link(ident, nil)
+			m := mesh.FromEndpoint(B)
+			BR_tag, err = m.Link(ident, nil)
 			if assert.NoError(err) {
 				log.Println("acquired link")
 			}
+		}
+	}
+
+	{
+		ident, err := R.LocalIdentity()
+		if assert.NoError(err) {
+			peers := FromEndpoint(A)
+			ex, err := peers.IntroduceVia(B.LocalHashname(), ident)
+			assert.NoError(err)
+			assert.NotNil(ex)
 		}
 	}
 
@@ -43,12 +65,12 @@ func TestPeers(t *testing.T) {
 	<-fase1
 
 	log.Println("releasing the link")
-	AB_tag.Release()
-
+	BR_tag.Release()
 	<-fase2
 
 	assert.NoError(A.Stop())
 	assert.NoError(B.Stop())
+	assert.NoError(R.Stop())
 }
 
 func randomKeys(csids ...uint8) cipherset.Keys {

@@ -23,7 +23,7 @@ func TestBasicExchange(t *testing.T) {
 		observers = &modObservers{}
 
 		A = struct {
-			a *Ident
+			a *Identity
 			t transports.Transport
 			x *Exchange
 		}{
@@ -31,7 +31,7 @@ func TestBasicExchange(t *testing.T) {
 		}
 
 		B = struct {
-			a *Ident
+			a *Identity
 			t transports.Transport
 			x *Exchange
 		}{

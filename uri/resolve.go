@@ -5,7 +5,7 @@ import (
 )
 
 // Resolve resolves a URI into an Identity.
-func Resolve(uri *URI) (*e3x.Ident, error) {
+func Resolve(uri *URI) (*e3x.Identity, error) {
 	// Resolve order:
 	// - .public (if available)
 	// - DNS-SRV-udp
@@ -13,7 +13,7 @@ func Resolve(uri *URI) (*e3x.Ident, error) {
 	// - DNS-SRV-http
 	// - HTTP-well-known
 	var (
-		ident *e3x.Ident
+		ident *e3x.Identity
 		err   error
 	)
 

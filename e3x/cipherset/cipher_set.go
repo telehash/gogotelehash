@@ -18,7 +18,7 @@ var (
 type Cipher interface {
 	CSID() uint8
 
-	DecodeKey(pub, prv string) (Key, error)
+	DecodeKeyBytes(pub, prv []byte) (Key, error)
 	GenerateKey() (Key, error)
 
 	DecryptMessage(localKey, remoteKey Key, p []byte) ([]byte, error)
