@@ -27,6 +27,15 @@ var ErrInvalidKey = errors.New("hashname: invalid key")
 // H represents a hashname.
 type H string
 
+// Valid returns true when h is a valid hashname. A hashname must match [a-z2-7]{52}.
+func (h H) Valid() bool {
+	if len(h) != 52 {
+		return false
+	}
+
+	return base32util.ValidString(string(h))
+}
+
 // FromIntermediates derives a hashname from its intermediate parts.
 func FromIntermediates(parts cipherset.Parts) (H, error) {
 	if len(parts) == 0 {

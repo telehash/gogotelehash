@@ -9,7 +9,6 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/require"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports/inproc"

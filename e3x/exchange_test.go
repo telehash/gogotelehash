@@ -8,8 +8,6 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/logs"
-
-	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"
 )
 
 func TestBasicExchange(t *testing.T) {

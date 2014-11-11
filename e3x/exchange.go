@@ -156,7 +156,7 @@ func newExchange(
 		x.csid = csid
 
 		for _, addr := range remoteIdent.addrs {
-			x.addressBook.AddAddress(addr)
+			x.addressBook.AddAddress(addr.Associate(remoteIdent.Hashname()))
 		}
 	}
 
@@ -614,7 +614,7 @@ func (x *Exchange) AddPathCandidate(addr transports.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	x.addressBook.AddAddress(addr)
+	x.addressBook.AddAddress(addr.Associate(x.remoteIdent.Hashname()))
 }
 
 // GenerateHandshake can be used to generate a new handshake packet.
@@ -763,12 +763,13 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		return false
 	}
 
+	addr := op.src.Associate(x.remoteIdent.Hashname())
 	if x.isLocalSeq(handshake.At()) {
 		x.resetBreak()
-		x.addressBook.ReceivedHandshake(op.src)
+		x.addressBook.ReceivedHandshake(addr)
 	} else {
-		x.addressBook.AddAddress(op.src)
-		x.transportWriter.WriteMessage(resp, op.src)
+		x.addressBook.AddAddress(addr)
+		x.transportWriter.WriteMessage(resp, addr)
 	}
 
 	return true

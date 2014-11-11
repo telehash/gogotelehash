@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 
+	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/nat"
 )
@@ -39,8 +40,28 @@ type Config struct {
 }
 
 type addr struct {
+	hn  hashname.H
 	net string
 	net.UDPAddr
+}
+
+func NewAddr(ip net.IP, port uint16) (transports.Addr, error) {
+	if ip == nil || port == 0 {
+		return nil, errors.New("udp: invalid address")
+	}
+
+	a := &addr{}
+
+	a.IP = ip
+	a.Port = int(port)
+
+	if ip.To4() == nil {
+		a.net = UDPv6
+	} else {
+		a.net = UDPv4
+	}
+
+	return a, nil
 }
 
 type transport struct {
@@ -341,6 +362,17 @@ func (a *addr) String() string {
 	return string(data)
 }
 
+func (a *addr) Associate(hn hashname.H) transports.Addr {
+	b := new(addr)
+	*b = *a
+	b.hn = hn
+	return b
+}
+
+func (a *addr) Hashname() hashname.H {
+	return a.hn
+}
+
 func (a *addr) InternalAddr() (proto string, ip net.IP, port int) {
 	if a == nil ||
 		a.IP.IsLoopback() ||
@@ -358,5 +390,5 @@ func (a *addr) MakeGlobal(ip net.IP, port int) transports.Addr {
 		return nil
 	}
 
-	return &addr{a.net, net.UDPAddr{IP: ip, Port: port}}
+	return &addr{"", a.net, net.UDPAddr{IP: ip, Port: port}}
 }
