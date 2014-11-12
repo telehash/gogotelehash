@@ -36,6 +36,14 @@ func (h H) Valid() bool {
 	return base32util.ValidString(string(h))
 }
 
+func (h H) Network() string {
+	return "telehash"
+}
+
+func (h H) String() string {
+	return string(h)
+}
+
 // FromIntermediates derives a hashname from its intermediate parts.
 func FromIntermediates(parts cipherset.Parts) (H, error) {
 	if len(parts) == 0 {

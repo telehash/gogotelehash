@@ -3,13 +3,19 @@ package e3x
 import (
 	"errors"
 	"fmt"
+	"github.com/telehash/gogotelehash/util/bufpool"
 	"io"
+	"net"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+)
+
+var (
+	_ net.Conn = (*Channel)(nil)
 )
 
 type UnreachableEndpointError hashname.H
@@ -73,6 +79,7 @@ type Channel struct {
 	tOpenDeadline  *time.Timer
 	tCloseDeadline *time.Timer
 	tReadDeadline  *time.Timer
+	tWriteDeadline *time.Timer
 	tResend        *time.Timer
 	lastSentAck    time.Time
 }
@@ -121,6 +128,11 @@ func newChannel(
 	c.cndClose = sync.NewCond(&c.mtx)
 
 	c.setOpenDeadline()
+
+	c.tReadDeadline = time.AfterFunc(10*time.Second, c.onReadDeadlineReached)
+	c.tWriteDeadline = time.AfterFunc(10*time.Second, c.onWriteDeadlineReached)
+	c.tReadDeadline.Stop()
+	c.tWriteDeadline.Stop()
 
 	return c
 }
@@ -175,6 +187,11 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 }
 
 func (c *Channel) blockWrite() bool {
+	if c.writeDeadlineReached {
+		// Never block when the write deadline is reached
+		return false
+	}
+
 	if c.serverside && c.iSeq == cBlankSeq {
 		// tracef("WritePacket() => opening")
 		// When a server channel did not (yet) read an initial packet
@@ -866,4 +883,147 @@ func (c *Channel) unsetResender() {
 	if c.tResend != nil {
 		c.tResend.Stop()
 	}
+}
+
+// Read implements the net.Conn Read method.
+func (c *Channel) Read(b []byte) (int, error) {
+	pkt, err := c.ReadPacket()
+	if err != nil {
+		return 0, err
+	}
+
+	n := len(pkt.Body)
+	if len(b) < n {
+		return 0, io.ErrShortBuffer
+	}
+
+	copy(b, pkt.Body)
+	pkt.Free()
+
+	return n, nil
+}
+
+// Write implements the net.Conn Write method.
+func (c *Channel) Write(b []byte) (int, error) {
+	n := len(b)
+	pkt := &lob.Packet{Body: bufpool.GetBuffer()[:n]}
+	copy(pkt.Body, b)
+
+	err := c.WritePacket(pkt)
+	if err != nil {
+		return 0, err
+	}
+
+	return n, nil
+}
+
+// SetDeadline implements the net.Conn SetDeadline method.
+func (c *Channel) SetDeadline(d time.Time) error {
+	c.mtx.Lock()
+
+	now := time.Now()
+
+	if d.IsZero() {
+		c.tReadDeadline.Stop()
+		c.readDeadlineReached = false
+		c.tWriteDeadline.Stop()
+		c.writeDeadlineReached = false
+	} else if d.Before(now) {
+		c.tReadDeadline.Stop()
+		c.readDeadlineReached = true
+		c.tWriteDeadline.Stop()
+		c.writeDeadlineReached = true
+	} else {
+		c.tReadDeadline.Reset(d.Sub(now))
+		c.readDeadlineReached = false
+		c.tWriteDeadline.Reset(d.Sub(now))
+		c.writeDeadlineReached = false
+	}
+
+	c.cndClose.Broadcast()
+	c.cndRead.Broadcast()
+	c.cndWrite.Broadcast()
+
+	c.mtx.Unlock()
+	return nil
+}
+
+// SetReadDeadline implements the net.Conn SetReadDeadline method.
+func (c *Channel) SetReadDeadline(d time.Time) error {
+	c.mtx.Lock()
+
+	now := time.Now()
+
+	if d.IsZero() {
+		c.tReadDeadline.Stop()
+		c.readDeadlineReached = false
+	} else if d.Before(now) {
+		c.tReadDeadline.Stop()
+		c.readDeadlineReached = true
+	} else {
+		c.tReadDeadline.Reset(d.Sub(now))
+		c.readDeadlineReached = false
+	}
+
+	c.cndClose.Broadcast()
+	c.cndRead.Broadcast()
+
+	c.mtx.Unlock()
+	return nil
+}
+
+// SetWriteDeadline implements the net.Conn SetWriteDeadline method.
+func (c *Channel) SetWriteDeadline(d time.Time) error {
+	c.mtx.Lock()
+
+	now := time.Now()
+
+	if d.IsZero() {
+		c.tWriteDeadline.Stop()
+		c.writeDeadlineReached = false
+	} else if d.Before(now) {
+		c.tWriteDeadline.Stop()
+		c.writeDeadlineReached = true
+	} else {
+		c.tWriteDeadline.Reset(d.Sub(now))
+		c.writeDeadlineReached = false
+	}
+
+	c.cndClose.Broadcast()
+	c.cndWrite.Broadcast()
+
+	c.mtx.Unlock()
+	return nil
+}
+
+func (c *Channel) onReadDeadlineReached() {
+	c.mtx.Lock()
+
+	c.readDeadlineReached = true
+
+	c.cndClose.Broadcast()
+	c.cndRead.Broadcast()
+
+	c.mtx.Unlock()
+}
+
+func (c *Channel) onWriteDeadlineReached() {
+	c.mtx.Lock()
+
+	c.writeDeadlineReached = true
+
+	c.cndClose.Broadcast()
+	c.cndWrite.Broadcast()
+
+	c.mtx.Unlock()
+}
+
+// LocalAddr returns the local network address.
+func (c *Channel) LocalAddr() net.Addr {
+	return nil
+}
+
+// RemoteAddr returns the remote network address.
+func (c *Channel) RemoteAddr() net.Addr {
+	return c.RemoteHashname()
 }
