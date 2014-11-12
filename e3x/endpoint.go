@@ -23,10 +23,10 @@ const (
 
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
-	stateMtx sync.Mutex
-	wg       sync.WaitGroup
-	state    endpointState
-	err      error
+	mtx   sync.Mutex
+	wg    sync.WaitGroup
+	state endpointState
+	err   error
 
 	hashname        hashname.H
 	keys            cipherset.Keys
@@ -112,8 +112,8 @@ func (e *Endpoint) LocalIdentity() (*Identity, error) {
 }
 
 func (e *Endpoint) Start() error {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	err := e.start()
 	if err != nil {
@@ -170,8 +170,8 @@ func (e *Endpoint) start() error {
 }
 
 func (e *Endpoint) Stop() error {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	return e.stop()
 }
@@ -436,8 +436,9 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 }
 
 func (e *Endpoint) Use(key interface{}, mod Module) {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
 	if e.state != endpointStateUnknown {
 		panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
 	}
