@@ -3,7 +3,6 @@ package e3x
 import (
 	"errors"
 	"fmt"
-	"github.com/telehash/gogotelehash/util/bufpool"
 	"io"
 	"net"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var (
