@@ -24,7 +24,6 @@ const (
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
 	mtx   sync.Mutex
-	wg    sync.WaitGroup
 	state endpointState
 	err   error
 
@@ -35,12 +34,10 @@ type Endpoint struct {
 	transport       transports.Transport
 	modules         map[interface{}]Module
 
-	cTerminate     chan struct{}
-	cMakeExchange  chan *opMakeExchange
-	cTransportRead chan opRead
-	tokens         map[cipherset.Token]*Exchange
-	hashnames      map[hashname.H]*Exchange
-	handlers       map[string]Handler
+	cTerminate chan struct{}
+	tokens     map[cipherset.Token]*Exchange
+	hashnames  map[hashname.H]*Exchange
+	handlers   map[string]Handler
 }
 
 type Handler interface {
@@ -54,12 +51,6 @@ func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 type opReceived struct {
 	pkt *lob.Packet
 	opRead
-}
-
-type opMakeExchange struct {
-	ident *Identity
-	x     *Exchange
-	cErr  chan error
 }
 
 type opRead struct {
@@ -131,9 +122,7 @@ func (e *Endpoint) start() error {
 
 	e.tokens = make(map[cipherset.Token]*Exchange)
 	e.hashnames = make(map[hashname.H]*Exchange)
-	e.cMakeExchange = make(chan *opMakeExchange)
 	e.cTerminate = make(chan struct{}, 1)
-	e.cTransportRead = make(chan opRead)
 
 	for _, mod := range e.modules {
 		err := mod.Init()
@@ -159,9 +148,6 @@ func (e *Endpoint) start() error {
 		}
 	}
 
-	e.wg.Add(1)
-	go e.run()
-
 	return nil
 }
 
@@ -181,11 +167,14 @@ func (e *Endpoint) stop() error {
 		}
 	}
 
-	select {
-	case <-e.cTerminate: // closed
-	default:
-		close(e.cTerminate)
+	for _, x := range e.hashnames {
+		x.onBreak()
 	}
+	for _, x := range e.tokens {
+		x.onBreak()
+	}
+
+	e.transport.Close() //TODO handle err
 
 	if e.state == endpointStateRunning {
 		e.state = endpointStateTerminated
@@ -193,35 +182,7 @@ func (e *Endpoint) stop() error {
 		e.state = endpointStateBroken
 	}
 
-	e.wg.Wait()
-
 	return e.err
-}
-
-func (e *Endpoint) run() {
-	defer e.wg.Done()
-
-	for {
-		select {
-
-		case <-e.cTerminate:
-			for _, x := range e.hashnames {
-				x.onBreak()
-			}
-			for _, x := range e.tokens {
-				x.onBreak()
-			}
-			e.transport.Close() //TODO handle err
-			return
-
-		case op := <-e.cMakeExchange:
-			e.dial(op)
-
-		case op := <-e.cTransportRead:
-			e.received(op)
-
-		}
-	}
 }
 
 func (e *Endpoint) runReader() {
@@ -231,11 +192,14 @@ func (e *Endpoint) runReader() {
 		if err == transports.ErrClosed {
 			return
 		}
-		e.cTransportRead <- opRead{buf[:n], src, err}
+
+		e.received(opRead{buf[:n], src, err})
 	}
 }
 
 func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	x := e.hashnames[event.Exchange.remoteIdent.Hashname()]
 	if x != nil {
@@ -246,6 +210,9 @@ func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 }
 
 func (e *Endpoint) received(op opRead) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
 		e.receivedHandshake(op)
 		return
@@ -340,20 +307,6 @@ func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
 	return i.Identify(e)
 }
 
-// GetExchange returns the exchange for identity. If the exchange already exists
-// it is simply returned otherwise a new exchange is created and registered.
-// Not that this GetExchange does not Dial.
-func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
-	op := opMakeExchange{identity, nil, make(chan error)}
-	e.cMakeExchange <- &op
-	err := <-op.cErr
-	if err != nil {
-		return nil, err
-	}
-
-	return op.x, nil
-}
-
 // Dial will lookup the identity of identifier, get the exchange for the identity
 // and dial the exchange.
 func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
@@ -385,13 +338,16 @@ func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
 	return x, nil
 }
 
-func (e *Endpoint) dial(op *opMakeExchange) {
+// GetExchange returns the exchange for identity. If the exchange already exists
+// it is simply returned otherwise a new exchange is created and registered.
+// Not that this GetExchange does not Dial.
+func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	// Check for existing exchange
-	if x, found := e.hashnames[op.ident.hashname]; found {
-		op.x = x
-		op.cErr <- nil
-		return
+	if x, found := e.hashnames[identity.hashname]; found && x != nil {
+		return x, nil
 	}
 
 	var (
@@ -404,25 +360,21 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	// Get local identity
 	localIdent, err = e.LocalIdentity()
 	if err != nil {
-		op.cErr <- err
-		return
+		return nil, err
 	}
 
 	// Make a new exchange struct
-	x, err = newExchange(localIdent, op.ident, nil,
+	x, err = newExchange(localIdent, identity, nil,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
-		op.cErr <- err
-		return
+		return nil, err
 	}
 
 	// register the new exchange
 	e.tokens[x.LocalToken()] = x
-	e.hashnames[op.ident.hashname] = x
+	e.hashnames[identity.hashname] = x
 
-	op.x = x
-	op.cErr <- nil
-	return
+	return x, nil
 }
 
 func (e *Endpoint) Use(key interface{}, mod Module) {
