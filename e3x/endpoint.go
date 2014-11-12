@@ -277,48 +277,40 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 
 	token = cipherset.ExtractToken(op.msg)
 	if token == cipherset.ZeroToken {
-		tracef("received_handshake() => drop // no token")
 		return // drop
 	}
 
 	localIdent, err = e.LocalIdentity()
 	if err != nil {
-		tracef("received_handshake() => drop // no local address")
 		return // drop
 	}
 
 	csid = uint8(op.msg[2])
 	localKey = localIdent.keys[csid]
 	if localKey == nil {
-		tracef("received_handshake() => drop // no local key")
 		return // drop
 	}
 
 	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.msg[3:])
 	if err != nil {
-		tracef("received_handshake() => drop // invalid handshake err=%s", err)
 		return // drop
 	}
 
 	hn, err = hashname.FromKeyAndIntermediates(csid,
 		handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
-		tracef("received_handshake() => drop // invalid hashname err=%s", err)
 		return // drop
 	}
 
 	entry = e.hashnames[hn]
 	if entry != nil {
-		// tracef("received_handshake() => found hashname %x %s", token, hn)
 		entry.x.received(op)
-		// tracef("received_handshake() => done %x", token)
 		return
 	}
 
 	x, err = newExchange(localIdent, nil, handshake,
 		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
 	if err != nil {
-		tracef("received_handshake() => invalid exchange err=%s", err)
 		return // drop
 	}
 
@@ -326,12 +318,10 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		x: x,
 	}
 
-	// tracef("received_handshake() => registered %x %s", token, hn)
 	e.hashnames[hn] = entry
 	e.tokens[x.LocalToken()] = entry
 	x.state = ExchangeDialing
 	x.received(op)
-	// tracef("received_handshake() => done %x", token)
 }
 
 func (e *Endpoint) receivedPacket(op opRead) {
@@ -345,7 +335,6 @@ func (e *Endpoint) receivedPacket(op opRead) {
 
 	entry := e.tokens[token]
 	if entry == nil {
-		tracef("unknown token")
 		return // drop
 	}
 
