@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"io"
 
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/salsa20"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/salsa20"
 
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/util/bufpool"

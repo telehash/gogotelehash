@@ -24,7 +24,7 @@ package salsa20
 // TODO(agl): implement XORKeyStream12 and XORKeyStream8 - the reduced round variants of Salsa20.
 
 import (
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/salsa20/salsa"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/salsa20/salsa"
 )
 
 // XORKeyStream crypts bytes from in to out using the given key and nonce. In

@@ -18,9 +18,9 @@ This package is interoperable with NaCl: http://nacl.cr.yp.to/box.html.
 package box
 
 import (
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/curve25519"
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/nacl/secretbox"
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/salsa20/salsa"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/curve25519"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/nacl/secretbox"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/salsa20/salsa"
 	"io"
 )
 

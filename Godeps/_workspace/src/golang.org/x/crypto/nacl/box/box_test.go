@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/code.google.com/p/go.crypto/curve25519"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/curve25519"
 )
 
 func TestSealOpen(t *testing.T) {
