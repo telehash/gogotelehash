@@ -193,21 +193,18 @@ func (c *Channel) blockWrite() bool {
 	}
 
 	if c.serverside && c.iSeq == cBlankSeq {
-		// tracef("WritePacket() => opening")
 		// When a server channel did not (yet) read an initial packet
 		// then all writes must be deferred.
 		return true
 	}
 
 	if !c.serverside && c.iSeq == cBlankSeq && c.oSeq >= cInitialSeq {
-		// tracef("WritePacket() => opening")
 		// When a client channel sent a packet but did not yet read a response
 		// to the initial packet then subsequent writes must be deferred.
 		return true
 	}
 
 	if len(c.writeBuffer) >= cWriteBufferSize {
-		// tracef("WritePacket() => blocking")
 		// When a channel filled its write buffer then
 		// all writes must be deferred.
 		return true
@@ -218,21 +215,18 @@ func (c *Channel) blockWrite() bool {
 
 func (c *Channel) write(pkt *lob.Packet) error {
 	if c.broken {
-		// tracef("WritePacket() => broken")
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
 	if c.writeDeadlineReached {
-		// tracef("WritePacket() => timeout")
 		// When a channel reached a write deadline then all writes
 		// must return a ErrTimeout.
 		return ErrTimeout
 	}
 
 	if c.deliveredEnd {
-		// tracef("WritePacket() => ended")
 		// When a channel sent a packet with the "end" header set
 		// then all subsequent writes must return io.EOF
 		return io.EOF
@@ -297,35 +291,30 @@ func (c *Channel) ReadPacket() (*lob.Packet, error) {
 
 func (c *Channel) blockRead() bool {
 	if c.broken {
-		// tracef("ReadPacket() => broken")
 		// When a channel is marked as broken the all reads
 		// must return a BrokenChannelError.
 		return false
 	}
 
 	if c.readDeadlineReached {
-		// tracef("ReadPacket() => timeout")
 		// When a channel reached a read deadline then all reads
 		// must return a ErrTimeout.
 		return false
 	}
 
 	if c.readEnd {
-		// tracef("ReadPacket() => ended")
 		// When a channel read a packet with the "end" header set
 		// then all subsequent reads must return io.EOF
 		return false
 	}
 
 	if c.serverside && c.oSeq == cBlankSeq && c.iSeq >= cInitialSeq {
-		// tracef("server.ReadPacket() => opening")
 		// When a server channel read a packet but did not yet respond
 		// to the initial packet then subsequent reads must be deferred.
 		return true
 	}
 
 	if !c.serverside && c.oSeq == cBlankSeq {
-		// tracef("client.ReadPacket() => opening")
 		// When a client channel did not (yet) send an initial packet
 		// then all reads must be deferred.
 		return true
@@ -333,7 +322,6 @@ func (c *Channel) blockRead() bool {
 
 	rSeq := c.iSeq + 1
 	if c.readBuffer[rSeq] == nil {
-		// tracef("ReadPacket() => blocking")
 		// Packet has not yet been received
 		// defer the read
 		return true
@@ -344,21 +332,18 @@ func (c *Channel) blockRead() bool {
 
 func (c *Channel) peekPacket() (*lob.Packet, error) {
 	if c.broken {
-		// tracef("ReadPacket() => broken")
 		// When a channel is marked as broken the all reads
 		// must return a BrokenChannelError.
 		return nil, &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
 	if c.readDeadlineReached {
-		// tracef("ReadPacket() => timeout")
 		// When a channel reached a read deadline then all reads
 		// must return a ErrTimeout.
 		return nil, ErrTimeout
 	}
 
 	if c.readEnd {
-		// tracef("ReadPacket() => ended")
 		// When a channel read a packet with the "end" header set
 		// then all subsequent reads must return io.EOF
 		return nil, io.EOF
@@ -449,7 +434,6 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 			}
 
 			for i := oldAck + 1; i <= ack; i++ {
-				// tracef("W-BUF->DEL(%d)", i)
 				delete(c.writeBuffer, i)
 				changed = true
 			}
@@ -472,7 +456,6 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	}
 
 	if !hasSeq {
-		// tracef("ReceivePacket() => drop // no seq")
 		// drop: is not a valid packet
 		c.mtx.Unlock()
 		return
@@ -484,21 +467,18 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	}
 
 	if seq <= c.iSeq {
-		// tracef("ReceivePacket() => drop // seq is already read")
 		// drop: the reader already read a packet with this seq
 		c.mtx.Unlock()
 		return
 	}
 
 	if _, found := c.readBuffer[seq]; found {
-		// tracef("ReceivePacket() => drop // seq is already buffered")
 		// drop: a packet with this seq is already buffered
 		c.mtx.Unlock()
 		return
 	}
 
 	if len(c.readBuffer) >= cReadBufferSize {
-		// tracef("ReceivePacket() => drop // buffer is full")
 		// drop: the read buffer is full
 		c.mtx.Unlock()
 		return
@@ -512,7 +492,6 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		c.deliverAck()
 	}
 
-	// tracef("ReceivePacket() => buffered")
 	c.readBuffer[seq] = &readBufferEntry{pkt, seq, end}
 
 	c.cndRead.Signal()
@@ -531,7 +510,6 @@ func (c *Channel) Error(err error) error {
 	c.mtx.Lock()
 
 	if c.broken {
-		// tracef("Close() => broken")
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
 		c.mtx.Unlock()
@@ -572,7 +550,6 @@ func (c *Channel) Close() error {
 	c.mtx.Lock()
 
 	if c.broken {
-		// tracef("Close() => broken")
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
 		c.mtx.Unlock()
@@ -617,7 +594,6 @@ func (c *Channel) Close() error {
 	}
 
 	if c.broken {
-		// tracef("Close() => broken")
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
 		c.mtx.Unlock()
@@ -678,7 +654,6 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 		last      = ack
 	)
 
-	// tracef("MISS: %v", miss)
 	for _, delta := range miss {
 		seq := last + delta
 		last = seq
@@ -692,7 +667,6 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 			continue
 		}
 
-		// tracef("MISS->SND(%d)", seq)
 		if c.iSeq >= cInitialSeq {
 			e.pkt.Header().SetUint32("ack", c.iSeq)
 		}
@@ -762,7 +736,6 @@ func (c *Channel) deliverAck() {
 	pkt.Header().SetUint32("c", c.id)
 	c.applyAckHeaders(pkt)
 	c.x.deliverPacket(pkt)
-	tracef("ACK serverside=%v hdr=%v", c.serverside, pkt.Header())
 }
 
 func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
@@ -785,7 +758,6 @@ func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
 	c.iAckedSeq = c.iSeq
 	c.lastSentAck = time.Now()
 
-	// tracef("ACK(%d)", c.iSeq)
 }
 
 func (c *Channel) setCloseDeadline() {

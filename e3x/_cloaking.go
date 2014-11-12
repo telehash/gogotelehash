@@ -1,5 +1,7 @@
 package e3x
 
+// This needs to be implmented at the transport layer.
+
 import (
 	"crypto/rand"
 	"io"

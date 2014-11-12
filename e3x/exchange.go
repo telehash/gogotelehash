@@ -251,7 +251,6 @@ func (x *Exchange) onDeliverHandshake() {
 }
 
 func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
-	// tracef("(id=%d) delivering_handshake(%p, spray=%v, addr=%s)",
 	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
@@ -298,7 +297,6 @@ func (x *Exchange) rescheduleHandshake() {
 	}
 
 	var d = time.Duration(x.nextHandshake) * time.Second
-	// tracef("(id=%d) reschedule_handshake(%s)",x.addressBook.id, d)
 	x.tDeliverHandshake.Reset(d)
 }
 
@@ -311,7 +309,6 @@ func (x *Exchange) receivedPacket(op opRead) {
 	{
 		x.mtx.Lock()
 		if !x.state.IsOpen() {
-			tracef("drop // exchange not opened")
 			return // drop
 		}
 		x.mtx.Unlock()
@@ -331,7 +328,6 @@ func (x *Exchange) receivedPacket(op opRead) {
 
 	if !hasC {
 		// drop: missign "c"
-		tracef("drop // no `c`")
 		return
 	}
 
@@ -340,14 +336,12 @@ func (x *Exchange) receivedPacket(op opRead) {
 		entry = x.channels[cid]
 		if entry == nil {
 			if !hasType {
-				tracef("drop // no `type`")
 				x.mtx.Unlock()
 				return // drop (missing typ)
 			}
 
 			h := x.handlers[typ]
 			if h == nil {
-				tracef("drop // no handler for `%s`", typ)
 				x.mtx.Unlock()
 				return // drop (no handler)
 			}
@@ -407,7 +401,6 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
 }
 
 func (x *Exchange) expire(err error) {
-	tracef("expire(%p, %q)", x, err)
 
 	x.mtx.Lock()
 	if err == nil {
@@ -748,19 +741,16 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 
 	pkt, err = lob.Decode(op.msg)
 	if err != nil {
-		tracef("handshake: invalid (%s)", err)
 		return false
 	}
 
 	if len(pkt.Head) != 1 {
-		tracef("handshake: invalid (%s)", "wrong header length")
 		return false
 	}
 	csid = uint8(pkt.Head[0])
 
 	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
 	if err != nil {
-		tracef("handshake: invalid (%s)", err)
 		return false
 	}
 

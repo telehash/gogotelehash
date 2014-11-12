@@ -315,14 +315,12 @@ func TestFloodReliable(t *testing.T) {
 			pkt, err = c.ReadPacket()
 			assert.NoError(err)
 			assert.NotNil(pkt)
-			tracef("S> RX open")
 
 			for i := 0; i < 1000000; i++ {
 				pkt := &lob.Packet{}
 				pkt.Header().SetInt("flood_id", i)
 				err = c.WritePacket(pkt)
 				assert.NoError(err)
-				tracef("S> TX %d", i)
 			}
 		}))
 
@@ -337,7 +335,6 @@ func TestFloodReliable(t *testing.T) {
 
 		err = c.WritePacket(&lob.Packet{})
 		assert.NoError(err)
-		tracef("C> TX open")
 
 		lastID := -1
 		for {
@@ -354,7 +351,6 @@ func TestFloodReliable(t *testing.T) {
 				id, _ := pkt.Header().GetInt("flood_id")
 				assert.True(lastID < id)
 				lastID = id
-				tracef("C> RX %d", id)
 			}
 		}
 	})
