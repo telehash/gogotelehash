@@ -38,8 +38,8 @@ type Endpoint struct {
 	cTerminate     chan struct{}
 	cMakeExchange  chan *opMakeExchange
 	cTransportRead chan opRead
-	tokens         map[cipherset.Token]*exchangeEntry
-	hashnames      map[hashname.H]*exchangeEntry
+	tokens         map[cipherset.Token]*Exchange
+	hashnames      map[hashname.H]*Exchange
 	handlers       map[string]Handler
 }
 
@@ -66,10 +66,6 @@ type opRead struct {
 	msg []byte
 	src transports.Addr
 	err error
-}
-
-type exchangeEntry struct {
-	x *Exchange
 }
 
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
@@ -133,8 +129,8 @@ func (e *Endpoint) start() error {
 		panic("e3x: Endpoint cannot be started more than once")
 	}
 
-	e.tokens = make(map[cipherset.Token]*exchangeEntry)
-	e.hashnames = make(map[hashname.H]*exchangeEntry)
+	e.tokens = make(map[cipherset.Token]*Exchange)
+	e.hashnames = make(map[hashname.H]*Exchange)
 	e.cMakeExchange = make(chan *opMakeExchange)
 	e.cTerminate = make(chan struct{}, 1)
 	e.cTransportRead = make(chan opRead)
@@ -209,11 +205,11 @@ func (e *Endpoint) run() {
 		select {
 
 		case <-e.cTerminate:
-			for _, e := range e.hashnames {
-				e.x.onBreak()
+			for _, x := range e.hashnames {
+				x.onBreak()
 			}
-			for _, e := range e.tokens {
-				e.x.onBreak()
+			for _, x := range e.tokens {
+				x.onBreak()
 			}
 			e.transport.Close() //TODO handle err
 			return
@@ -241,10 +237,10 @@ func (e *Endpoint) runReader() {
 
 func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 
-	entry := e.hashnames[event.Exchange.remoteIdent.Hashname()]
-	if entry != nil {
-		delete(e.hashnames, event.Exchange.remoteIdent.Hashname())
-		delete(e.tokens, entry.x.LocalToken())
+	x := e.hashnames[event.Exchange.remoteIdent.Hashname()]
+	if x != nil {
+		delete(e.hashnames, x.remoteIdent.Hashname())
+		delete(e.tokens, x.LocalToken())
 	}
 
 }
@@ -257,6 +253,7 @@ func (e *Endpoint) received(op opRead) {
 
 	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
 		e.receivedPacket(op)
+		return
 	}
 
 	// drop
@@ -264,7 +261,6 @@ func (e *Endpoint) received(op opRead) {
 
 func (e *Endpoint) receivedHandshake(op opRead) {
 	var (
-		entry      *exchangeEntry
 		x          *Exchange
 		localIdent *Identity
 		csid       uint8
@@ -302,9 +298,9 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		return // drop
 	}
 
-	entry = e.hashnames[hn]
-	if entry != nil {
-		entry.x.received(op)
+	x = e.hashnames[hn]
+	if x != nil {
+		x.received(op)
 		return
 	}
 
@@ -314,12 +310,8 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		return // drop
 	}
 
-	entry = &exchangeEntry{
-		x: x,
-	}
-
-	e.hashnames[hn] = entry
-	e.tokens[x.LocalToken()] = entry
+	e.hashnames[hn] = x
+	e.tokens[x.LocalToken()] = x
 	x.state = ExchangeDialing
 	x.received(op)
 }
@@ -333,15 +325,15 @@ func (e *Endpoint) receivedPacket(op opRead) {
 		return // drop
 	}
 
-	entry := e.tokens[token]
-	if entry == nil {
+	x := e.tokens[token]
+	if x == nil {
 		return // drop
 	}
 
-	e.log.To(entry.x.RemoteHashname()).Module("e3x.tx").
+	e.log.To(x.RemoteHashname()).Module("e3x.tx").
 		Printf("\x1B[36mRCV\x1B[0m token=%x from=%s", token, op.src)
 
-	entry.x.received(op)
+	x.received(op)
 }
 
 func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
@@ -396,14 +388,13 @@ func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
 func (e *Endpoint) dial(op *opMakeExchange) {
 
 	// Check for existing exchange
-	if entry, found := e.hashnames[op.ident.hashname]; found {
-		op.x = entry.x
+	if x, found := e.hashnames[op.ident.hashname]; found {
+		op.x = x
 		op.cErr <- nil
 		return
 	}
 
 	var (
-		entry      = &exchangeEntry{}
 		localIdent *Identity
 		x          *Exchange
 
@@ -426,9 +417,8 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	}
 
 	// register the new exchange
-	entry.x = x
-	e.tokens[x.LocalToken()] = entry
-	e.hashnames[op.ident.hashname] = entry
+	e.tokens[x.LocalToken()] = x
+	e.hashnames[op.ident.hashname] = x
 
 	op.x = x
 	op.cErr <- nil
