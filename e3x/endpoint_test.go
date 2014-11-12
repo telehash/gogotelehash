@@ -48,7 +48,6 @@ func TestSimpleEndpoint(t *testing.T) {
 	identB, err := eb.LocalIdentity()
 	assert.NoError(err)
 
-	tracef("HELLO")
 	_, err = ea.Dial(identB)
 	assert.NoError(err)
 
@@ -59,7 +58,6 @@ func TestSimpleEndpoint(t *testing.T) {
 	assert.NoError(err)
 
 	time.Sleep(2*time.Minute + 10*time.Second)
-	tracef("BYE")
 
 	err = ea.Stop()
 	assert.NoError(err)
