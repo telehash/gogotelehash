@@ -34,5 +34,5 @@ func (i hashnameIdentifier) Identify(endpoint *Endpoint) (*Identity, error) {
 		return nil, ErrUnidentifiable
 	}
 
-	return x.x.RemoteIdentity(), nil
+	return x.RemoteIdentity(), nil
 }

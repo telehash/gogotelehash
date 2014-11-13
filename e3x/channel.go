@@ -992,7 +992,7 @@ func (c *Channel) onWriteDeadlineReached() {
 
 // LocalAddr returns the local network address.
 func (c *Channel) LocalAddr() net.Addr {
-	return nil
+	return c.Exchange().localIdent.Hashname()
 }
 
 // RemoteAddr returns the remote network address.

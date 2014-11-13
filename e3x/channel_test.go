@@ -200,22 +200,21 @@ func TestPingPong(t *testing.T) {
 			err    error
 		)
 
-		A.AddHandler("ping", HandlerFunc(func(c *Channel) {
-			var (
-				err error
-			)
+		go func() {
+			c, err := A.Listen("ping", false).AcceptChannel()
 
-			defer c.Close()
+			if assert.NoError(err) && assert.NotNil(c) {
+				defer c.Close()
 
-			pkt, err = c.ReadPacket()
-			assert.NoError(err)
-			if assert.NotNil(pkt) {
-				assert.Equal("ping", string(pkt.Body))
+				pkt, err = c.ReadPacket()
+				if assert.NoError(err) && assert.NotNil(pkt) {
+					assert.Equal("ping", string(pkt.Body))
 
-				err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
-				assert.NoError(err)
+					err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+					assert.NoError(err)
+				}
 			}
-		}))
+		}()
 
 		ident, err = A.LocalIdentity()
 		assert.NoError(err)
@@ -249,22 +248,20 @@ func TestPingPongReliable(t *testing.T) {
 			err    error
 		)
 
-		A.AddHandler("ping", HandlerFunc(func(c *Channel) {
-			var (
-				err error
-			)
+		go func() {
+			c, err := A.Listen("ping", true).AcceptChannel()
+			if assert.NoError(err) && assert.NotNil(c) {
+				defer c.Close()
 
-			defer c.Close()
+				pkt, err = c.ReadPacket()
+				if assert.NoError(err) && assert.NotNil(pkt) {
+					assert.Equal("ping", string(pkt.Body))
 
-			pkt, err = c.ReadPacket()
-			assert.NoError(err)
-			if assert.NotNil(pkt) {
-				assert.Equal("ping", string(pkt.Body))
-
-				err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
-				assert.NoError(err)
+					err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+					assert.NoError(err)
+				}
 			}
-		}))
+		}()
 
 		ident, err = A.LocalIdentity()
 		assert.NoError(err)
@@ -305,24 +302,23 @@ func TestFloodReliable(t *testing.T) {
 			err    error
 		)
 
-		A.AddHandler("flood", HandlerFunc(func(c *Channel) {
-			var (
-				err error
-			)
+		go func() {
+			c, err := A.Listen("flood", true).AcceptChannel()
+			if assert.NoError(err) && assert.NotNil(c) {
+				defer c.Close()
 
-			defer c.Close()
-
-			pkt, err = c.ReadPacket()
-			assert.NoError(err)
-			assert.NotNil(pkt)
-
-			for i := 0; i < 1000000; i++ {
-				pkt := &lob.Packet{}
-				pkt.Header().SetInt("flood_id", i)
-				err = c.WritePacket(pkt)
+				pkt, err = c.ReadPacket()
 				assert.NoError(err)
+				assert.NotNil(pkt)
+
+				for i := 0; i < 1000000; i++ {
+					pkt := &lob.Packet{}
+					pkt.Header().SetInt("flood_id", i)
+					err = c.WritePacket(pkt)
+					assert.NoError(err)
+				}
 			}
-		}))
+		}()
 
 		ident, err = A.LocalIdentity()
 		assert.NoError(err)

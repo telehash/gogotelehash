@@ -23,10 +23,9 @@ const (
 
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
-	stateMtx sync.Mutex
-	wg       sync.WaitGroup
-	state    endpointState
-	err      error
+	mtx   sync.Mutex
+	state endpointState
+	err   error
 
 	hashname        hashname.H
 	keys            cipherset.Keys
@@ -35,31 +34,15 @@ type Endpoint struct {
 	transport       transports.Transport
 	modules         map[interface{}]Module
 
-	cTerminate     chan struct{}
-	cMakeExchange  chan *opMakeExchange
-	cTransportRead chan opRead
-	tokens         map[cipherset.Token]*exchangeEntry
-	hashnames      map[hashname.H]*exchangeEntry
-	handlers       map[string]Handler
+	cTerminate chan struct{}
+	tokens     map[cipherset.Token]*Exchange
+	hashnames  map[hashname.H]*Exchange
+	listeners  map[string]*Listener
 }
-
-type Handler interface {
-	ServeTelehash(ch *Channel)
-}
-
-type HandlerFunc func(ch *Channel)
-
-func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 
 type opReceived struct {
 	pkt *lob.Packet
 	opRead
-}
-
-type opMakeExchange struct {
-	ident *Identity
-	x     *Exchange
-	cErr  chan error
 }
 
 type opRead struct {
@@ -68,15 +51,11 @@ type opRead struct {
 	err error
 }
 
-type exchangeEntry struct {
-	x *Exchange
-}
-
 func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	e := &Endpoint{
 		keys:            keys,
 		transportConfig: tc,
-		handlers:        make(map[string]Handler),
+		listeners:       make(map[string]*Listener),
 		modules:         make(map[interface{}]Module),
 	}
 
@@ -98,9 +77,32 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	return e
 }
 
-// AddHandler registers a channel handler.
-func (e *Endpoint) AddHandler(typ string, h Handler) {
-	e.handlers[typ] = h
+// Listen makes a new channel listener.
+func (e *Endpoint) Listen(typ string, reliable bool) *Listener {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	if _, f := e.listeners[typ]; f {
+		panic("listener is already registered: " + typ)
+	}
+
+	l := newListener(e, typ, reliable, 0)
+	e.listeners[typ] = l
+	return l
+}
+
+func (e *Endpoint) listener(channelType string) *Listener {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	return e.listeners[channelType]
+}
+
+func (e *Endpoint) unregisterListener(channelType string) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	delete(e.listeners, channelType)
 }
 
 func (e *Endpoint) LocalHashname() hashname.H {
@@ -112,8 +114,8 @@ func (e *Endpoint) LocalIdentity() (*Identity, error) {
 }
 
 func (e *Endpoint) Start() error {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	err := e.start()
 	if err != nil {
@@ -133,19 +135,20 @@ func (e *Endpoint) start() error {
 		panic("e3x: Endpoint cannot be started more than once")
 	}
 
-	e.tokens = make(map[cipherset.Token]*exchangeEntry)
-	e.hashnames = make(map[hashname.H]*exchangeEntry)
-	e.cMakeExchange = make(chan *opMakeExchange)
+	e.tokens = make(map[cipherset.Token]*Exchange)
+	e.hashnames = make(map[hashname.H]*Exchange)
 	e.cTerminate = make(chan struct{}, 1)
-	e.cTransportRead = make(chan opRead)
 
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Init()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
+	e.mtx.Lock()
 
 	t, err := e.transportConfig.Open()
 	if err != nil {
@@ -155,41 +158,47 @@ func (e *Endpoint) start() error {
 	e.transport = t
 	go e.runReader()
 
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Start()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
-
-	e.wg.Add(1)
-	go e.run()
+	e.mtx.Lock()
 
 	return nil
 }
 
 func (e *Endpoint) Stop() error {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	return e.stop()
 }
 
 func (e *Endpoint) stop() error {
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Stop()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
+	e.mtx.Lock()
 
-	select {
-	case <-e.cTerminate: // closed
-	default:
-		close(e.cTerminate)
+	for _, x := range e.hashnames {
+		x.onBreak()
 	}
+	for _, x := range e.tokens {
+		x.onBreak()
+	}
+
+	e.transport.Close() //TODO handle err
 
 	if e.state == endpointStateRunning {
 		e.state = endpointStateTerminated
@@ -197,35 +206,7 @@ func (e *Endpoint) stop() error {
 		e.state = endpointStateBroken
 	}
 
-	e.wg.Wait()
-
 	return e.err
-}
-
-func (e *Endpoint) run() {
-	defer e.wg.Done()
-
-	for {
-		select {
-
-		case <-e.cTerminate:
-			for _, e := range e.hashnames {
-				e.x.onBreak()
-			}
-			for _, e := range e.tokens {
-				e.x.onBreak()
-			}
-			e.transport.Close() //TODO handle err
-			return
-
-		case op := <-e.cMakeExchange:
-			e.dial(op)
-
-		case op := <-e.cTransportRead:
-			e.received(op)
-
-		}
-	}
 }
 
 func (e *Endpoint) runReader() {
@@ -235,28 +216,35 @@ func (e *Endpoint) runReader() {
 		if err == transports.ErrClosed {
 			return
 		}
-		e.cTransportRead <- opRead{buf[:n], src, err}
+
+		e.received(opRead{buf[:n], src, err})
 	}
 }
 
 func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
-	entry := e.hashnames[event.Exchange.remoteIdent.Hashname()]
-	if entry != nil {
-		delete(e.hashnames, event.Exchange.remoteIdent.Hashname())
-		delete(e.tokens, entry.x.LocalToken())
+	x := e.hashnames[event.Exchange.remoteIdent.Hashname()]
+	if x != nil {
+		delete(e.hashnames, x.remoteIdent.Hashname())
+		delete(e.tokens, x.LocalToken())
 	}
 
 }
 
 func (e *Endpoint) received(op opRead) {
 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
+		e.mtx.Lock()
+		defer e.mtx.Unlock()
+
 		e.receivedHandshake(op)
 		return
 	}
 
 	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
 		e.receivedPacket(op)
+		return
 	}
 
 	// drop
@@ -264,7 +252,6 @@ func (e *Endpoint) received(op opRead) {
 
 func (e *Endpoint) receivedHandshake(op opRead) {
 	var (
-		entry      *exchangeEntry
 		x          *Exchange
 		localIdent *Identity
 		csid       uint8
@@ -302,24 +289,19 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		return // drop
 	}
 
-	entry = e.hashnames[hn]
-	if entry != nil {
-		entry.x.received(op)
+	x = e.hashnames[hn]
+	if x != nil {
+		x.received(op)
 		return
 	}
 
-	x, err = newExchange(localIdent, nil, handshake,
-		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
+	x, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
 	if err != nil {
 		return // drop
 	}
 
-	entry = &exchangeEntry{
-		x: x,
-	}
-
-	e.hashnames[hn] = entry
-	e.tokens[x.LocalToken()] = entry
+	e.hashnames[hn] = x
+	e.tokens[x.LocalToken()] = x
 	x.state = ExchangeDialing
 	x.received(op)
 }
@@ -333,33 +315,21 @@ func (e *Endpoint) receivedPacket(op opRead) {
 		return // drop
 	}
 
-	entry := e.tokens[token]
-	if entry == nil {
+	e.mtx.Lock()
+	x := e.tokens[token]
+	e.mtx.Unlock()
+	if x == nil {
 		return // drop
 	}
 
-	e.log.To(entry.x.RemoteHashname()).Module("e3x.tx").
+	e.log.To(x.RemoteHashname()).Module("e3x.tx").
 		Printf("\x1B[36mRCV\x1B[0m token=%x from=%s", token, op.src)
 
-	entry.x.received(op)
+	x.received(op)
 }
 
 func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
 	return i.Identify(e)
-}
-
-// GetExchange returns the exchange for identity. If the exchange already exists
-// it is simply returned otherwise a new exchange is created and registered.
-// Not that this GetExchange does not Dial.
-func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
-	op := opMakeExchange{identity, nil, make(chan error)}
-	e.cMakeExchange <- &op
-	err := <-op.cErr
-	if err != nil {
-		return nil, err
-	}
-
-	return op.x, nil
 }
 
 // Dial will lookup the identity of identifier, get the exchange for the identity
@@ -393,17 +363,19 @@ func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
 	return x, nil
 }
 
-func (e *Endpoint) dial(op *opMakeExchange) {
+// GetExchange returns the exchange for identity. If the exchange already exists
+// it is simply returned otherwise a new exchange is created and registered.
+// Not that this GetExchange does not Dial.
+func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
 
 	// Check for existing exchange
-	if entry, found := e.hashnames[op.ident.hashname]; found {
-		op.x = entry.x
-		op.cErr <- nil
-		return
+	if x, found := e.hashnames[identity.hashname]; found && x != nil {
+		return x, nil
 	}
 
 	var (
-		entry      = &exchangeEntry{}
 		localIdent *Identity
 		x          *Exchange
 
@@ -413,31 +385,26 @@ func (e *Endpoint) dial(op *opMakeExchange) {
 	// Get local identity
 	localIdent, err = e.LocalIdentity()
 	if err != nil {
-		op.cErr <- err
-		return
+		return nil, err
 	}
 
 	// Make a new exchange struct
-	x, err = newExchange(localIdent, op.ident, nil,
-		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
+	x, err = newExchange(localIdent, identity, nil, e, ObserversFromEndpoint(e), e.log)
 	if err != nil {
-		op.cErr <- err
-		return
+		return nil, err
 	}
 
 	// register the new exchange
-	entry.x = x
-	e.tokens[x.LocalToken()] = entry
-	e.hashnames[op.ident.hashname] = entry
+	e.tokens[x.LocalToken()] = x
+	e.hashnames[identity.hashname] = x
 
-	op.x = x
-	op.cErr <- nil
-	return
+	return x, nil
 }
 
 func (e *Endpoint) Use(key interface{}, mod Module) {
-	e.stateMtx.Lock()
-	defer e.stateMtx.Unlock()
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
 	if e.state != endpointStateUnknown {
 		panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
 	}
@@ -449,4 +416,8 @@ func (e *Endpoint) Use(key interface{}, mod Module) {
 
 func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
+}
+
+func (e *Endpoint) writeMessage(p []byte, dst transports.Addr) error {
+	return e.transport.WriteMessage(p, dst)
 }

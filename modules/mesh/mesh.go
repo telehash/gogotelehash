@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"errors"
+	"io"
 	"sync"
 
 	"github.com/telehash/gogotelehash/e3x"
@@ -35,11 +36,12 @@ type Mesh interface {
 }
 
 type mesh struct {
-	endpoint    *e3x.Endpoint
-	accept      AcceptFunc
-	mtx         sync.Mutex
-	links       map[hashname.H]*link
-	last_tag_id uint64
+	endpoint     *e3x.Endpoint
+	accept       AcceptFunc
+	mtx          sync.Mutex
+	linkListener *e3x.Listener
+	links        map[hashname.H]*link
+	last_tag_id  uint64
 }
 
 type Tag struct {
@@ -80,15 +82,27 @@ func newMesh(e *e3x.Endpoint, accept AcceptFunc) *mesh {
 }
 
 func (m *mesh) Init() error {
-	m.endpoint.AddHandler("link", e3x.HandlerFunc(m.handle_link))
-
 	observers := e3x.ObserversFromEndpoint(m.endpoint)
 	observers.Register(m.on_exchange_closed)
 	return nil
 }
 
-func (m *mesh) Start() error { return nil }
-func (m *mesh) Stop() error  { return nil }
+func (m *mesh) Start() error {
+	m.linkListener = m.endpoint.Listen("link", false)
+
+	go m.accept_links()
+
+	return nil
+}
+
+func (m *mesh) Stop() error {
+	if m.linkListener != nil {
+		m.linkListener.Close()
+		m.linkListener = nil
+	}
+
+	return nil
+}
 
 func (m *mesh) on_exchange_closed(evt *e3x.ExchangeClosedEvent) {
 	m.unlink(evt.Exchange.RemoteHashname())
@@ -174,6 +188,20 @@ func (m *mesh) Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error) {
 	l.tags[m.last_tag_id] = true
 
 	return t, nil
+}
+
+func (m *mesh) accept_links() {
+	for {
+		c, err := m.linkListener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			continue
+		}
+
+		go m.handle_link(c)
+	}
 }
 
 func (m *mesh) handle_link(ch *e3x.Channel) {
