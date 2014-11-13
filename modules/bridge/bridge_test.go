@@ -54,9 +54,8 @@ func TestBridge(t *testing.T) {
 	bridge := FromEndpoint(R)
 
 	done := make(chan bool, 1)
-	A.AddHandler("ping", e3x.HandlerFunc(func(c *e3x.Channel) {
-		defer func() { done <- true }()
-		defer c.Close()
+
+	go func() {
 
 		var (
 			pkt   *lob.Packet
@@ -64,6 +63,11 @@ func TestBridge(t *testing.T) {
 			n     = 1
 			first = true
 		)
+
+		defer func() { done <- true }()
+
+		c, err := A.Listen("ping", true).AcceptChannel()
+		defer c.Close()
 
 		for ; n > 0; n-- {
 			pkt, err = c.ReadPacket()
@@ -82,7 +86,7 @@ func TestBridge(t *testing.T) {
 				return
 			}
 		}
-	}))
+	}()
 
 	registerEventLoggers(A, t)
 	registerEventLoggers(B, t)

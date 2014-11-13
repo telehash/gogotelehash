@@ -139,13 +139,16 @@ func (e *Endpoint) start() error {
 	e.hashnames = make(map[hashname.H]*Exchange)
 	e.cTerminate = make(chan struct{}, 1)
 
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Init()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
+	e.mtx.Lock()
 
 	t, err := e.transportConfig.Open()
 	if err != nil {
@@ -155,13 +158,16 @@ func (e *Endpoint) start() error {
 	e.transport = t
 	go e.runReader()
 
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Start()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
+	e.mtx.Lock()
 
 	return nil
 }
@@ -174,13 +180,16 @@ func (e *Endpoint) Stop() error {
 }
 
 func (e *Endpoint) stop() error {
+	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Stop()
 		if err != nil {
+			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
+	e.mtx.Lock()
 
 	for _, x := range e.hashnames {
 		x.onBreak()
