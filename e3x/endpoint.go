@@ -37,16 +37,8 @@ type Endpoint struct {
 	cTerminate chan struct{}
 	tokens     map[cipherset.Token]*Exchange
 	hashnames  map[hashname.H]*Exchange
-	handlers   map[string]Handler
+	listeners  map[string]*Listener
 }
-
-type Handler interface {
-	ServeTelehash(ch *Channel)
-}
-
-type HandlerFunc func(ch *Channel)
-
-func (h HandlerFunc) ServeTelehash(ch *Channel) { h(ch) }
 
 type opReceived struct {
 	pkt *lob.Packet
@@ -63,7 +55,7 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	e := &Endpoint{
 		keys:            keys,
 		transportConfig: tc,
-		handlers:        make(map[string]Handler),
+		listeners:       make(map[string]*Listener),
 		modules:         make(map[interface{}]Module),
 	}
 
@@ -85,9 +77,32 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 	return e
 }
 
-// AddHandler registers a channel handler.
-func (e *Endpoint) AddHandler(typ string, h Handler) {
-	e.handlers[typ] = h
+// Listen makes a new channel listener.
+func (e *Endpoint) Listen(typ string, reliable bool) *Listener {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	if _, f := e.listeners[typ]; f {
+		panic("listener is already registered: " + typ)
+	}
+
+	l := newListener(e, typ, reliable, 0)
+	e.listeners[typ] = l
+	return l
+}
+
+func (e *Endpoint) listener(channelType string) *Listener {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	return e.listeners[channelType]
+}
+
+func (e *Endpoint) unregisterListener(channelType string) {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	delete(e.listeners, channelType)
 }
 
 func (e *Endpoint) LocalHashname() hashname.H {
@@ -210,10 +225,10 @@ func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 }
 
 func (e *Endpoint) received(op opRead) {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
+		e.mtx.Lock()
+		defer e.mtx.Unlock()
+
 		e.receivedHandshake(op)
 		return
 	}
@@ -271,8 +286,7 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 		return
 	}
 
-	x, err = newExchange(localIdent, nil, handshake,
-		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
+	x, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
 	if err != nil {
 		return // drop
 	}
@@ -292,7 +306,9 @@ func (e *Endpoint) receivedPacket(op opRead) {
 		return // drop
 	}
 
+	e.mtx.Lock()
 	x := e.tokens[token]
+	e.mtx.Unlock()
 	if x == nil {
 		return // drop
 	}
@@ -364,8 +380,7 @@ func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
 	}
 
 	// Make a new exchange struct
-	x, err = newExchange(localIdent, identity, nil,
-		e.transport, ObserversFromEndpoint(e), e.handlers, e.log)
+	x, err = newExchange(localIdent, identity, nil, e, ObserversFromEndpoint(e), e.log)
 	if err != nil {
 		return nil, err
 	}
@@ -392,4 +407,8 @@ func (e *Endpoint) Use(key interface{}, mod Module) {
 
 func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
+}
+
+func (e *Endpoint) writeMessage(p []byte, dst transports.Addr) error {
+	return e.transport.WriteMessage(p, dst)
 }

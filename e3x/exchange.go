@@ -77,12 +77,11 @@ type Exchange struct {
 	nextChannelID uint32
 	channels      map[uint32]*channelEntry
 	addressBook   *addressBook
-	handlers      map[string]Handler
 	err           error
 
-	transportWriter transportWriter
-	observers       Observers
-	log             *logs.Logger
+	endpoint  endpointI
+	observers Observers
+	log       *logs.Logger
 
 	nextHandshake     int
 	tExpire           *time.Timer
@@ -94,8 +93,9 @@ type channelEntry struct {
 	c *Channel
 }
 
-type transportWriter interface {
-	WriteMessage([]byte, transports.Addr) error
+type endpointI interface {
+	writeMessage([]byte, transports.Addr) error
+	listener(channelType string) *Listener
 }
 
 func (x *Exchange) State() ExchangeState {
@@ -111,18 +111,16 @@ func (x *Exchange) String() string {
 
 func newExchange(
 	localIdent *Identity, remoteIdent *Identity, handshake cipherset.Handshake,
-	transportWriter transportWriter,
+	endpoint endpointI,
 	observers Observers,
-	handlers map[string]Handler,
 	log *logs.Logger,
 ) (*Exchange, error) {
 	x := &Exchange{
-		localIdent:      localIdent,
-		remoteIdent:     remoteIdent,
-		channels:        make(map[uint32]*channelEntry),
-		transportWriter: transportWriter,
-		observers:       observers,
-		handlers:        handlers,
+		localIdent:  localIdent,
+		remoteIdent: remoteIdent,
+		channels:    make(map[uint32]*channelEntry),
+		endpoint:    endpoint,
+		observers:   observers,
 	}
 
 	x.cndState = sync.NewCond(&x.mtx)
@@ -272,7 +270,7 @@ func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
 	}
 
 	for _, addr := range addrs {
-		err := x.transportWriter.WriteMessage(pktData, addr)
+		err := x.endpoint.writeMessage(pktData, addr)
 		if err == nil {
 			x.addressBook.SentHandshake(addr)
 		}
@@ -327,7 +325,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 	)
 
 	if !hasC {
-		// drop: missign "c"
+		// drop: missing "c"
 		return
 	}
 
@@ -340,11 +338,16 @@ func (x *Exchange) receivedPacket(op opRead) {
 				return // drop (missing typ)
 			}
 
-			h := x.handlers[typ]
-			if h == nil {
+			listener := x.endpoint.listener(typ)
+			if listener == nil {
 				x.mtx.Unlock()
 				return // drop (no handler)
 			}
+
+			entry = &channelEntry{}
+			x.channels[cid] = entry
+			x.resetExpire()
+			x.mtx.Unlock()
 
 			c = newChannel(
 				x.remoteIdent.Hashname(),
@@ -354,18 +357,15 @@ func (x *Exchange) receivedPacket(op opRead) {
 				x,
 			)
 			c.id = cid
-
-			entry = &channelEntry{c}
-
-			x.channels[c.id] = entry
-			x.resetExpire()
+			entry.c = c
 
 			x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, cid)
 			x.observers.Trigger(&ChannelOpenedEvent{c})
 
-			go h.ServeTelehash(c)
+			listener.handle(c)
+		} else {
+			x.mtx.Unlock()
 		}
-		x.mtx.Unlock()
 	}
 
 	entry.c.receivedPacket(pkt)
@@ -392,7 +392,7 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
 		return err
 	}
 
-	err = x.transportWriter.WriteMessage(msg, addr)
+	err = x.endpoint.writeMessage(msg, addr)
 
 	bufpool.PutBuffer(pkt.Body)
 	bufpool.PutBuffer(msg)
@@ -760,7 +760,7 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 	}
 
 	if resp != nil {
-		x.transportWriter.WriteMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
+		x.endpoint.writeMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
 	}
 
 	return true

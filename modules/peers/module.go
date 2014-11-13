@@ -1,6 +1,7 @@
 package peers
 
 import (
+	"io"
 	"sync"
 	"time"
 
@@ -25,8 +26,10 @@ type module struct {
 	m      mesh.Mesh
 	config Config
 
-	mtx     sync.Mutex
-	pending map[hashname.H]*pendingIntroduction
+	mtx             sync.Mutex
+	peerListener    *e3x.Listener
+	connectListener *e3x.Listener
+	pending         map[hashname.H]*pendingIntroduction
 }
 
 type pendingIntroduction struct {
@@ -75,16 +78,23 @@ func (mod *module) Init() error {
 		panic("the peers module requires the mesh module")
 	}
 
-	mod.e.AddHandler("peer", e3x.HandlerFunc(mod.handle_peer))
-	mod.e.AddHandler("connect", e3x.HandlerFunc(mod.handle_connect))
 	return nil
 }
 
 func (mod *module) Start() error {
+	mod.peerListener = mod.e.Listen("peer", false)
+	mod.connectListener = mod.e.Listen("connect", false)
+
+	go mod.acceptPeerChannels()
+	go mod.acceptConnectChannels()
+
 	return nil
 }
 
 func (mod *module) Stop() error {
+	mod.peerListener.Close()
+	mod.connectListener.Close()
+
 	return nil
 }
 
@@ -175,4 +185,30 @@ func (i *pendingIntroduction) resolve(x *e3x.Exchange, err error) {
 
 	i.mtx.Unlock()
 	i.mod.mtx.Unlock()
+}
+
+func (mod *module) acceptPeerChannels() {
+	for {
+		c, err := mod.peerListener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			continue
+		}
+		go mod.handle_peer(c)
+	}
+}
+
+func (mod *module) acceptConnectChannels() {
+	for {
+		c, err := mod.connectListener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			continue
+		}
+		go mod.handle_connect(c)
+	}
 }
