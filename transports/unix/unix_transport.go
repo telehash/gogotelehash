@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 
+	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 )
 
@@ -31,6 +32,7 @@ type Config struct {
 }
 
 type addr struct {
+	hn hashname.H
 	net.UnixAddr
 }
 
@@ -138,7 +140,7 @@ func decodeAddress(data []byte) (transports.Addr, error) {
 		return nil, transports.ErrInvalidAddr
 	}
 
-	return &addr{net.UnixAddr{Net: "unixgram", Name: desc.Name}}, nil
+	return &addr{UnixAddr: net.UnixAddr{Net: "unixgram", Name: desc.Name}}, nil
 }
 
 func (a *addr) MarshalJSON() ([]byte, error) {
@@ -168,6 +170,17 @@ func (a *addr) String() string {
 		panic(err)
 	}
 	return string(data)
+}
+
+func (a *addr) Associate(hn hashname.H) transports.Addr {
+	b := new(addr)
+	*b = *a
+	b.hn = hn
+	return b
+}
+
+func (a *addr) Hashname() hashname.H {
+	return a.hn
 }
 
 func randomString(n int) string {
