@@ -11,6 +11,8 @@ func TestLocalAddresses(t *testing.T) {
 	var tab = []Config{
 		{},
 		{Name: "/tmp/telehash-test.sock"},
+		{Name: "/tmp/telehash-test.sock", Mode: 0755},
+		{Mode: 0755},
 	}
 
 	for _, factory := range tab {

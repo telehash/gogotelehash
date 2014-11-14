@@ -56,6 +56,8 @@ func (c Config) Open() (transports.Transport, error) {
 	if c.Mode == 0 {
 		c.Mode = 0700
 	}
+	c.Mode &= os.ModePerm
+	c.Mode |= os.ModeSocket
 
 	laddr, err := net.ResolveUnixAddr("unixgram", c.Name)
 	if err != nil {
