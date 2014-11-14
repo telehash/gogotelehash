@@ -284,7 +284,7 @@ func (s *state) RemoteToken() cipherset.Token {
 
 func (s *state) SetRemoteKey(remoteKey cipherset.Key) error {
 	s.mtx.Lock()
-	defer s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	if k, ok := remoteKey.(*key); ok && k != nil && k.CanEncrypt() {
 		s.remoteKey = k
@@ -297,7 +297,7 @@ func (s *state) SetRemoteKey(remoteKey cipherset.Key) error {
 
 func (s *state) setRemoteLineKey(k *key) {
 	s.mtx.Lock()
-	defer s.mtx.Lock()
+	defer s.mtx.Unlock()
 
 	s.remoteLineKey = k
 	s.update()
