@@ -4,7 +4,7 @@ import (
 	"sync"
 )
 
-const bufferSize = 64 * 1024
+const bufferSize = 1500
 
 var zeroBuffer = make([]byte, bufferSize)
 

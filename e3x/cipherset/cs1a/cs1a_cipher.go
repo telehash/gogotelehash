@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"io"
+	"sync"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
@@ -247,6 +248,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 }
 
 type state struct {
+	mtx               sync.RWMutex
 	localKey          *key
 	remoteKey         *key
 	localLineKey      *key
@@ -281,15 +283,22 @@ func (s *state) RemoteToken() cipherset.Token {
 }
 
 func (s *state) SetRemoteKey(remoteKey cipherset.Key) error {
+	s.mtx.Lock()
+	defer s.mtx.Lock()
+
 	if k, ok := remoteKey.(*key); ok && k != nil && k.CanEncrypt() {
 		s.remoteKey = k
 		s.update()
 		return nil
 	}
+
 	return cipherset.ErrInvalidKey
 }
 
 func (s *state) setRemoteLineKey(k *key) {
+	s.mtx.Lock()
+	defer s.mtx.Lock()
+
 	s.remoteLineKey = k
 	s.update()
 }
@@ -463,6 +472,9 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 }
 
 func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
 	var (
 		inner []byte
 		body  []byte
@@ -528,6 +540,9 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 }
 
 func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
 	if !s.CanDecryptPacket() {
 		return nil, cipherset.ErrInvalidState
 	}

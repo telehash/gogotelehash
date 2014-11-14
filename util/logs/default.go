@@ -13,6 +13,10 @@ func ResetLogger() {
 	disabledMods = map[string]bool{}
 }
 
+func DisableLogger() {
+	defaultLogger = nil
+}
+
 func Module(name string) *Logger {
 	return defaultLogger.Module(name)
 }

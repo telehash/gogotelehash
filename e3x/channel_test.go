@@ -286,8 +286,7 @@ func TestPingPongReliable(t *testing.T) {
 }
 
 func TestFloodReliable(t *testing.T) {
-	logs.ResetLogger()
-	logs.DisableModule("e3x.tx")
+	logs.DisableLogger()
 
 	if testing.Short() {
 		t.Skip("this is a long running test.")

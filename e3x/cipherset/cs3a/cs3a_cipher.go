@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"io"
+	"sync"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/nacl/box"
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/poly1305"
@@ -230,6 +231,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 }
 
 type state struct {
+	mtx               sync.RWMutex
 	localKey          *key
 	remoteKey         *key
 	localLineKey      *key
@@ -266,20 +268,28 @@ func (s *state) RemoteToken() cipherset.Token {
 }
 
 func (s *state) SetRemoteKey(remoteKey cipherset.Key) error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	if k, ok := remoteKey.(*key); ok && k != nil && k.CanEncrypt() {
 		s.remoteKey = k
 		s.update()
 		return nil
 	}
+
 	return cipherset.ErrInvalidKey
 }
 
 func (s *state) setRemoteLineKey(k *key) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+
 	s.remoteLineKey = k
 	s.update()
 }
 
 func (s *state) update() {
+
 	if s.nonce == nil {
 		s.nonce = new([24]byte)
 		io.ReadFull(rand.Reader, s.nonce[:4])
@@ -477,6 +487,9 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 }
 
 func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
 	var (
 		inner []byte
 		body  []byte
@@ -521,6 +534,9 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 }
 
 func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	s.mtx.RLock()
+	defer s.mtx.RUnlock()
+
 	if !s.CanDecryptPacket() {
 		return nil, cipherset.ErrInvalidState
 	}
