@@ -10,10 +10,12 @@ import (
 )
 
 const (
-	numBuckets             = 256
+	keyLen                 = 32
+	numBuckets             = keyLen * 8
 	maxPeers               = 32
 	maxCandidates          = 128
 	maxRoutersPerCandidate = 5
+	defaultLookupSize      = 32
 )
 
 type table struct {
@@ -25,6 +27,7 @@ type bucket struct {
 	id         int
 	peers      list.List
 	candidates list.List
+	pending    list.List
 }
 
 type activePeer struct {
@@ -39,7 +42,7 @@ type candidatePeer struct {
 
 type peerInfo struct {
 	bucket   int
-	distance [32]byte
+	distance [keyLen]byte
 	hashname hashname.H
 }
 
@@ -49,11 +52,32 @@ func (t *table) init() {
 	}
 }
 
+func (t *table) findKey(key [keyLen]byte, n uint) []*activePeer {
+	var (
+		dist      = keyDistance(t.localHashname, key[:])
+		bucketIdx = bucketFromDistance(dist)
+		bucket    *bucket
+		offset    = 0
+		peers     []*activePeer
+	)
+
+	if n == 0 {
+		n = defaultLookupSize
+	}
+
+	if bucketIdx < 0 {
+		bucketIdx = 0
+	}
+
+	peers = make([]*activePeer, 0, n)
+
+}
+
 func (t *table) nextCandidate() *candidatePeer {
 	for _, b := range t.buckets {
 
-		// bucket is full
-		if b.peers.Len() == maxPeers {
+		// bucket is full or will be full soon
+		if (b.peers.Len() + b.pending.Len()) == maxPeers {
 			continue
 		}
 
@@ -64,7 +88,10 @@ func (t *table) nextCandidate() *candidatePeer {
 
 		// return first candidate
 		// also remove it from the candidate list
-		return b.candidates.Remove(b.candidates.Front()).(*candidatePeer)
+		c := b.candidates.Remove(b.candidates.Front()).(*candidatePeer)
+		b.pending.PushBack(c)
+
+		return c
 	}
 
 	return nil
@@ -84,6 +111,15 @@ func (t *table) activatePeer(hn hashname.H, tag mesh.Tag) {
 	}
 
 	bucket = t.buckets[bucketIdx]
+
+	// remove from pending list
+	for e := bucket.pending.Front(); e != nil; e = e.Next() {
+		v := e.Value.(*candidatePeer)
+		if v.hashname == hn {
+			bucket.pending.Remove(e)
+			break
+		}
+	}
 
 	// attempt to update peer
 	for e := bucket.peers.Front(); e != nil; e = e.Next() {
@@ -121,12 +157,12 @@ func (t *table) deactivatePeer(hn hashname.H) {
 
 	// cannot unlink self
 	if bucketIdx < 0 {
-		tag.Release()
 		return
 	}
 
 	bucket = t.buckets[bucketIdx]
 
+	// remove from peers list
 	for e := bucket.peers.Front(); e != nil; e = e.Next() {
 		v := e.Value.(*activePeer)
 		if v.hashname == hn {
@@ -136,10 +172,20 @@ func (t *table) deactivatePeer(hn hashname.H) {
 		}
 	}
 
+	// remove from candidates list
 	for e := bucket.candidates.Front(); e != nil; e = e.Next() {
 		v := e.Value.(*candidatePeer)
 		if v.hashname == hn {
 			bucket.candidates.Remove(e)
+			break
+		}
+	}
+
+	// remove from pending list
+	for e := bucket.pending.Front(); e != nil; e = e.Next() {
+		v := e.Value.(*candidatePeer)
+		if v.hashname == hn {
+			bucket.pending.Remove(e)
 			break
 		}
 	}
@@ -163,6 +209,14 @@ func (t *table) addCandidate(hn hashname.H, router hashname.H) {
 	for e := bucket.peers.Front(); e != nil; e = e.Next() {
 		c := e.Value.(*activePeer)
 		if c.hashname == hn {
+			return
+		}
+	}
+
+	// ignore if pending peer
+	for e := bucket.pending.Front(); e != nil; e = e.Next() {
+		v := e.Value.(*candidatePeer)
+		if v.hashname == hn {
 			return
 		}
 	}
@@ -201,20 +255,29 @@ func (t *table) addCandidate(hn hashname.H, router hashname.H) {
 	}
 }
 
-func distance(a, b hashname.H) [32]byte {
+func distance(a, b hashname.H) [keyLen]byte {
 	var (
-		aData []byte
 		bData []byte
 		err   error
-		d     [32]byte
+		d     [keyLen]byte
 	)
 
-	aData, err = base32util.DecodeString(string(a))
+	bData, err = base32util.DecodeString(string(b))
 	if err != nil {
 		return d
 	}
 
-	bData, err = base32util.DecodeString(string(b))
+	return keyDistance(a, bData)
+}
+
+func keyDistance(a hashname.H, bData []byte) [keyLen]byte {
+	var (
+		aData []byte
+		err   error
+		d     [keyLen]byte
+	)
+
+	aData, err = base32util.DecodeString(string(a))
 	if err != nil {
 		return d
 	}
@@ -223,7 +286,7 @@ func distance(a, b hashname.H) [32]byte {
 		return d
 	}
 
-	if len(aData) != 32 {
+	if len(aData) != keyLen {
 		return d
 	}
 
@@ -234,7 +297,7 @@ func distance(a, b hashname.H) [32]byte {
 	return d
 }
 
-func bucketFromDistance(distance [32]byte) int {
+func bucketFromDistance(distance [keyLen]byte) int {
 	var (
 		b = 0
 		x byte
@@ -247,7 +310,7 @@ func bucketFromDistance(distance [32]byte) int {
 		b += 8
 	}
 
-	if b == (32 * 8) {
+	if b == numBuckets {
 		return -1
 	}
 
