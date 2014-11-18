@@ -8,6 +8,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/util/logs"
 )
 
 var ErrNotAuthorized = errors.New("link: not authorized")
@@ -88,7 +89,7 @@ func (m *mesh) Init() error {
 }
 
 func (m *mesh) Start() error {
-	m.linkListener = m.endpoint.Listen("link", false)
+	m.linkListener = m.endpoint.Listen("link", true)
 
 	go m.accept_links()
 
@@ -116,6 +117,7 @@ func (m *mesh) unlink(hn hashname.H) {
 
 	if link != nil {
 		link.channel.Close()
+		logs.From(m.endpoint.LocalHashname()).To(hn).Module("mesh").Println("Unlinked")
 	}
 }
 
@@ -151,7 +153,7 @@ func (m *mesh) Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error) {
 			return Tag{}, err
 		}
 
-		c, err := x.Open("link", false)
+		c, err := x.Open("link", true)
 		if err != nil {
 			return Tag{}, err
 		}
@@ -181,6 +183,8 @@ func (m *mesh) Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error) {
 
 		l = &link{ident, x, c, make(map[uint64]bool)}
 		m.links[ident.Hashname()] = l
+
+		logs.From(m.endpoint.LocalHashname()).To(ident.Hashname()).Module("mesh").Println("Linked")
 	}
 
 	m.last_tag_id++
@@ -205,7 +209,6 @@ func (m *mesh) accept_links() {
 }
 
 func (m *mesh) handle_link(ch *e3x.Channel) {
-
 	pkt, err := ch.ReadPacket()
 	if err != nil {
 		ch.Close()
@@ -242,6 +245,8 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 		l.channel = nil
 	}
 	l.channel = ch
+
+	logs.From(m.endpoint.LocalHashname()).To(ch.RemoteHashname()).Module("mesh").Println("Linked")
 
 	go m.keepChannelOpen(ch)
 }

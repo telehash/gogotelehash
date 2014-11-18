@@ -29,7 +29,6 @@ type addressBookEntry struct {
 	FirstSeen   time.Time
 	LastSeen    time.Time
 	Reachable   bool
-	GotResponse bool
 
 	latency time.Duration
 	ewma    time.Duration
@@ -70,10 +69,13 @@ func (book *addressBook) HandshakeAddresses() []transports.Addr {
 }
 
 func (book *addressBook) NextHandshakeEpoch() {
-	var changed bool
+	var (
+		changed  bool
+		deadline = time.Now().Add(-2 * time.Minute)
+	)
 
 	for _, e := range book.known {
-		if !e.GotResponse {
+		if e.LastSeen.Before(deadline) {
 			// no handshake since last epoch
 			// mark as broken
 			if e.Reachable {
@@ -83,8 +85,6 @@ func (book *addressBook) NextHandshakeEpoch() {
 				book.log.Printf("\x1B[31mDetected broken path\x1B[0m %s", e)
 			}
 		}
-
-		e.GotResponse = false
 	}
 
 	if changed {
@@ -123,7 +123,6 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	e.FirstSeen = now
 	e.LastSeen = now
 	e.Reachable = true
-	e.GotResponse = true
 	e.InitSamples()
 
 	idx = len(book.known)
@@ -153,7 +152,6 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 
 	e.LastSeen = now
 	e.Reachable = true
-	e.GotResponse = true
 
 	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
 	book.updateActive()

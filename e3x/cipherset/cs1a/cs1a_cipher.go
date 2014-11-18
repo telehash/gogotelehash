@@ -379,7 +379,6 @@ func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	)
 
 	if !s.CanEncryptMessage() {
-		panic("unable to encrypt message")
 	}
 
 	// copy public senderLineKey
@@ -531,7 +530,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		macKey := append(s.lineEncryptionKey, body[16:16+4]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(body[:16+4+ctLen])
+		h.Write(body[16+4 : 16+4+ctLen])
 		sum := h.Sum(nil)
 		copy(body[16+4+ctLen:], fold(sum, 4))
 	}
@@ -571,10 +570,10 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	{ // verify hmac
 		mac := pkt.Body[16+4+innerLen:]
 
-		macKey := append(s.lineDecryptionKey, nonce[:]...)
+		macKey := append(s.lineDecryptionKey, nonce[:4]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(pkt.Body[:16+4+innerLen])
+		h.Write(pkt.Body[16+4 : 16+4+innerLen])
 		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
 			return nil, cipherset.ErrInvalidPacket
 		}
