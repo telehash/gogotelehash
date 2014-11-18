@@ -28,17 +28,17 @@ func TestSimpleEndpoint(t *testing.T) {
 	kb, err := cipherset.GenerateKey(0x3a)
 	assert.NoError(err)
 
-	ea := New(cipherset.Keys{0x3a: ka}, mux.Config{udp.Config{}, inproc.Config{}})
-	eb := New(cipherset.Keys{0x3a: kb}, mux.Config{udp.Config{}, inproc.Config{}})
+	ea, erra := Open(
+		Keys(cipherset.Keys{0x3a: ka}),
+		Transport(mux.Config{udp.Config{}, inproc.Config{}}),
+		Log(nil))
 
-	registerEventLoggers(ea, t)
-	registerEventLoggers(eb, t)
-
-	err = ea.Start()
-	assert.NoError(err)
-
-	err = eb.Start()
-	assert.NoError(err)
+	eb, errb := Open(
+		Keys(cipherset.Keys{0x3a: kb}),
+		Transport(mux.Config{udp.Config{}, inproc.Config{}}),
+		Log(nil))
+	assert.NoError(erra)
+	assert.NoError(errb)
 
 	time.Sleep(1 * time.Second)
 

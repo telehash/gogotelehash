@@ -8,22 +8,11 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/modules/mesh"
-	"github.com/telehash/gogotelehash/transports/mux"
-	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func main() {
-	e := e3x.New(nil, mux.Config{
-		udp.Config{Network: "udp4"},
-		udp.Config{Network: "udp6"},
-	})
-
-	mesh.Register(e, nil)
-
-	err := e.Start()
-	if err != nil {
-		log.Fatal(err)
-	}
+	e, err := e3x.Open(
+		mesh.Module(nil))
 
 	log.Printf("golang: %s", e.LocalHashname())
 

@@ -1,12 +1,16 @@
 package e3x
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"sync"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/mux"
+	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
 )
@@ -33,10 +37,9 @@ type Endpoint struct {
 	transport       transports.Transport
 	modules         map[interface{}]Module
 
-	cTerminate chan struct{}
-	tokens     map[cipherset.Token]*Exchange
-	hashnames  map[hashname.H]*Exchange
-	listeners  map[string]*Listener
+	tokens    map[cipherset.Token]*Exchange
+	hashnames map[hashname.H]*Exchange
+	listeners map[string]*Listener
 }
 
 type opRead struct {
@@ -45,39 +48,149 @@ type opRead struct {
 	err error
 }
 
-func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
+func Open(options ...func(e *Endpoint) error) (*Endpoint, error) {
 	e := &Endpoint{
-		keys:            keys,
-		transportConfig: tc,
-		listeners:       make(map[string]*Listener),
-		modules:         make(map[interface{}]Module),
+		listeners: make(map[string]*Listener),
+		modules:   make(map[interface{}]Module),
+		tokens:    make(map[cipherset.Token]*Exchange),
+		hashnames: make(map[hashname.H]*Exchange),
 	}
-
-	if e.keys == nil {
-		keys, err := cipherset.GenerateKeys()
-		if err != nil {
-			panic(err)
-		}
-
-		e.keys = keys
-	}
-
-	var err error
-	e.hashname, err = hashname.FromKeys(e.keys)
-	if err != nil {
-		panic(err)
-	}
-
-	e.log = logs.Module("e3x").From(e.hashname)
 
 	observers := &modObservers{}
 	observers.Register(e.onExchangeClosed)
 
-	e.Use(modObserversKey, observers)
-	e.Use(modForgetterKey, &modForgetter{e})
-	e.Use(modTransportsKey, &modTransports{e})
+	err := e.setOptions(
+		RegisterModule(modObserversKey, observers),
+		RegisterModule(modForgetterKey, &modForgetter{e}),
+		RegisterModule(modTransportsKey, &modTransports{e}))
+	if err != nil {
+		return nil, err
+	}
 
-	return e
+	err = e.setOptions(options...)
+	if err != nil {
+		return nil, err
+	}
+
+	err = e.setOptions(
+		defaultRandomKeys,
+		defaultTransport)
+	if err != nil {
+		return nil, err
+	}
+
+	err = e.start()
+	if err != nil {
+		e.stop()
+		return nil, err
+	}
+
+	return e, nil
+}
+
+func (e *Endpoint) setOptions(options ...func(*Endpoint) error) error {
+	for _, option := range options {
+		if err := option(e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func RegisterModule(key interface{}, mod Module) func(*Endpoint) error {
+	return func(e *Endpoint) error {
+		e.mtx.Lock()
+		defer e.mtx.Unlock()
+
+		if e.state != endpointStateUnknown {
+			panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
+		}
+
+		if _, found := e.modules[key]; found {
+			panic("This module is already registered.")
+		}
+
+		e.modules[key] = mod
+		return nil
+	}
+}
+
+func Keys(keys cipherset.Keys) func(*Endpoint) error {
+	return func(e *Endpoint) error {
+		if e.keys != nil && len(e.keys) > 0 {
+			return nil
+		}
+
+		hn, err := hashname.FromKeys(keys)
+		if err != nil {
+			return err
+		}
+
+		e.keys = keys
+		e.hashname = hn
+
+		if e.log != nil {
+			e.log = e.log.From(e.hashname)
+		}
+
+		return nil
+	}
+}
+
+func defaultRandomKeys(e *Endpoint) error {
+	if e.keys != nil && len(e.keys) > 0 {
+		return nil
+	}
+
+	keys, err := cipherset.GenerateKeys()
+	if err != nil {
+		return err
+	}
+
+	return Keys(keys)(e)
+}
+
+func Log(w io.Writer) func(*Endpoint) error {
+	if w == nil {
+		w = os.Stdout
+	}
+
+	return func(e *Endpoint) error {
+		e.log = logs.New(w).Module("e3x")
+		if e.hashname != "" {
+			e.log = e.log.From(e.hashname)
+		}
+		return nil
+	}
+}
+
+func DisableLog() func(*Endpoint) error {
+	return func(e *Endpoint) error {
+		e.log = nil
+		return nil
+	}
+}
+
+func Transport(config transports.Config) func(*Endpoint) error {
+	return func(e *Endpoint) error {
+		if e.transportConfig != nil {
+			return fmt.Errorf("endpoint already has a transport")
+		}
+
+		e.transportConfig = config
+		return nil
+	}
+}
+
+func defaultTransport(e *Endpoint) error {
+	if e.transportConfig != nil {
+		return nil
+	}
+
+	return Transport(&mux.Config{
+		udp.Config{Network: "udp4"},
+		udp.Config{Network: "udp6"},
+	})(e)
 }
 
 // Listen makes a new channel listener.
@@ -116,19 +229,6 @@ func (e *Endpoint) LocalIdentity() (*Identity, error) {
 	return NewIdentity(e.keys, nil, e.transport.LocalAddresses())
 }
 
-func (e *Endpoint) Start() error {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
-	err := e.start()
-	if err != nil {
-		e.stop()
-		return err
-	}
-
-	return nil
-}
-
 func (e *Endpoint) start() error {
 	if e.state == endpointStateBroken {
 		return e.err
@@ -138,20 +238,13 @@ func (e *Endpoint) start() error {
 		panic("e3x: Endpoint cannot be started more than once")
 	}
 
-	e.tokens = make(map[cipherset.Token]*Exchange)
-	e.hashnames = make(map[hashname.H]*Exchange)
-	e.cTerminate = make(chan struct{}, 1)
-
-	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Init()
 		if err != nil {
-			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
-	e.mtx.Lock()
 
 	t, err := e.transportConfig.Open()
 	if err != nil {
@@ -161,16 +254,13 @@ func (e *Endpoint) start() error {
 	e.transport = t
 	go e.runReader()
 
-	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Start()
 		if err != nil {
-			e.mtx.Lock()
 			e.err = err
 			return err
 		}
 	}
-	e.mtx.Lock()
 
 	return nil
 }
@@ -402,19 +492,6 @@ func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
 	e.hashnames[identity.hashname] = x
 
 	return x, nil
-}
-
-func (e *Endpoint) Use(key interface{}, mod Module) {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
-	if e.state != endpointStateUnknown {
-		panic("(*Endpoint).Use() can only be called when Endpoint is not yet started.")
-	}
-	if _, found := e.modules[key]; found {
-		panic("This module is already registered.")
-	}
-	e.modules[key] = mod
 }
 
 func (e *Endpoint) Module(key interface{}) Module {

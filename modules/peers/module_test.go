@@ -7,7 +7,6 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/modules/bridge"
 	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/transports/udp"
@@ -22,21 +21,27 @@ var log = logs.Module("test")
 func TestPeers(t *testing.T) {
 	assert := assert.New(t)
 
-	A := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
-	B := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
-	R := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
+	A, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		mesh.Module(nil),
+		Module(Config{}))
+	assert.NoError(err)
 
-	bridge.Register(R)
-	mesh.Register(A, nil)
-	mesh.Register(B, nil)
-	mesh.Register(R, nil)
-	Register(A, Config{})
-	Register(B, Config{})
-	Register(R, Config{})
+	B, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		mesh.Module(nil),
+		Module(Config{}))
+	assert.NoError(err)
 
-	assert.NoError(A.Start())
-	assert.NoError(B.Start())
-	assert.NoError(R.Start())
+	R, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		bridge.Module(),
+		mesh.Module(nil),
+		Module(Config{}))
+	assert.NoError(err)
 
 	var BR_tag mesh.Tag
 	{
@@ -71,18 +76,4 @@ func TestPeers(t *testing.T) {
 	assert.NoError(A.Stop())
 	assert.NoError(B.Stop())
 	assert.NoError(R.Stop())
-}
-
-func randomKeys(csids ...uint8) cipherset.Keys {
-	keys := cipherset.Keys{}
-
-	for _, csid := range csids {
-		key, err := cipherset.GenerateKey(csid)
-		if err != nil {
-			panic(err)
-		}
-		keys[csid] = key
-	}
-
-	return keys
 }

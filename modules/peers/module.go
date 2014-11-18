@@ -47,8 +47,10 @@ type moduleKeyType string
 
 const moduleKey = moduleKeyType("peers")
 
-func Register(e *e3x.Endpoint, cnf Config) {
-	e.Use(moduleKey, newPeers(e, cnf))
+func Module(cnf Config) func(*e3x.Endpoint) error {
+	return func(e *e3x.Endpoint) error {
+		return e3x.RegisterModule(moduleKey, newPeers(e, cnf))(e)
+	}
 }
 
 func FromEndpoint(e *e3x.Endpoint) Peers {

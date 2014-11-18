@@ -25,8 +25,10 @@ type moduleKeyType string
 
 const moduleKey = moduleKeyType("bridge")
 
-func Register(e *e3x.Endpoint) {
-	e.Use(moduleKey, newBridge(e))
+func Module() func(*e3x.Endpoint) error {
+	return func(e *e3x.Endpoint) error {
+		return e3x.RegisterModule(moduleKey, newBridge(e))(e)
+	}
 }
 
 func FromEndpoint(e *e3x.Endpoint) Bridge {
@@ -41,11 +43,11 @@ func newBridge(e *e3x.Endpoint) *module {
 	return &module{
 		e:           e,
 		tokenRoutes: make(map[cipherset.Token]*e3x.Exchange),
-		log:         logs.Module("bridge").From(e.LocalHashname()),
 	}
 }
 
 func (mod *module) Init() error {
+	mod.log = logs.Module("bridge").From(mod.e.LocalHashname())
 
 	e3x.TransportsFromEndpoint(mod.e).Wrap(func(c transports.Config) transports.Config {
 		return transportConfig{mod, c}

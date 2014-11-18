@@ -6,7 +6,6 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/fw"
@@ -46,11 +45,21 @@ func TestBridge(t *testing.T) {
 		return true
 	}
 
-	A := e3x.New(randomKeys(0x3a), udp.Config{})
-	B := e3x.New(randomKeys(0x3a), fw.Config{Config: udp.Config{}, Allow: fw.RuleFunc(blacklistRule)})
+	A, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}))
+	assert.NoError(err)
+	B, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(fw.Config{Config: udp.Config{}, Allow: fw.RuleFunc(blacklistRule)}))
+	assert.NoError(err)
 
-	R := e3x.New(randomKeys(0x3a), udp.Config{})
-	Register(R)
+	R, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		Module())
+	assert.NoError(err)
+
 	bridge := FromEndpoint(R)
 
 	done := make(chan bool, 1)
@@ -72,7 +81,7 @@ func TestBridge(t *testing.T) {
 		for ; n > 0; n-- {
 			pkt, err = c.ReadPacket()
 			if err != nil {
-				t.Logf("ping: error: %s", err)
+				t.Fatalf("ping: error: %s", err)
 				return
 			}
 
@@ -82,19 +91,11 @@ func TestBridge(t *testing.T) {
 
 			err = c.WritePacket(&lob.Packet{})
 			if err != nil {
-				t.Logf("ping: error: %s", err)
+				t.Fatalf("ping: error: %s", err)
 				return
 			}
 		}
 	}()
-
-	registerEventLoggers(A, t)
-	registerEventLoggers(B, t)
-	registerEventLoggers(R, t)
-
-	assert.NoError(A.Start())
-	assert.NoError(B.Start())
-	assert.NoError(R.Start())
 
 	Aident, err := A.LocalIdentity()
 	assert.NoError(err)
@@ -135,14 +136,12 @@ func TestBridge(t *testing.T) {
 			pkt.Header().SetInt("n", n)
 			err = ch.WritePacket(pkt)
 			if err != nil {
-				t.Logf("ping: error: %s", err)
-				return
+				t.Fatalf("ping: error: %s", err)
 			}
 
 			_, err = ch.ReadPacket()
 			if err != nil {
-				t.Logf("ping: error: %s", err)
-				return
+				t.Fatalf("ping: error: %s", err)
 			}
 		}
 
@@ -154,26 +153,4 @@ func TestBridge(t *testing.T) {
 	assert.NoError(A.Stop())
 	assert.NoError(B.Stop())
 	assert.NoError(R.Stop())
-}
-
-func randomKeys(csids ...uint8) cipherset.Keys {
-	keys := cipherset.Keys{}
-
-	for _, csid := range csids {
-		key, err := cipherset.GenerateKey(csid)
-		if err != nil {
-			panic(err)
-		}
-		keys[csid] = key
-	}
-
-	return keys
-}
-
-func registerEventLoggers(e *e3x.Endpoint, t *testing.T) {
-	observers := e3x.ObserversFromEndpoint(e)
-	observers.Register(func(e *e3x.ExchangeOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
-	observers.Register(func(e *e3x.ExchangeClosedEvent) { t.Logf("EVENT: %s", e.String()) })
-	observers.Register(func(e *e3x.ChannelOpenedEvent) { t.Logf("EVENT: %s", e.String()) })
-	observers.Register(func(e *e3x.ChannelClosedEvent) { t.Logf("EVENT: %s", e.String()) })
 }
