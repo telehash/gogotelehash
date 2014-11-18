@@ -209,9 +209,6 @@ func (m *mesh) accept_links() {
 }
 
 func (m *mesh) handle_link(ch *e3x.Channel) {
-
-	panic("OK")
-
 	pkt, err := ch.ReadPacket()
 	if err != nil {
 		ch.Close()
