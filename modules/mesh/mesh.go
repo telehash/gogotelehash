@@ -18,8 +18,10 @@ type AcceptFunc func(ident *e3x.Identity, req, resp *lob.Packet) bool
 
 const moduleKey = moduleKeyType("mesh")
 
-func Register(e *e3x.Endpoint, accept AcceptFunc) {
-	e.Use(moduleKey, newMesh(e, accept))
+func Module(accept AcceptFunc) func(*e3x.Endpoint) error {
+	return func(e *e3x.Endpoint) error {
+		return e3x.RegisterModule(moduleKey, newMesh(e, accept))(e)
+	}
 }
 
 func FromEndpoint(e *e3x.Endpoint) Mesh {

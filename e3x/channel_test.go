@@ -27,19 +27,15 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 	var (
 		err error
 		e   *Endpoint
-		tc  = mux.Config{
+	)
+
+	e, err = Open(
+		Transport(mux.Config{
 			udp.Config{Network: "udp4"},
 			udp.Config{Network: "udp6"},
 			inproc.Config{},
-		}
-	)
-
-	e = New(nil, tc)
-	if e == nil {
-		t.Fatalf("expected e (*Endpoint) not to be nil")
-	}
-
-	err = e.Start()
+		}),
+		Log(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,13 +280,14 @@ func TestPingPongReliable(t *testing.T) {
 }
 
 func TestFloodReliable(t *testing.T) {
-	logs.DisableLogger()
-
 	if testing.Short() {
 		t.Skip("this is a long running test.")
 	}
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
+		A.setOptions(DisableLog())
+		B.setOptions(DisableLog())
+
 		var (
 			assert = assert.New(t)
 			c      *Channel
@@ -351,9 +348,11 @@ func TestFloodReliable(t *testing.T) {
 
 func BenchmarkReadWrite(b *testing.B) {
 	logs.ResetLogger()
-	logs.DisableModule("e3x.tx")
 
 	withTwoEndpoints(b, func(A, B *Endpoint) {
+		A.setOptions(DisableLog())
+		B.setOptions(DisableLog())
+
 		var (
 			c     *Channel
 			ident *Identity

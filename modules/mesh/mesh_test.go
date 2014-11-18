@@ -7,7 +7,6 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/logs"
 )
@@ -17,14 +16,16 @@ var log = logs.Module("test")
 func TestPeers(t *testing.T) {
 	assert := assert.New(t)
 
-	A := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
-	B := e3x.New(randomKeys(0x3a, 0x1a), udp.Config{})
-
-	Register(A, nil)
-	Register(B, nil)
-
-	assert.NoError(A.Start())
-	assert.NoError(B.Start())
+	A, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		Module(nil))
+	assert.NoError(err)
+	B, err := e3x.Open(
+		e3x.Log(nil),
+		e3x.Transport(udp.Config{}),
+		Module(nil))
+	assert.NoError(err)
 
 	var AB_tag Tag
 	{
@@ -49,18 +50,4 @@ func TestPeers(t *testing.T) {
 
 	assert.NoError(A.Stop())
 	assert.NoError(B.Stop())
-}
-
-func randomKeys(csids ...uint8) cipherset.Keys {
-	keys := cipherset.Keys{}
-
-	for _, csid := range csids {
-		key, err := cipherset.GenerateKey(csid)
-		if err != nil {
-			panic(err)
-		}
-		keys[csid] = key
-	}
-
-	return keys
 }

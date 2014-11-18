@@ -24,11 +24,12 @@ const (
 )
 
 type addressBookEntry struct {
-	Address     transports.Addr
-	LastAttempt time.Time
-	FirstSeen   time.Time
-	LastSeen    time.Time
-	Reachable   bool
+	Address      transports.Addr
+	LastAttempt  time.Time
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	Reachable    bool
+	GotResoponse bool
 
 	latency time.Duration
 	ewma    time.Duration
@@ -75,6 +76,12 @@ func (book *addressBook) NextHandshakeEpoch() {
 	)
 
 	for _, e := range book.known {
+		if !e.GotResoponse {
+			e.AddLatencySample(500 * time.Millisecond)
+			changed = true
+			book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
+		}
+
 		if e.LastSeen.Before(deadline) {
 			// no handshake since last epoch
 			// mark as broken
@@ -85,6 +92,8 @@ func (book *addressBook) NextHandshakeEpoch() {
 				book.log.Printf("\x1B[31mDetected broken path\x1B[0m %s", e)
 			}
 		}
+
+		e.GotResoponse = false
 	}
 
 	if changed {
@@ -123,6 +132,7 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	e.FirstSeen = now
 	e.LastSeen = now
 	e.Reachable = true
+	e.GotResoponse = true
 	e.InitSamples()
 
 	idx = len(book.known)
@@ -152,6 +162,7 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 
 	e.LastSeen = now
 	e.Reachable = true
+	e.GotResoponse = true
 
 	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
 	book.updateActive()

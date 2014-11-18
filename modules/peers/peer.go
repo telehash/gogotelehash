@@ -108,7 +108,7 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 	token := cipherset.ExtractToken(pkt.Body)
 	if token != cipherset.ZeroToken {
 		// add bridge back to requester
-		bridge.FromEndpoint(mod.e).RouteToken(token, ch.Exchange())
+		bridge.FromEndpoint(mod.e).RouteToken(token, ch.Exchange(), nil)
 	}
 
 	mod.connect(ex, pkt.Body)
