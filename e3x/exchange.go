@@ -759,6 +759,8 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		return false
 	}
 
+	x.lastRemoteSeq = handshake.At()
+
 	if resp != nil {
 		x.endpoint.writeMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
 	}
