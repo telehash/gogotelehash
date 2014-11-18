@@ -76,7 +76,7 @@ func Encode(pkt *Packet) ([]byte, error) {
 		return []byte{0, 0}, nil
 	}
 
-	if len(pkt.json) > 0 {
+	if pkt.json != nil && len(pkt.json) > 0 {
 		head, err = json.Marshal(pkt.json)
 		if err != nil {
 			return nil, err
@@ -117,6 +117,9 @@ func (p *Packet) Header() Header {
 
 // Free the packets backing buffer back to the buffer pool.
 func (p *Packet) Free() {
+	if p == nil {
+		return
+	}
 	if p.raw != nil {
 		bufpool.PutBuffer(p.raw)
 	}

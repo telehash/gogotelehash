@@ -6,9 +6,7 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
-	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/require"
 
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports/inproc"
@@ -17,7 +15,7 @@ import (
 	"github.com/telehash/gogotelehash/util/logs"
 )
 
-func withTwoEndpoints(t *testing.T, f func(a, b *Endpoint)) {
+func withTwoEndpoints(t testing.TB, f func(a, b *Endpoint)) {
 	withEndpoint(t, func(a *Endpoint) {
 		withEndpoint(t, func(b *Endpoint) {
 			f(a, b)
@@ -25,10 +23,9 @@ func withTwoEndpoints(t *testing.T, f func(a, b *Endpoint)) {
 	})
 }
 
-func withEndpoint(t *testing.T, f func(e *Endpoint)) {
+func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 	var (
 		err error
-		key cipherset.Key
 		e   *Endpoint
 		tc  = mux.Config{
 			udp.Config{Network: "udp4"},
@@ -37,21 +34,22 @@ func withEndpoint(t *testing.T, f func(e *Endpoint)) {
 		}
 	)
 
-	key, err = cipherset.GenerateKey(0x3a)
-	require.NoError(t, err)
-	require.NotNil(t, key)
-
-	e = New(cipherset.Keys{0x3a: key}, tc)
-	require.NotNil(t, e)
-
-	registerEventLoggers(e, t)
+	e = New(nil, tc)
+	if e == nil {
+		t.Fatalf("expected e (*Endpoint) not to be nil")
+	}
 
 	err = e.Start()
-	require.NoError(t, err)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	defer func() {
 		err = e.Stop()
-		require.NoError(t, err)
+
+		if err != nil {
+			t.Fatal(err)
+		}
 	}()
 
 	f(e)
@@ -348,5 +346,73 @@ func TestFloodReliable(t *testing.T) {
 				lastID = id
 			}
 		}
+	})
+}
+
+func BenchmarkReadWrite(b *testing.B) {
+	logs.ResetLogger()
+	logs.DisableModule("e3x.tx")
+
+	withTwoEndpoints(b, func(A, B *Endpoint) {
+		var (
+			c     *Channel
+			ident *Identity
+			pkt   *lob.Packet
+			err   error
+		)
+
+		b.ResetTimer()
+
+		go func() {
+			c, err := A.Listen("flood", true).AcceptChannel()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			defer c.Close()
+
+			pkt, err = c.ReadPacket()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for i := 0; i < b.N; i++ {
+				pkt := &lob.Packet{}
+				pkt.Header().SetInt("flood_id", i)
+				err = c.WritePacket(pkt)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		}()
+
+		ident, err = A.LocalIdentity()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		c, err = B.Open(ident, "flood", true)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		defer c.Close()
+
+		err = c.WritePacket(&lob.Packet{})
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for {
+			pkt, err = c.ReadPacket()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+
+		b.StopTimer()
 	})
 }
