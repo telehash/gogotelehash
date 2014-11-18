@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"testing"
+	"time"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
@@ -60,8 +61,6 @@ func TestBridge(t *testing.T) {
 		Module())
 	assert.NoError(err)
 
-	bridge := FromEndpoint(R)
-
 	done := make(chan bool, 1)
 
 	go func() {
@@ -87,13 +86,18 @@ func TestBridge(t *testing.T) {
 
 			if first {
 				n, _ = pkt.Header().GetInt("n")
+				first = false
 			}
+
+			t.Logf("RCV ping: %d", n)
 
 			err = c.WritePacket(&lob.Packet{})
 			if err != nil {
 				t.Fatalf("ping: error: %s", err)
 				return
 			}
+
+			t.Logf("SND pong: %d", n)
 		}
 	}()
 
@@ -104,6 +108,8 @@ func TestBridge(t *testing.T) {
 	Rident, err := R.LocalIdentity()
 	assert.NoError(err)
 
+	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
+
 	ABex, err := A.Dial(Bident)
 	assert.NoError(err)
 	BRex, err := B.Dial(Rident)
@@ -113,6 +119,8 @@ func TestBridge(t *testing.T) {
 	RAex, err := R.Dial(Aident)
 	assert.NoError(err)
 
+	time.Sleep(10 * time.Second)
+
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
 	// blacklist A
@@ -120,9 +128,12 @@ func TestBridge(t *testing.T) {
 	log.Println("\x1B[32mblacklist:\x1B[0m", blacklist)
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
+	log.Printf("ab-local-token  = %x", ABex.LocalToken())
+	log.Printf("ab-remote-token = %x", ABex.RemoteToken())
 
-	bridge.RouteToken(ABex.LocalToken(), RAex)
-	bridge.RouteToken(ABex.RemoteToken(), RBex)
+	bridge := FromEndpoint(R)
+	bridge.RouteToken(ABex.LocalToken(), RAex, RBex)
+	bridge.RouteToken(ABex.RemoteToken(), RBex, RAex)
 	ABex.AddPathCandidate(BRex.ActivePath())
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
@@ -138,11 +149,13 @@ func TestBridge(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ping: error: %s", err)
 			}
+			t.Logf("SND ping: %d", n)
 
 			_, err = ch.ReadPacket()
 			if err != nil {
 				t.Fatalf("ping: error: %s", err)
 			}
+			t.Logf("RCV pong: %d", n)
 		}
 
 		ch.Close()

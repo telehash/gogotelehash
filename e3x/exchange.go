@@ -403,6 +403,11 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
 func (x *Exchange) expire(err error) {
 
 	x.mtx.Lock()
+	if x.state == ExchangeExpired || x.state == ExchangeExpired {
+		x.mtx.Unlock()
+		return
+	}
+
 	if err == nil {
 		x.state = ExchangeExpired
 	} else {
