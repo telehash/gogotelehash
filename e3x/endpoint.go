@@ -6,7 +6,6 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
@@ -40,11 +39,6 @@ type Endpoint struct {
 	listeners  map[string]*Listener
 }
 
-type opReceived struct {
-	pkt *lob.Packet
-	opRead
-}
-
 type opRead struct {
 	msg []byte
 	src transports.Addr
@@ -57,6 +51,15 @@ func New(keys cipherset.Keys, tc transports.Config) *Endpoint {
 		transportConfig: tc,
 		listeners:       make(map[string]*Listener),
 		modules:         make(map[interface{}]Module),
+	}
+
+	if e.keys == nil {
+		keys, err := cipherset.GenerateKeys()
+		if err != nil {
+			panic(err)
+		}
+
+		e.keys = keys
 	}
 
 	var err error
