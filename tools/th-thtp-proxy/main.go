@@ -9,60 +9,53 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
-	"github.com/telehash/gogotelehash/channels/thtp"
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/modules/mesh"
+	"github.com/telehash/gogotelehash/modules/netwatch"
+	"github.com/telehash/gogotelehash/modules/thtp"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
 	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func main() {
-	var peerAddr *e3x.Addr
+	var peerIdentity *e3x.Identity
 
-	err := json.NewDecoder(os.Stdin).Decode(&peerAddr)
+	err := json.NewDecoder(os.Stdin).Decode(&peerIdentity)
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	target, err := url.Parse("thtp://" + string(peerAddr.Hashname()))
+	target, err := url.Parse("thtp://" + string(peerIdentity.Hashname()))
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	k, err := cipherset.GenerateKey(0x3a)
-	if err != nil {
-		log.Fatalf("error: %s", err)
-	}
-
-	e := e3x.New(
-		cipherset.Keys{0x3a: k},
-		nat.Config{
+	e, err := e3x.Open(
+		e3x.Log(nil),
+		mesh.Module(nil),
+		netwatch.Module(),
+		e3x.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},
 			},
-		})
-
-	err = e.Start()
+		}))
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	time.Sleep(1 * time.Second)
-
 	{
-		peerAddrJSON, err := peerAddr.MarshalJSON()
+		peerIdentityJSON, err := peerIdentity.MarshalJSON()
 		if err != nil {
 			log.Fatalf("error: %s", err)
 		}
 
-		log.Printf("peerAddr:\n%s", peerAddrJSON)
+		log.Printf("peerIdentity:\n%s", peerIdentityJSON)
 	}
 
-	_, err = e.Dial(peerAddr)
+	tag, err := mesh.FromEndpoint(e).Link(peerIdentity, nil)
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
@@ -70,7 +63,7 @@ func main() {
 	thtp.RegisterDefaultTransport(e)
 	go http.ListenAndServe(":3000", httputil.NewSingleHostReverseProxy(target))
 
-	log.Printf("proxying to %s", peerAddr.Hashname())
+	log.Printf("proxying to %s", peerIdentity.Hashname())
 
 	{ // wait
 		sig := make(chan os.Signal)
@@ -78,6 +71,8 @@ func main() {
 		<-sig
 		signal.Stop(sig)
 	}
+
+	tag.Release()
 
 	err = e.Stop()
 	if err != nil {

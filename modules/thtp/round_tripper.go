@@ -41,7 +41,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var (
 		hashname = hashname.H(req.URL.Host)
 		c        *e3x.Channel
-		ident    *e3x.Identity
+		ident    e3x.Identifier
 		resp     *http.Response
 		err      error
 	)
@@ -54,8 +54,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 
 	} else {
-		// Use resolver provider by Endpoint
-		panic("thtp needs a proper host identifier")
+		ident = e3x.HashnameIdentifier(hashname)
 
 	}
 
