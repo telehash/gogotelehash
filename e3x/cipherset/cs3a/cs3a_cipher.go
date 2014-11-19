@@ -530,6 +530,8 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	ctLen = len(box.SealAfterPrecomputation(body[16+24:16+24], inner, &nonce, s.lineEncryptionKey))
 	body = body[:16+24+ctLen]
 
+	bufpool.PutBuffer(inner)
+
 	return &lob.Packet{Body: body}, nil
 }
 

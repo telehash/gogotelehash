@@ -67,6 +67,7 @@ type Channel struct {
 	deliveredEnd bool
 	receivedEnd  bool
 	readEnd      bool
+	needsResend  bool
 
 	openDeadlineReached  bool
 	writeDeadlineReached bool
@@ -133,6 +134,10 @@ func newChannel(
 	c.tWriteDeadline = time.AfterFunc(10*time.Second, c.onWriteDeadlineReached)
 	c.tReadDeadline.Stop()
 	c.tWriteDeadline.Stop()
+
+	if reliable {
+		c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
+	}
 
 	return c
 }
@@ -250,12 +255,7 @@ func (c *Channel) write(pkt *lob.Packet) error {
 	if c.reliable {
 		c.applyAckHeaders(pkt)
 		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}}
-
-		if c.tResend == nil {
-			c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
-		} else {
-			c.tResend.Reset(1 * time.Second)
-		}
+		c.needsResend = false
 	}
 
 	err := c.x.deliverPacket(pkt)
@@ -438,8 +438,8 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 				changed = true
 			}
 
-			if len(c.writeBuffer) == 0 && c.tResend != nil {
-				c.unsetResender()
+			if len(c.writeBuffer) == 0 {
+				c.needsResend = false
 			}
 
 			if changed {
@@ -683,6 +683,14 @@ func (c *Channel) resendLastPacket() {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
+	var needsResend bool
+	needsResend, c.needsResend = c.needsResend, true
+	c.tResend.Reset(1 * time.Second)
+
+	if !needsResend {
+		return
+	}
+
 	e := c.writeBuffer[c.oSeq]
 	if e == nil {
 		return
@@ -697,8 +705,6 @@ func (c *Channel) resendLastPacket() {
 	}
 	e.lastResend = time.Now()
 	c.x.deliverPacket(e.pkt)
-
-	c.tResend.Reset(1 * time.Second)
 }
 
 func (c *Channel) maybeDeliverAck() {
