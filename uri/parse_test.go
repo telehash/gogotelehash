@@ -3,7 +3,7 @@ package uri
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 )
 
 func TestParse(t *testing.T) {
