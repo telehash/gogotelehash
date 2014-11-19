@@ -10,6 +10,9 @@ type Transports interface {
 	// transport will be passed to and a valid transport must be returned.
 	// Only use this module when you know what you are doeing.
 	Wrap(f func(transports.Config) transports.Config)
+
+	// LocalAddresses returns the list of discovered local addresses
+	LocalAddresses() []transports.Addr
 }
 
 // TransportsFromEndpoint returns the Transports module for Endpoint.
@@ -35,4 +38,8 @@ func (mod *modTransports) Stop() error  { return nil }
 
 func (mod *modTransports) Wrap(f func(transports.Config) transports.Config) {
 	mod.e.transportConfig = f(mod.e.transportConfig)
+}
+
+func (mod *modTransports) LocalAddresses() []transports.Addr {
+	return mod.e.transport.LocalAddresses()
 }

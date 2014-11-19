@@ -501,3 +501,7 @@ func (e *Endpoint) Module(key interface{}) Module {
 func (e *Endpoint) writeMessage(p []byte, dst transports.Addr) error {
 	return e.transport.WriteMessage(p, dst)
 }
+
+func (e *Endpoint) Log() *logs.Logger {
+	return e.log
+}
