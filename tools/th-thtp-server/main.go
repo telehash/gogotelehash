@@ -8,49 +8,44 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/telehash/gogotelehash/channels/thtp"
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/modules/mesh"
+	"github.com/telehash/gogotelehash/modules/netwatch"
+	"github.com/telehash/gogotelehash/modules/thtp"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
 	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func main() {
-	k, err := cipherset.GenerateKey(0x3a)
-	if err != nil {
-		log.Fatalf("error: %s", err)
-	}
-
-	e := e3x.New(
-		cipherset.Keys{0x3a: k},
-		nat.Config{
+	e, err := e3x.Open(
+		e3x.Log(nil),
+		thtp.Server(http.DefaultServeMux),
+		mesh.Module(nil),
+		netwatch.Module(),
+		e3x.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},
 			},
-		})
-
-	e.AddHandler("thtp", &thtp.Server{Handler: http.DefaultServeMux})
-
-	err = e.Start()
+		}))
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(20 * time.Second)
 
-	addr, err := e.LocalAddr()
+	identity, err := e.LocalIdentity()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	addrJSON, err := addr.MarshalJSON()
+	identityJSON, err := identity.MarshalJSON()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}
 
-	log.Printf("addr:\n%s", addrJSON)
+	log.Printf("identity:\n%s", identityJSON)
 
 	{ // wait
 		sig := make(chan os.Signal)

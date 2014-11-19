@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"runtime"
 	"strings"
 
@@ -19,23 +20,70 @@ import (
 var (
 	_ http.ResponseWriter = (*responseWriter)(nil)
 	_ http.Flusher        = (*responseWriter)(nil)
+	_ e3x.Module          = (*module)(nil)
 )
 
-type Server struct {
-	Handler http.Handler
-	Log     *log.Logger
+func Server(handler http.Handler) func(*e3x.Endpoint) error {
+	return func(e *e3x.Endpoint) error {
+		return e3x.RegisterModule(moduleKey, &module{
+			endpoint: e,
+			handler:  handler,
+			log:      log.New(os.Stderr, "", 0),
+		})(e)
+	}
 }
 
-func (s *Server) logf(format string, args ...interface{}) {
-	if s.Log != nil {
-		s.Log.Printf(format, args...)
+type moduleKeyType string
+
+const moduleKey = moduleKeyType("thtp")
+
+type module struct {
+	endpoint *e3x.Endpoint
+	listener *e3x.Listener
+	handler  http.Handler
+	log      *log.Logger
+}
+
+func (mod *module) Init() error {
+	mod.listener = mod.endpoint.Listen("thtp", true)
+	return nil
+}
+
+func (mod *module) Start() error {
+	go mod.run()
+	return nil
+}
+
+func (mod *module) Stop() error {
+	if mod.listener != nil {
+		mod.listener.Close()
+	}
+	return nil
+}
+
+func (mod *module) run() {
+	for {
+		c, err := mod.listener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			mod.logf("failed to accept: %s", err)
+			continue
+		}
+		go mod.serveTelehash(c)
+	}
+}
+
+func (mod *module) logf(format string, args ...interface{}) {
+	if mod.log != nil {
+		mod.log.Printf(format, args...)
 	} else {
 		log.Printf(format, args...)
 	}
 }
 
-func (s *Server) ServeTelehash(c *e3x.Channel) {
-
+func (mod *module) serveTelehash(c *e3x.Channel) {
 	defer c.Close()
 
 	defer func() {
@@ -43,11 +91,11 @@ func (s *Server) ServeTelehash(c *e3x.Channel) {
 			const size = 64 << 10
 			buf := make([]byte, size)
 			buf = buf[:runtime.Stack(buf, false)]
-			s.logf("thtp: panic serving %s: %v\n%s", c.RemoteHashname(), err, buf)
+			mod.logf("thtp: panic serving %s: %v\n%s", c.RemoteHashname(), err, buf)
 		}
 	}()
 
-	req, err := s.readRequest(c)
+	req, err := mod.readRequest(c)
 	if err != nil {
 		return
 	}
@@ -55,10 +103,10 @@ func (s *Server) ServeTelehash(c *e3x.Channel) {
 	rw := newResponseWriter(c)
 	defer rw.Flush()
 
-	s.Handler.ServeHTTP(rw, req)
+	mod.handler.ServeHTTP(rw, req)
 }
 
-func (s *Server) readRequest(c *e3x.Channel) (*http.Request, error) {
+func (mod *module) readRequest(c *e3x.Channel) (*http.Request, error) {
 	var (
 		r   = bufio.NewReaderSize(&serverPacketReader{c: c}, 64*1024)
 		req *http.Request
