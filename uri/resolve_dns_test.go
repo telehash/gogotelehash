@@ -17,7 +17,7 @@ func Test_resolveDNS(t *testing.T) {
 	}
 
 	ident, err := resolveSRV(uri, "udp")
-	assert.NoError(err)
-	assert.NotNil(ident)
-	t.Logf("ident=%v addrs=%v keys=%v", ident, ident.Addresses(), ident.Keys())
+	if assert.NoError(err) && assert.NotNil(ident) {
+		t.Logf("ident=%v addrs=%v keys=%v", ident, ident.Addresses(), ident.Keys())
+	}
 }
