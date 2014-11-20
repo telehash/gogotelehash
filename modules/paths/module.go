@@ -111,7 +111,7 @@ func (mod *module) handlePathRequest(c *e3x.Channel) {
 	}
 
 	// decode paths known by peer and add them as candidates
-	if header, found := pkt.Header().Get("path"); found {
+	if header, found := pkt.Header().Get("paths"); found {
 		data, err := json.Marshal(header)
 		if err != nil {
 			return // ignore

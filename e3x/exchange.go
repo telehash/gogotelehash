@@ -683,7 +683,7 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.
 	}
 
 	seq = handshake.At()
-	if seq <= x.lastRemoteSeq {
+	if seq < x.lastRemoteSeq {
 		// drop; a newer packet has already been processed
 		return nil, false
 	}
