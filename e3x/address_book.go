@@ -10,6 +10,7 @@ import (
 
 const (
 	cMaxAddressBookEntries = 16
+	cNumBackupAddresses    = 3
 )
 
 type addressBook struct {
@@ -30,6 +31,7 @@ type addressBookEntry struct {
 	LastSeen     time.Time
 	Reachable    bool
 	GotResoponse bool
+	IsBackup     bool
 
 	latency time.Duration
 	ewma    time.Duration
@@ -58,7 +60,7 @@ func (book *addressBook) KnownAddresses() []transports.Addr {
 func (book *addressBook) HandshakeAddresses() []transports.Addr {
 	s := make([]transports.Addr, 0, len(book.known))
 	for _, e := range book.known {
-		if len(s) == 5 {
+		if len(s) == cNumBackupAddresses {
 			break
 		}
 		if !e.Reachable {
@@ -76,7 +78,7 @@ func (book *addressBook) NextHandshakeEpoch() {
 	)
 
 	for _, e := range book.known {
-		if !e.GotResoponse {
+		if !e.GotResoponse && e.IsBackup {
 			e.AddLatencySample(500 * time.Millisecond)
 			changed = true
 			book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
@@ -173,6 +175,17 @@ func (book *addressBook) updateActive() {
 
 	if len(book.known) > cMaxAddressBookEntries {
 		book.known = book.known[:cMaxAddressBookEntries]
+	}
+
+	n := 0
+	for _, e := range book.known {
+		if n >= cNumBackupAddresses {
+			break
+		}
+		if e.Reachable {
+			n++
+			e.IsBackup = true
+		}
 	}
 
 	var oldActive = book.active
