@@ -11,6 +11,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/modules/netwatch"
+	"github.com/telehash/gogotelehash/modules/paths"
 	"github.com/telehash/gogotelehash/modules/thtp"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
@@ -23,6 +24,7 @@ func main() {
 		thtp.Server(http.DefaultServeMux),
 		mesh.Module(nil),
 		netwatch.Module(),
+		paths.Module(),
 		e3x.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},

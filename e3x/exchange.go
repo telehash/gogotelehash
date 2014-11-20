@@ -230,6 +230,14 @@ func (x *Exchange) ActivePath() transports.Addr {
 	return addr
 }
 
+// KnownPaths returns all the know addresses of the remote endpoint.
+func (x *Exchange) KnownPaths() []transports.Addr {
+	x.mtx.Lock()
+	addrs := x.addressBook.KnownAddresses()
+	x.mtx.Unlock()
+	return addrs
+}
+
 func (x *Exchange) received(op opRead) {
 	if len(op.msg) >= 3 && op.msg[1] == 1 {
 		x.receivedHandshake(op)
@@ -371,7 +379,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 	entry.c.receivedPacket(pkt)
 }
 
-func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
+func (x *Exchange) deliverPacket(pkt *lob.Packet, addr transports.Addr) error {
 	x.mtx.Lock()
 	for x.state == ExchangeDialing {
 		x.cndState.Wait()
@@ -379,7 +387,9 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet) error {
 	if !x.state.IsOpen() {
 		return BrokenExchangeError(x.remoteIdent.Hashname())
 	}
-	addr := x.addressBook.ActiveAddress()
+	if addr == nil {
+		addr = x.addressBook.ActiveAddress()
+	}
 	x.mtx.Unlock()
 
 	pkt, err := x.cipher.EncryptPacket(pkt)

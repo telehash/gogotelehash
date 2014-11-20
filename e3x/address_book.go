@@ -60,11 +60,13 @@ func (book *addressBook) KnownAddresses() []transports.Addr {
 func (book *addressBook) HandshakeAddresses() []transports.Addr {
 	s := make([]transports.Addr, 0, len(book.known))
 	for _, e := range book.known {
-		if len(s) == cNumBackupAddresses {
-			break
-		}
-		if !e.Reachable {
-			break
+		if !e.LastAttempt.IsZero() {
+			if !e.IsBackup {
+				continue
+			}
+			if !e.Reachable {
+				continue
+			}
 		}
 		s = append(s, e.Address)
 	}
@@ -179,12 +181,11 @@ func (book *addressBook) updateActive() {
 
 	n := 0
 	for _, e := range book.known {
-		if n >= cNumBackupAddresses {
-			break
-		}
-		if e.Reachable {
+		if e.Reachable && n < cNumBackupAddresses {
 			n++
 			e.IsBackup = true
+		} else {
+			e.IsBackup = false
 		}
 	}
 
