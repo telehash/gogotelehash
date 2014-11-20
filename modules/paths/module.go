@@ -92,7 +92,7 @@ func (mod *module) negotiatePaths(x *e3x.Exchange) {
 	}
 
 	for {
-		pkt, err := c.ReadPacket()
+		_, err := c.ReadPacket()
 		if err == io.EOF || err == e3x.ErrTimeout {
 			return
 		}
