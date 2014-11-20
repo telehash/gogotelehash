@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
@@ -36,12 +37,14 @@ type Mesh interface {
 	Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error)
 	HasLink(hashname.H) bool
 	Exchange(hashname.H) *e3x.Exchange
+	LinkedExchanges() []*e3x.Exchange
 }
 
 type mesh struct {
 	endpoint     *e3x.Endpoint
 	accept       AcceptFunc
 	mtx          sync.Mutex
+	observers    e3x.Observers
 	linkListener *e3x.Listener
 	links        map[hashname.H]*link
 	last_tag_id  uint64
@@ -85,8 +88,8 @@ func newMesh(e *e3x.Endpoint, accept AcceptFunc) *mesh {
 }
 
 func (m *mesh) Init() error {
-	observers := e3x.ObserversFromEndpoint(m.endpoint)
-	observers.Register(m.on_exchange_closed)
+	m.observers = e3x.ObserversFromEndpoint(m.endpoint)
+	m.observers.Register(m.onExchangeClosed)
 	return nil
 }
 
@@ -107,7 +110,7 @@ func (m *mesh) Stop() error {
 	return nil
 }
 
-func (m *mesh) on_exchange_closed(evt *e3x.ExchangeClosedEvent) {
+func (m *mesh) onExchangeClosed(evt *e3x.ExchangeClosedEvent) {
 	m.unlink(evt.Exchange.RemoteHashname())
 }
 
@@ -120,6 +123,7 @@ func (m *mesh) unlink(hn hashname.H) {
 	if link != nil {
 		link.channel.Close()
 		logs.From(m.endpoint.LocalHashname()).To(hn).Module("mesh").Println("Unlinked")
+		m.observers.Trigger(&LinkDownEvent{link.exchange})
 	}
 }
 
@@ -141,6 +145,17 @@ func (m *mesh) Exchange(h hashname.H) *e3x.Exchange {
 	}
 
 	return l.exchange
+}
+
+func (m *mesh) LinkedExchanges() []*e3x.Exchange {
+	m.mtx.Lock()
+	exchanges := make([]*e3x.Exchange, 0, len(m.links))
+	for _, link := range m.links {
+		exchanges = append(exchanges, link.exchange)
+	}
+	m.mtx.Unlock()
+
+	return exchanges
 }
 
 func (m *mesh) Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error) {
@@ -187,6 +202,7 @@ func (m *mesh) Link(ident *e3x.Identity, pkt *lob.Packet) (Tag, error) {
 		m.links[ident.Hashname()] = l
 
 		logs.From(m.endpoint.LocalHashname()).To(ident.Hashname()).Module("mesh").Println("Linked")
+		m.observers.Trigger(&LinkUpEvent{l.exchange})
 	}
 
 	m.last_tag_id++
@@ -249,6 +265,7 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 	l.channel = ch
 
 	logs.From(m.endpoint.LocalHashname()).To(ch.RemoteHashname()).Module("mesh").Println("Linked")
+	m.observers.Trigger(&LinkUpEvent{l.exchange})
 
 	go m.keepChannelOpen(ch)
 }
@@ -290,4 +307,20 @@ func (m *mesh) keepChannelOpen(c *e3x.Channel) {
 			return
 		}
 	}
+}
+
+type LinkUpEvent struct {
+	Exchange *e3x.Exchange
+}
+
+type LinkDownEvent struct {
+	Exchange *e3x.Exchange
+}
+
+func (event *LinkUpEvent) String() string {
+	return fmt.Sprintf("Mesh Link up %s", event.Exchange.RemoteHashname())
+}
+
+func (event *LinkDownEvent) String() string {
+	return fmt.Sprintf("Mesh Link down %s", event.Exchange.RemoteHashname())
 }

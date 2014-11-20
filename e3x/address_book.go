@@ -60,11 +60,13 @@ func (book *addressBook) KnownAddresses() []transports.Addr {
 func (book *addressBook) HandshakeAddresses() []transports.Addr {
 	s := make([]transports.Addr, 0, len(book.known))
 	for _, e := range book.known {
-		if len(s) == cNumBackupAddresses {
-			break
-		}
-		if !e.Reachable {
-			break
+		if !e.LastAttempt.IsZero() {
+			if !e.IsBackup {
+				continue
+			}
+			if !e.Reachable {
+				continue
+			}
 		}
 		s = append(s, e.Address)
 	}
@@ -78,7 +80,11 @@ func (book *addressBook) NextHandshakeEpoch() {
 	)
 
 	for _, e := range book.known {
-		if !e.GotResoponse && e.IsBackup {
+		if !e.IsBackup {
+			continue
+		}
+
+		if !e.GotResoponse {
 			e.AddLatencySample(500 * time.Millisecond)
 			changed = true
 			book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
@@ -179,12 +185,18 @@ func (book *addressBook) updateActive() {
 
 	n := 0
 	for _, e := range book.known {
-		if n >= cNumBackupAddresses {
-			break
-		}
-		if e.Reachable {
+		if e.Reachable && n < cNumBackupAddresses {
+			if !e.IsBackup {
+				e.LastAttempt = time.Time{}
+				e.LastSeen = time.Now()
+				e.Reachable = true
+				e.GotResoponse = true
+			}
+
 			n++
 			e.IsBackup = true
+		} else {
+			e.IsBackup = false
 		}
 	}
 
@@ -234,6 +246,7 @@ func (s sortedAddressBookEntries) Less(i, j int) bool {
 	if s[i].Reachable && !s[j].Reachable {
 		return true
 	}
+
 	if !s[i].Reachable && s[j].Reachable {
 		return false
 	}

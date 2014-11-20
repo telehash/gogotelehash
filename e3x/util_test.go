@@ -27,7 +27,7 @@ type MockExchange struct {
 	mock.Mock
 }
 
-func (m *MockExchange) deliverPacket(pkt *lob.Packet) error {
+func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst transports.Addr) error {
 	args := m.Called(pkt)
 	return args.Error(0)
 }

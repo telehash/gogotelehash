@@ -13,6 +13,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/modules/netwatch"
+	"github.com/telehash/gogotelehash/modules/paths"
 	"github.com/telehash/gogotelehash/modules/thtp"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
@@ -35,6 +36,7 @@ func main() {
 	e, err := e3x.Open(
 		e3x.Log(nil),
 		mesh.Module(nil),
+		paths.Module(),
 		netwatch.Module(),
 		e3x.Transport(nat.Config{
 			mux.Config{

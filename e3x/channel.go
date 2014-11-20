@@ -3,6 +3,7 @@ package e3x
 import (
 	"errors"
 	"fmt"
+	"github.com/telehash/gogotelehash/transports"
 	"io"
 	"net"
 	"os"
@@ -86,7 +87,7 @@ type Channel struct {
 }
 
 type exchangeI interface {
-	deliverPacket(pkt *lob.Packet) error
+	deliverPacket(pkt *lob.Packet, dst transports.Addr) error
 	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
 }
@@ -101,6 +102,7 @@ type writeBufferEntry struct {
 	pkt        *lob.Packet
 	end        bool
 	lastResend time.Time
+	dst        transports.Addr
 }
 
 func newChannel(
@@ -169,6 +171,10 @@ func (e *Endpoint) Open(i Identifier, typ string, reliable bool) (*Channel, erro
 }
 
 func (c *Channel) WritePacket(pkt *lob.Packet) error {
+	return c.WritePacketTo(pkt, nil)
+}
+
+func (c *Channel) WritePacketTo(pkt *lob.Packet, path transports.Addr) error {
 	if c == nil {
 		return os.ErrInvalid
 	}
@@ -178,7 +184,7 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 		c.cndWrite.Wait()
 	}
 
-	err := c.write(pkt)
+	err := c.write(pkt, path)
 
 	if !c.blockWrite() {
 		c.cndWrite.Signal()
@@ -218,7 +224,7 @@ func (c *Channel) blockWrite() bool {
 	return false
 }
 
-func (c *Channel) write(pkt *lob.Packet) error {
+func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	if c.broken {
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
@@ -254,11 +260,11 @@ func (c *Channel) write(pkt *lob.Packet) error {
 
 	if c.reliable {
 		c.applyAckHeaders(pkt)
-		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}}
+		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
 		c.needsResend = false
 	}
 
-	err := c.x.deliverPacket(pkt)
+	err := c.x.deliverPacket(pkt, path)
 	if err != nil {
 		return err
 	}
@@ -527,7 +533,7 @@ func (c *Channel) Error(err error) error {
 
 	pkt := &lob.Packet{}
 	pkt.Header().SetString("err", err.Error())
-	if err := c.write(pkt); err != nil {
+	if err := c.write(pkt, nil); err != nil {
 		c.mtx.Unlock()
 		return err
 	}
@@ -566,7 +572,7 @@ func (c *Channel) Close() error {
 		if !c.deliveredEnd {
 			pkt := &lob.Packet{}
 			pkt.Header().SetBool("end", true)
-			if err := c.write(pkt); err != nil {
+			if err := c.write(pkt, nil); err != nil {
 				c.mtx.Unlock()
 				return err
 			}
@@ -675,7 +681,7 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 		}
 		e.lastResend = now
 
-		c.x.deliverPacket(e.pkt)
+		c.x.deliverPacket(e.pkt, e.dst)
 	}
 }
 
@@ -704,7 +710,7 @@ func (c *Channel) resendLastPacket() {
 		e.pkt.Header().SetUint32Slice("miss", omiss)
 	}
 	e.lastResend = time.Now()
-	c.x.deliverPacket(e.pkt)
+	c.x.deliverPacket(e.pkt, e.dst)
 }
 
 func (c *Channel) maybeDeliverAck() {
@@ -741,7 +747,7 @@ func (c *Channel) deliverAck() {
 	pkt := &lob.Packet{}
 	pkt.Header().SetUint32("c", c.id)
 	c.applyAckHeaders(pkt)
-	c.x.deliverPacket(pkt)
+	c.x.deliverPacket(pkt, nil)
 }
 
 func (c *Channel) applyAckHeaders(pkt *lob.Packet) {

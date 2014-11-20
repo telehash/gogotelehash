@@ -1,3 +1,5 @@
+// Package netwatch monitors the local networks available and notifies the
+// interested components of any changes.
 package netwatch
 
 import (
