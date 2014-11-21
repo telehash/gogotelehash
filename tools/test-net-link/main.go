@@ -12,6 +12,7 @@ import (
 
 func main() {
 	e, err := e3x.Open(
+		e3x.Log(nil),
 		mesh.Module(nil))
 
 	log.Printf("golang: %s", e.LocalHashname())
