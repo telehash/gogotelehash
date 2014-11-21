@@ -1,8 +1,10 @@
 package kademlia
 
 import (
+	"bytes"
 	"container/list"
 	"fmt"
+	"sort"
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/modules/mesh"
@@ -52,13 +54,14 @@ func (t *table) init() {
 	}
 }
 
-func (t *table) findKey(key [keyLen]byte, n uint) []*activePeer {
+func (t *table) findKey(key [keyLen]byte, n uint) []hashname.H {
 	var (
 		dist      = keyDistance(t.localHashname, key[:])
 		bucketIdx = bucketFromDistance(dist)
 		bucket    *bucket
-		offset    = 0
+		offset    = 1
 		peers     []*activePeer
+		out       []hashname.H
 	)
 
 	if n == 0 {
@@ -69,8 +72,92 @@ func (t *table) findKey(key [keyLen]byte, n uint) []*activePeer {
 		bucketIdx = 0
 	}
 
-	peers = make([]*activePeer, 0, n)
+	peers = make([]peerInfo, 0, n+(3*maxPeers))
 
+	{ // find initial bucket
+		bucket = t.buckets[bucketIdx]
+
+		for e := bucket.peers.Front(); e != nil; e = e.Next() {
+			v := e.Value.(*activePeer)
+			if v != nil {
+				peers = append(peers, v.peerInfo)
+			}
+		}
+	}
+
+	// add additional peers
+	for len(peers) < n && offset < numBuckets {
+
+		// lower bucket
+		idx := bucketIdx - offset
+		if idx >= 0 {
+			bucket = t.buckets[idx]
+
+			for e := bucket.peers.Front(); e != nil; e = e.Next() {
+				v := e.Value.(*activePeer)
+				if v != nil {
+					peers = append(peers, v.peerInfo)
+				}
+			}
+		}
+
+		// higher bucket
+		idx = bucketIdx + offset
+		if idx < numBuckets {
+			bucket = t.buckets[idx]
+
+			for e := bucket.peers.Front(); e != nil; e = e.Next() {
+				v := e.Value.(*activePeer)
+				if v != nil {
+					peers = append(peers, v.peerInfo)
+				}
+			}
+		}
+
+		// increase offset
+		offset++
+	}
+
+	// determine the distance of each peer to the key
+	for i, peer := range peers {
+		peer.distance = keyDistance(peer.hashname, key[:])
+		peers[i] = peer
+	}
+
+	// sort by distance
+	sort.Sort(peerInfoByDistance(peers))
+
+	// trim
+	if len(peers) > n {
+		peers = peers[:n]
+	}
+
+	out = make([]hashname.H, len(peers))
+	for i, peer := range peers {
+		out[i] = peer.hashname
+	}
+
+	return out
+}
+
+func (t *table) findNode(hn hashname.H, n uint) []hashname.H {
+	var (
+		keyData []byte
+		err     error
+		key     [keyLen]byte
+	)
+
+	keyData, err = base32util.DecodeString(string(hn))
+	if err != nil {
+		return nil
+	}
+	if len(keyData) != keyLen {
+		return nil
+	}
+
+	copy(key[:], keyData)
+
+	return t.findKey(key, n)
 }
 
 func (t *table) nextCandidate() *candidatePeer {
@@ -336,6 +423,10 @@ func bucketFromDistance(distance [keyLen]byte) int {
 	return b
 }
 
+func distanceLess(a, b [keyLen]byte) bool {
+	return bytes.Compare(a[:], b[:]) < 0
+}
+
 func (c *table) String() string {
 	return fmt.Sprintf("{%s}", c.buckets)
 }
@@ -360,3 +451,9 @@ func (c *bucket) String() string {
 func (c *peerInfo) String() string {
 	return c.hashname.String()[:5]
 }
+
+type peerInfoByDistance []peerInfo
+
+func (s peerInfoByDistance) Len() int           { return len(s) }
+func (s peerInfoByDistance) Less(i, j int) bool { return distanceLess(s[i].distance, s[j].distance) }
+func (s peerInfoByDistance) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
