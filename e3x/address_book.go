@@ -25,13 +25,13 @@ const (
 )
 
 type addressBookEntry struct {
-	Address      transports.Addr
-	LastAttempt  time.Time
-	FirstSeen    time.Time
-	LastSeen     time.Time
-	Reachable    bool
-	GotResoponse bool
-	IsBackup     bool
+	Address             transports.Addr
+	SendHandshakeAt     time.Time
+	ReceivedHandshakeAt time.Time
+	Added               time.Time
+	ExpireAt            time.Time
+	Reachable           bool
+	IsBackup            bool
 
 	latency time.Duration
 	ewma    time.Duration
@@ -60,13 +60,8 @@ func (book *addressBook) KnownAddresses() []transports.Addr {
 func (book *addressBook) HandshakeAddresses() []transports.Addr {
 	s := make([]transports.Addr, 0, len(book.known))
 	for _, e := range book.known {
-		if !e.LastAttempt.IsZero() {
-			if !e.IsBackup {
-				continue
-			}
-			if !e.Reachable {
-				continue
-			}
+		if !e.IsBackup {
+			continue
 		}
 		s = append(s, e.Address)
 	}
@@ -75,54 +70,76 @@ func (book *addressBook) HandshakeAddresses() []transports.Addr {
 
 func (book *addressBook) NextHandshakeEpoch() {
 	var (
-		changed  bool
-		deadline = time.Now().Add(-2 * time.Minute)
-	)
-
-	for _, e := range book.known {
-		if !e.IsBackup {
-			continue
-		}
-
-		if !e.GotResoponse {
-			e.AddLatencySample(500 * time.Millisecond)
-			changed = true
-			book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
-		}
-
-		if e.LastSeen.Before(deadline) {
-			// no handshake since last epoch
-			// mark as broken
-			if e.Reachable {
-				e.Reachable = false
-				changed = true
-
-				book.log.Printf("\x1B[31mDetected broken path\x1B[0m %s", e)
-			}
-		}
-
-		e.GotResoponse = false
-	}
-
-	if changed {
-		book.updateActive()
-	}
-}
-
-func (book *addressBook) SentHandshake(addr transports.Addr) {
-	// tracef("(id=%d) SentHandshake(%s)", book.id, addr)
-
-	var (
 		now = time.Now()
-		idx = book.indexOf(addr)
 	)
 
-	if idx < 0 {
+	if len(book.known) == 0 {
+		book.active = nil
 		return
 	}
 
-	e := book.known[idx]
-	e.LastAttempt = now
+	for _, e := range book.known {
+
+		if !e.SendHandshakeAt.IsZero() {
+			// sent request
+			if !e.ReceivedHandshakeAt.IsZero() {
+				// successful handshake: update latency
+				e.AddLatencySample(e.ReceivedHandshakeAt.Sub(e.SendHandshakeAt))
+				e.ExpireAt = e.ReceivedHandshakeAt.Add(2 * time.Minute)
+				e.Reachable = true
+				book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
+
+			} else {
+				// no response
+				if e.ExpireAt.Before(now) {
+					// reached deadline
+					e.Reachable = false
+					e.latency = 125 * time.Millisecond
+					e.ewma = 125 * time.Millisecond
+					book.log.Printf("\x1B[31mDetected broken path\x1B[0m %s", e)
+
+				} else {
+					e.AddLatencySample(now.Sub(e.SendHandshakeAt))
+					book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
+
+				}
+			}
+		}
+
+		// reset
+		e.SendHandshakeAt = time.Time{}
+		e.ReceivedHandshakeAt = time.Time{}
+
+	}
+
+	// sort by state and latency
+	sort.Sort(sortedAddressBookEntries(book.known))
+
+	// trim
+	if len(book.known) > cMaxAddressBookEntries {
+		book.known = book.known[:cMaxAddressBookEntries]
+	}
+
+	// update active
+	var oldActive = book.active
+	if book.known[0].Reachable {
+		book.active = book.known[0]
+	} else {
+		book.active = nil
+	}
+	if book.active != oldActive {
+		book.log.Printf("\x1B[32mChanged path\x1B[0m from %s to %s", oldActive, book.active)
+	}
+
+	// update fallbacks
+	for i, entry := range book.known {
+		if entry.Reachable && i < cNumBackupAddresses {
+			entry.IsBackup = true
+		} else {
+			entry.IsBackup = false
+		}
+	}
+
 }
 
 func (book *addressBook) AddAddress(addr transports.Addr) {
@@ -137,78 +154,48 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	}
 
 	e = &addressBookEntry{Address: addr}
-	e.FirstSeen = now
-	e.LastSeen = now
+	e.Added = now
+	e.ExpireAt = now.Add(2 * time.Minute)
 	e.Reachable = true
-	e.GotResoponse = true
+	e.IsBackup = true
 	e.InitSamples()
 
-	idx = len(book.known)
 	book.known = append(book.known, e)
-	book.updateActive()
-
 	book.log.Printf("\x1B[32mDiscovered path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
+
+	if book.active == nil {
+		book.active = e
+		book.log.Printf("\x1B[32mChanged path\x1B[0m from %s to %s", (*addressBookEntry)(nil), book.active)
+	}
+}
+
+func (book *addressBook) SentHandshake(addr transports.Addr) {
+	var (
+		idx = book.indexOf(addr)
+	)
+
+	if idx < 0 {
+		return
+	}
+
+	e := book.known[idx]
+	e.SendHandshakeAt = time.Now()
 }
 
 func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 	var (
-		now = time.Now()
 		idx = book.indexOf(addr)
 		e   *addressBookEntry
 	)
 
 	if idx < 0 {
-		e = &addressBookEntry{Address: addr}
-		e.FirstSeen = now
-		e.InitSamples()
-		idx = len(book.known)
-		book.known = append(book.known, e)
-	} else {
-		e = book.known[idx]
-		e.AddLatencySample(now.Sub(e.LastAttempt))
+		book.AddAddress(addr)
+		return
 	}
 
-	e.LastSeen = now
-	e.Reachable = true
-	e.GotResoponse = true
-
-	book.log.Printf("\x1B[34mUpdated path\x1B[0m %s (latency=\x1B[33m%s\x1B[0m, emwa=\x1B[33m%s\x1B[0m)", e, e.latency, e.ewma)
-	book.updateActive()
-}
-
-func (book *addressBook) updateActive() {
-	sort.Sort(sortedAddressBookEntries(book.known))
-
-	if len(book.known) > cMaxAddressBookEntries {
-		book.known = book.known[:cMaxAddressBookEntries]
-	}
-
-	n := 0
-	for _, e := range book.known {
-		if e.Reachable && n < cNumBackupAddresses {
-			if !e.IsBackup {
-				e.LastAttempt = time.Time{}
-				e.LastSeen = time.Now()
-				e.Reachable = true
-				e.GotResoponse = true
-			}
-
-			n++
-			e.IsBackup = true
-		} else {
-			e.IsBackup = false
-		}
-	}
-
-	var oldActive = book.active
-	if len(book.known) > 0 && book.known[0].Reachable == true {
-		book.active = book.known[0]
-	} else {
-		book.active = nil
-	}
-
-	if oldActive != book.active {
-		book.log.Printf("\x1B[32mChanged path\x1B[0m from %s to %s", oldActive, book.active)
+	e = book.known[idx]
+	if !e.SendHandshakeAt.IsZero() {
+		e.ReceivedHandshakeAt = time.Now()
 	}
 }
 
