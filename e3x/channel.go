@@ -209,7 +209,7 @@ func (c *Channel) blockWrite() bool {
 		return true
 	}
 
-	if !c.serverside && c.iSeq == cBlankSeq && c.oSeq >= cInitialSeq {
+	if !c.serverside && (c.iSeq == cBlankSeq && c.oAckedSeq == cBlankSeq) && c.oSeq >= cInitialSeq {
 		// When a client channel sent a packet but did not yet read a response
 		// to the initial packet then subsequent writes must be deferred.
 		return true

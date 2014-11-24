@@ -384,7 +384,15 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 
 	x = e.hashnames[hn]
 	if x != nil {
+		oldToken := x.LocalToken()
 		x.received(op)
+		newToken := x.LocalToken()
+
+		if oldToken != newToken {
+			delete(e.tokens, oldToken)
+			e.tokens[newToken] = x
+		}
+
 		return
 	}
 

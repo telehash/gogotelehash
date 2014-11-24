@@ -324,7 +324,8 @@ func (s *state) update() {
 	}
 
 	// generate line keys
-	if s.localToken != nil && s.remoteToken != nil {
+	if s.localToken != nil && s.remoteToken != nil &&
+		(s.lineEncryptionKey == nil || s.lineDecryptionKey == nil) {
 		sharedKey := ecdh.ComputeShared(
 			secp160r1.P160(),
 			s.remoteLineKey.pub.x, s.remoteLineKey.pub.y,
@@ -457,16 +458,21 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 		return false
 	}
 
-	if s.remoteLineKey != nil && !bytes.Equal(s.remoteLineKey.Public(), hs.lineKey.Public()) {
-		return false
-	}
-
 	if s.remoteKey != nil && !bytes.Equal(s.remoteKey.Public(), hs.key.Public()) {
 		return false
 	}
 
+	if s.remoteLineKey != nil && !bytes.Equal(s.remoteLineKey.Public(), hs.lineKey.Public()) {
+		s.remoteLineKey = nil
+		s.remoteToken = nil
+		s.lineDecryptionKey = nil
+		s.lineEncryptionKey = nil
+	}
+
 	s.setRemoteLineKey(hs.lineKey)
-	s.SetRemoteKey(hs.key)
+	if s.remoteKey == nil {
+		s.SetRemoteKey(hs.key)
+	}
 	return true
 }
 
