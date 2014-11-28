@@ -321,7 +321,8 @@ func (s *state) update() {
 	}
 
 	// generate line keys
-	if s.localToken != nil && s.remoteToken != nil {
+	if s.localToken != nil && s.remoteToken != nil &&
+		(s.lineEncryptionKey == nil || s.lineDecryptionKey == nil) {
 		var sharedKey [32]byte
 		box.Precompute(&sharedKey, s.remoteLineKey.pub, s.localLineKey.prv)
 
@@ -473,16 +474,21 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 		return false
 	}
 
-	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
-		return false
-	}
-
 	if s.remoteKey != nil && *s.remoteKey.pub != *hs.key.pub {
 		return false
 	}
 
+	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
+		s.remoteLineKey = nil
+		s.remoteToken = nil
+		s.lineDecryptionKey = nil
+		s.lineEncryptionKey = nil
+	}
+
 	s.setRemoteLineKey(hs.lineKey)
-	s.SetRemoteKey(hs.key)
+	if s.remoteKey == nil {
+		s.SetRemoteKey(hs.key)
+	}
 	return true
 }
 

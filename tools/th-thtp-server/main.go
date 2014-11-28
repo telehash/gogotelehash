@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/modules/netwatch"
