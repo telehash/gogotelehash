@@ -554,11 +554,11 @@ func (c *Channel) Close() error {
 	}
 
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
 
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
-		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -573,7 +573,6 @@ func (c *Channel) Close() error {
 			pkt := &lob.Packet{}
 			pkt.Header().SetBool("end", true)
 			if err := c.write(pkt, nil); err != nil {
-				c.mtx.Unlock()
 				return err
 			}
 		}
@@ -602,7 +601,6 @@ func (c *Channel) Close() error {
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
-		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -615,7 +613,6 @@ func (c *Channel) Close() error {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 	return nil
 }
 
@@ -794,6 +791,8 @@ func (c *Channel) unsetCloseDeadline() {
 
 func (c *Channel) onCloseDeadlineReached() {
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
 	c.broken = true
 	c.closeDeadlineReached = true
 	c.unsetOpenDeadline()
@@ -806,7 +805,6 @@ func (c *Channel) onCloseDeadlineReached() {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 }
 
 func (c *Channel) setOpenDeadline() {
@@ -831,6 +829,8 @@ func (c *Channel) unsetOpenDeadline() {
 
 func (c *Channel) onOpenDeadlineReached() {
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
 	c.broken = true
 	c.openDeadlineReached = true
 	c.unsetOpenDeadline()
@@ -843,11 +843,12 @@ func (c *Channel) onOpenDeadlineReached() {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 }
 
 func (c *Channel) forget() {
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
 	c.broken = true
 	c.openDeadlineReached = false
 	c.unsetOpenDeadline()
@@ -860,7 +861,6 @@ func (c *Channel) forget() {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 }
 
 func (c *Channel) unsetResender() {

@@ -310,10 +310,11 @@ func (x *Exchange) receivedPacket(op opRead) {
 
 	{
 		x.mtx.Lock()
-		if !x.state.IsOpen() {
+		state := x.state
+		x.mtx.Unlock()
+		if !state.IsOpen() {
 			return // drop
 		}
-		x.mtx.Unlock()
 	}
 
 	pkt, err = x.cipher.DecryptPacket(pkt)
