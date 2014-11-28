@@ -75,7 +75,7 @@ type Exchange struct {
 	csid          uint8
 	cipher        cipherset.State
 	nextChannelID uint32
-	channels      map[uint32]*channelEntry
+	channels      map[uint32]*Channel
 	addressBook   *addressBook
 	err           error
 
@@ -87,10 +87,6 @@ type Exchange struct {
 	tExpire           *time.Timer
 	tBreak            *time.Timer
 	tDeliverHandshake *time.Timer
-}
-
-type channelEntry struct {
-	c *Channel
 }
 
 type endpointI interface {
@@ -118,7 +114,7 @@ func newExchange(
 	x := &Exchange{
 		localIdent:  localIdent,
 		remoteIdent: remoteIdent,
-		channels:    make(map[uint32]*channelEntry),
+		channels:    make(map[uint32]*Channel),
 		endpoint:    endpoint,
 		observers:   observers,
 	}
@@ -329,7 +325,6 @@ func (x *Exchange) receivedPacket(op opRead) {
 		typ, hasType = pkt.Header().GetString("type")
 		_, hasSeq    = pkt.Header().GetUint32("seq")
 		c            *Channel
-		entry        *channelEntry
 	)
 
 	if !hasC {
@@ -339,8 +334,8 @@ func (x *Exchange) receivedPacket(op opRead) {
 
 	{
 		x.mtx.Lock()
-		entry = x.channels[cid]
-		if entry == nil {
+		c = x.channels[cid]
+		if c == nil {
 			if !hasType {
 				x.mtx.Unlock()
 				return // drop (missing typ)
@@ -352,10 +347,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 				return // drop (no handler)
 			}
 
-			entry = &channelEntry{}
-			x.channels[cid] = entry
 			x.resetExpire()
-			x.mtx.Unlock()
 
 			c = newChannel(
 				x.remoteIdent.Hashname(),
@@ -365,7 +357,9 @@ func (x *Exchange) receivedPacket(op opRead) {
 				x,
 			)
 			c.id = cid
-			entry.c = c
+			x.channels[cid] = c
+
+			x.mtx.Unlock()
 
 			x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, cid)
 			x.observers.Trigger(&ChannelOpenedEvent{c})
@@ -376,7 +370,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 		}
 	}
 
-	entry.c.receivedPacket(pkt)
+	c.receivedPacket(pkt)
 }
 
 func (x *Exchange) deliverPacket(pkt *lob.Packet, addr transports.Addr) error {
@@ -434,8 +428,8 @@ func (x *Exchange) expire(err error) {
 
 	x.mtx.Unlock()
 
-	for _, e := range x.channels {
-		e.c.onCloseDeadlineReached()
+	for _, c := range x.channels {
+		c.onCloseDeadlineReached()
 	}
 
 	x.log.Printf("\x1B[31mClosed exchange\x1B[0m")
@@ -527,13 +521,13 @@ func (x *Exchange) resetBreak() {
 func (x *Exchange) unregisterChannel(channelID uint32) {
 	x.mtx.Lock()
 
-	entry := x.channels[channelID]
-	if entry != nil {
+	c := x.channels[channelID]
+	if c != nil {
 		delete(x.channels, channelID)
 		x.resetExpire()
 
-		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", entry.c.typ, entry.c.id)
-		x.observers.Trigger(&ChannelClosedEvent{entry.c})
+		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", c.typ, c.id)
+		x.observers.Trigger(&ChannelClosedEvent{c})
 	}
 
 	x.mtx.Unlock()
@@ -574,8 +568,7 @@ func (x *Exchange) waitDone() {
 // Open a channel.
 func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	var (
-		c     *Channel
-		entry *channelEntry
+		c *Channel
 	)
 
 	c = newChannel(
@@ -596,8 +589,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	}
 
 	c.id = x.getNextChannelID()
-	entry = &channelEntry{c}
-	x.channels[c.id] = entry
+	x.channels[c.id] = c
 	x.resetExpire()
 	x.mtx.Unlock()
 
