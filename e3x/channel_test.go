@@ -73,7 +73,7 @@ func TestBasicUnrealiable(t *testing.T) {
 		pkt = &lob.Packet{}
 		hdr = pkt.Header()
 		hdr.C, hdr.HasC = 0, true
-		hdr.SetBool("end", true)
+		hdr.End, hdr.HasEnd = true, true
 		x.On("deliverPacket", pkt).Return(nil)
 
 		x.On("unregisterChannel", uint32(0)).Return().Once()
@@ -98,7 +98,7 @@ func TestBasicUnrealiable(t *testing.T) {
 
 	pkt = &lob.Packet{}
 	hdr = pkt.Header()
-	hdr.SetBool("end", true)
+	hdr.End, hdr.HasEnd = true, true
 	c.receivedPacket(pkt)
 
 	err = c.Close()
@@ -151,7 +151,7 @@ func TestBasicRealiable(t *testing.T) {
 		hdr.C, hdr.HasC = 0, true
 		hdr.Seq, hdr.HasSeq = 2, true
 		hdr.Ack, hdr.HasAck = 1, true
-		hdr.SetBool("end", true)
+		hdr.End, hdr.HasEnd = true, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		x.On("unregisterChannel", uint32(0)).Return().Once()
@@ -184,7 +184,7 @@ func TestBasicRealiable(t *testing.T) {
 		hdr = pkt.Header()
 		hdr.Seq, hdr.HasSeq = 2, true
 		hdr.Ack, hdr.HasAck = 2, true
-		hdr.SetBool("end", true)
+		hdr.End, hdr.HasEnd = true, true
 		c.receivedPacket(pkt)
 	}()
 
@@ -388,8 +388,7 @@ func BenchmarkReadWrite(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				pkt := &lob.Packet{}
-				pkt.Header().SetInt("flood_id", i)
+				pkt := &lob.Packet{Body: []byte("Hello World!")}
 				err = c.WritePacket(pkt)
 				if err != nil {
 					b.Fatal(err)
@@ -423,6 +422,99 @@ func BenchmarkReadWrite(b *testing.B) {
 				b.Fatal(err)
 			}
 			pkt.Free()
+		}
+
+		b.StopTimer()
+	})
+}
+
+func BenchmarkChannels(b *testing.B) {
+	logs.ResetLogger()
+
+	var (
+		ping = []byte("ping")
+		pong = []byte("pong")
+	)
+
+	client := func(x *Exchange) {
+		c, err := x.Open("ping", false)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		defer c.Close()
+
+		pkt := &lob.Packet{Body: ping}
+		err = c.WritePacket(pkt)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		pkt, err = c.ReadPacket()
+		if err != nil {
+			b.Fatal(err)
+		}
+		pkt.Free()
+	}
+
+	server := func(c *Channel) {
+		defer c.Close()
+
+		pkt, err := c.ReadPacket()
+		if err != nil {
+			b.Fatal(err)
+		}
+		pkt.Free()
+
+		pkt = &lob.Packet{Body: pong}
+		err = c.WritePacket(pkt)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	accept := func(l *Listener) {
+		for {
+			c, err := l.AcceptChannel()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			go server(c)
+		}
+	}
+
+	withTwoEndpoints(b, func(A, B *Endpoint) {
+		A.setOptions(DisableLog())
+		B.setOptions(DisableLog())
+
+		var (
+			ident *Identity
+			err   error
+		)
+
+		b.ResetTimer()
+
+		l := A.Listen("ping", false)
+		defer l.Close()
+		go accept(l)
+
+		ident, err = A.LocalIdentity()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		x, err := B.Dial(ident)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.ResetTimer()
+
+		for i := 0; i < b.N; i++ {
+			client(x)
 		}
 
 		b.StopTimer()

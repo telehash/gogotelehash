@@ -14,12 +14,15 @@ var (
 	arrayEnd   = []byte("]")
 	tokenColon = []byte(":")
 	tokenComma = []byte(",")
+	tokenTrue  = []byte("true")
+	tokenFalse = []byte("false")
 
 	hdrC    = []byte(`"c"`)
 	hdrType = []byte(`"type"`)
 	hdrSeq  = []byte(`"seq"`)
 	hdrAck  = []byte(`"ack"`)
 	hdrMiss = []byte(`"miss"`)
+	hdrEnd  = []byte(`"end"`)
 )
 
 func parseHeader(hdr *Header, p []byte) error {
@@ -48,6 +51,8 @@ func parseHeader(hdr *Header, p []byte) error {
 			f = parseMiss
 		} else if p, ok = parsePrefix(p, hdrType); ok {
 			f = parseType
+		} else if p, ok = parsePrefix(p, hdrEnd); ok {
+			f = parseEnd
 		} else if key, p, ok = parseString(p); ok {
 			f = parseOther
 		} else {
@@ -151,6 +156,17 @@ func parseType(hdr *Header, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
+func parseEnd(hdr *Header, key string, p []byte) ([]byte, error) {
+	b, p, ok := parseBool(p)
+	if !ok {
+		return nil, ErrInvalidPacket
+	}
+
+	hdr.End = b
+	hdr.HasEnd = true
+	return p, nil
+}
+
 func parseOther(hdr *Header, key string, p []byte) ([]byte, error) {
 	v, p, ok := scanAnyObjectValue(p)
 	if !ok {
@@ -168,6 +184,25 @@ func parseOther(hdr *Header, key string, p []byte) ([]byte, error) {
 	}
 	hdr.Extra[key] = x
 	return p, nil
+}
+
+func parseBool(p []byte) (bool, []byte, bool) {
+	p = skipSpace(p)
+
+	var (
+		ok bool
+		b  bool
+	)
+
+	if p, ok = parsePrefix(p, tokenTrue); ok {
+		b = true
+	} else if p, ok = parsePrefix(p, tokenFalse); ok {
+		b = false
+	} else {
+		return false, p, false
+	}
+
+	return b, p, true
 }
 
 func parseUint32(p []byte) (uint32, []byte, bool) {

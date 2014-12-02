@@ -253,7 +253,7 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 		hdr.Type, hdr.HasType = c.typ, true
 	}
 
-	end, _ := hdr.GetBool("end")
+	end := hdr.HasEnd && hdr.End
 	if end {
 		c.deliveredEnd = true
 		c.setCloseDeadline()
@@ -366,7 +366,7 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		h.HasMiss = false
 		h.HasSeq = false
 		h.HasType = false
-		delete(h.Extra, "end")
+		h.HasEnd = false
 	}
 
 	if len(e.pkt.Body) == 0 && e.pkt.Header().IsZero() && e.end {
@@ -420,7 +420,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		seq, hasSeq   = hdr.Seq, hdr.HasSeq
 		ack, hasAck   = hdr.Ack, hdr.HasAck
 		miss, hasMiss = hdr.Miss, hdr.HasMiss
-		end, hasEnd   = hdr.GetBool("end")
+		end, hasEnd   = hdr.End, hdr.HasEnd
 	)
 
 	if !c.reliable {
@@ -573,7 +573,8 @@ func (c *Channel) Close() error {
 
 		if !c.deliveredEnd {
 			pkt := &lob.Packet{}
-			pkt.Header().SetBool("end", true)
+			hdr := pkt.Header()
+			hdr.End, hdr.HasEnd = true, true
 			if err := c.write(pkt, nil); err != nil {
 				return err
 			}

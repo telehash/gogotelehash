@@ -131,11 +131,13 @@ func (p *Packet) Free() {
 type Header struct {
 	C       uint32
 	Type    string
+	End     bool
 	Seq     uint32
 	Ack     uint32
 	Miss    []uint32
 	HasC    bool
 	HasType bool
+	HasEnd  bool
 	HasSeq  bool
 	HasAck  bool
 	HasMiss bool
@@ -162,6 +164,20 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 		buf.Write(hdrType)
 		buf.WriteByte(':')
 		fmt.Fprintf(buf, "%q", h.Type)
+		first = false
+	}
+
+	if h.HasEnd {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrEnd)
+		buf.WriteByte(':')
+		if h.End {
+			buf.Write(tokenTrue)
+		} else {
+			buf.Write(tokenFalse)
+		}
 		first = false
 	}
 
@@ -225,7 +241,7 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 
 // IsZero returns true when the header is the zero value or equivalent.
 func (h *Header) IsZero() bool {
-	return !h.HasC && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && (len(h.Extra) == 0)
+	return !h.HasC && !h.HasEnd && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && (len(h.Extra) == 0)
 }
 
 // Get the value for key k. found is false if k is not present.
