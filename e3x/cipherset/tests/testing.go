@@ -120,7 +120,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	if assert.NotNil(hb) {
 		assert.Equal(ka.Public(), hb.PublicKey().Public())
 		assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
-		assert.Equal(1, hb.At())
+		assert.Equal(uint32(1), hb.At())
 	}
 
 	sb, err = c.NewState(kb)
@@ -152,7 +152,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.NotNil(ha)
 	assert.Equal(kb.Public(), ha.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, ha.Parts())
-	assert.Equal(1, ha.At())
+	assert.Equal(uint32(1), ha.At())
 
 	ok = sa.ApplyHandshake(ha)
 	assert.True(ok)
