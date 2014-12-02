@@ -558,7 +558,7 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 
 	var (
 		nonce [24]byte
-		inner = make([]byte, len(pkt.Body))
+		inner = bufpool.GetBuffer()
 		ok    bool
 	)
 

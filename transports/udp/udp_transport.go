@@ -152,9 +152,11 @@ func (c Config) Open() (transports.Transport, error) {
 }
 
 func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
+	const errUseOfClosedNet = "use of closed network connection"
+
 	n, a, err := t.c.ReadFromUDP(p)
 	if err != nil {
-		if err.Error() == "use of closed network connection" {
+		if err.Error() == errUseOfClosedNet {
 			err = transports.ErrClosed
 		}
 		return 0, nil, err
