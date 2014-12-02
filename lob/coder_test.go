@@ -2,6 +2,7 @@ package lob
 
 import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
+	"github.com/telehash/gogotelehash/util/bufpool"
 	"testing"
 )
 
@@ -12,22 +13,28 @@ func TestCoding(t *testing.T) {
 		{Head: []byte("h"), Body: []byte("world")},
 		{Head: []byte("hello!")},
 		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{"hello": 5}},
-		{json: Header{"hello": 5}, Body: []byte("world")},
+		{json: Header{Extra: map[string]interface{}{"hello": 5}}},
+		{json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
+		{json: Header{HasC: true, C: 123}},
+		{json: Header{HasAck: true, Ack: 123}},
+		{json: Header{HasSeq: true, Seq: 123}},
+		{json: Header{HasType: true, Type: "foo"}},
+		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
 	}
 
-	for _, e := range tab {
+	for i, e := range tab {
+		var o *Packet
 		data, err := Encode(e)
-		assert.NoError(err)
-		assert.NotEmpty(data)
+		if assert.NoError(err) && assert.NotEmpty(data) {
+			o, err = Decode(data)
+			if assert.NoError(err) && assert.NotNil(o) {
+				o.raw = nil
+				assert.Equal(e, o)
+			}
+		}
 
-		e.raw = data
+		t.Logf("%d: %v => %v", i, e, o)
 
-		o, err := Decode(data)
-		assert.NoError(err)
-		assert.NotNil(o)
-
-		assert.Equal(e, o)
 	}
 }
 
@@ -36,14 +43,20 @@ func BenchmarkEncode(b *testing.B) {
 		{Head: []byte("h"), Body: []byte("world")},
 		{Head: []byte("hello!")},
 		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{"hello": 5}},
-		{json: Header{"hello": 5}, Body: []byte("world")},
+		// {json: Header{Extra: map[string]interface{}{"hello": 5}}},
+		// {json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
+		{json: Header{HasC: true, C: 123}},
+		{json: Header{HasAck: true, Ack: 123}},
+		{json: Header{HasSeq: true, Seq: 123}},
+		{json: Header{HasType: true, Type: "foo"}},
+		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
 	}
 	var l = len(tab)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		Encode(tab[i%l])
+		e, _ := Encode(tab[i%l])
+		bufpool.PutBuffer(e)
 	}
 }
 
@@ -52,8 +65,13 @@ func BenchmarkDecode(b *testing.B) {
 		{Head: []byte("h"), Body: []byte("world")},
 		{Head: []byte("hello!")},
 		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{"hello": 5}},
-		{json: Header{"hello": 5}, Body: []byte("world")},
+		// {json: Header{Extra: map[string]interface{}{"hello": 5}}},
+		// {json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
+		{json: Header{HasC: true, C: 123}},
+		{json: Header{HasAck: true, Ack: 123}},
+		{json: Header{HasSeq: true, Seq: 123}},
+		{json: Header{HasType: true, Type: "foo"}},
+		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
 	}
 	var l = len(src)
 	var tab = make([][]byte, l)

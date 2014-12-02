@@ -3,22 +3,9 @@ package lob
 import (
 	"bytes"
 	"encoding/json"
+	"strconv"
+	"unicode/utf8"
 )
-
-type tHeader struct {
-	C       uint32
-	Type    string
-	Seq     uint32
-	Ack     uint32
-	Miss    []uint32
-	HasC    bool
-	HasType bool
-	HasSeq  bool
-	HasAck  bool
-	HasMiss bool
-
-	Extra map[string]interface{}
-}
 
 var (
 	objectBeg  = []byte("{")
@@ -35,7 +22,7 @@ var (
 	hdrMiss = []byte(`"miss"`)
 )
 
-func parseHeader(hdr *tHeader, p []byte) error {
+func parseHeader(hdr *Header, p []byte) error {
 	var (
 		ok  bool
 		err error
@@ -47,7 +34,7 @@ func parseHeader(hdr *tHeader, p []byte) error {
 
 	for {
 		var (
-			f   func(hdr *tHeader, key string, p []byte) ([]byte, error)
+			f   func(hdr *Header, key string, p []byte) ([]byte, error)
 			key string
 		)
 
@@ -63,6 +50,8 @@ func parseHeader(hdr *tHeader, p []byte) error {
 			f = parseType
 		} else if key, p, ok = parseString(p); ok {
 			f = parseOther
+		} else {
+			return ErrInvalidPacket
 		}
 
 		if p, ok = parsePrefix(p, tokenColon); !ok {
@@ -83,7 +72,7 @@ func parseHeader(hdr *tHeader, p []byte) error {
 	}
 }
 
-func parseC(hdr *tHeader, key string, p []byte) ([]byte, error) {
+func parseC(hdr *Header, key string, p []byte) ([]byte, error) {
 	n, p, ok := parseUint32(p)
 	if !ok {
 		return nil, ErrInvalidPacket
@@ -94,7 +83,7 @@ func parseC(hdr *tHeader, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
-func parseMiss(hdr *tHeader, key string, p []byte) ([]byte, error) {
+func parseMiss(hdr *Header, key string, p []byte) ([]byte, error) {
 	var (
 		l  []uint32
 		n  uint32
@@ -129,7 +118,7 @@ func parseMiss(hdr *tHeader, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
-func parseSeq(hdr *tHeader, key string, p []byte) ([]byte, error) {
+func parseSeq(hdr *Header, key string, p []byte) ([]byte, error) {
 	n, p, ok := parseUint32(p)
 	if !ok {
 		return nil, ErrInvalidPacket
@@ -140,7 +129,7 @@ func parseSeq(hdr *tHeader, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
-func parseAck(hdr *tHeader, key string, p []byte) ([]byte, error) {
+func parseAck(hdr *Header, key string, p []byte) ([]byte, error) {
 	n, p, ok := parseUint32(p)
 	if !ok {
 		return nil, ErrInvalidPacket
@@ -151,7 +140,7 @@ func parseAck(hdr *tHeader, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
-func parseType(hdr *tHeader, key string, p []byte) ([]byte, error) {
+func parseType(hdr *Header, key string, p []byte) ([]byte, error) {
 	s, p, ok := parseString(p)
 	if !ok {
 		return nil, ErrInvalidPacket
@@ -162,8 +151,8 @@ func parseType(hdr *tHeader, key string, p []byte) ([]byte, error) {
 	return p, nil
 }
 
-func parseOther(hdr *tHeader, key string, p []byte) ([]byte, error) {
-	v, p, ok := scanAny(p)
+func parseOther(hdr *Header, key string, p []byte) ([]byte, error) {
+	v, p, ok := scanAnyObjectValue(p)
 	if !ok {
 		return nil, ErrInvalidPacket
 	}
@@ -182,8 +171,11 @@ func parseOther(hdr *tHeader, key string, p []byte) ([]byte, error) {
 }
 
 func parseUint32(p []byte) (uint32, []byte, bool) {
+	o := p
 	p = skipSpace(p)
-	var n uint32
+	var (
+		n uint32
+	)
 
 	if len(p) == 0 {
 		return 0, p, false
@@ -200,9 +192,15 @@ func parseUint32(p []byte) (uint32, []byte, bool) {
 		}
 
 		p = p[idx:]
+		break
 	}
 
-	return n, p, true
+	p = skipSpace(p)
+	if len(p) == 0 || p[0] == ']' || p[0] == '}' || p[0] == ',' {
+		return n, p, true
+	}
+
+	return 0, o, false
 }
 
 func parseString(p []byte) (string, []byte, bool) {
@@ -211,20 +209,115 @@ func parseString(p []byte) (string, []byte, bool) {
 		return "", p, false
 	}
 
-	var s string
-	err := json.Unmarshal(v, &s)
-	if err != nil {
-		return "", p, false
+	var (
+		numericBuf [4]byte
+	)
+
+	var dst int
+	var sze = len(v) - 1
+	for src := 1; src < sze; src++ {
+		r := v[src]
+
+		switch r {
+		case '\\':
+			src++
+			if src >= sze {
+				return "", p, false
+			}
+			r = v[src]
+
+			switch r {
+
+			case '"':
+				v[dst] = '"'
+				dst++
+			case '\\':
+				v[dst] = '\\'
+				dst++
+			case '/':
+				v[dst] = '/'
+				dst++
+			case 'b':
+				v[dst] = '\b'
+				dst++
+			case 'f':
+				v[dst] = '\f'
+				dst++
+			case 'n':
+				v[dst] = '\n'
+				dst++
+			case 'r':
+				v[dst] = '\r'
+				dst++
+			case 't':
+				v[dst] = '\t'
+				dst++
+
+			case 'u':
+				numeric := numericBuf[:]
+				numericCount := 0
+			unicode_loop:
+				for {
+					src++
+					if src >= sze {
+						return "", p, false
+					}
+					r = v[src]
+
+					switch {
+					case r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F':
+						numeric[numericCount] = byte(r)
+						numericCount++
+						if numericCount == 4 {
+							var i int64
+							var err error
+							if i, err = strconv.ParseInt(string(numeric), 16, 32); err != nil {
+								return "", p, false
+							}
+							if i < utf8.RuneSelf {
+								v[dst] = byte(i)
+								dst++
+							} else {
+								encoded := utf8.EncodeRune(v[dst:], rune(i))
+								dst += encoded
+							}
+							break unicode_loop
+						}
+					default:
+						return "", p, false
+
+					}
+				}
+			default:
+				return "", p, false
+
+			}
+
+		default:
+			v[dst] = r
+			dst++
+
+		}
 	}
 
-	return s, p, true
+	return string(v[:dst]), p, true
 }
 
 func scanString(p []byte) ([]byte, []byte, bool) {
-	p = skipSpace(p)
+	beg, end, ok := scanStringIdx(p)
+	if !ok {
+		return nil, p, false
+	}
+
+	return p[beg:end], p[end:], true
+}
+
+func scanStringIdx(p []byte) (beg, end int, ok bool) {
+	beg = scanSpace(p)
+	p = p[beg:]
 
 	if len(p) == 0 {
-		return nil, p, false
+		return 0, 0, false
 	}
 
 	var escape bool
@@ -233,7 +326,7 @@ func scanString(p []byte) ([]byte, []byte, bool) {
 
 		if idx == 0 {
 			if r != '"' {
-				return nil, p, false
+				return 0, 0, false
 			}
 			continue
 		}
@@ -249,12 +342,13 @@ func scanString(p []byte) ([]byte, []byte, bool) {
 		}
 
 		if r == '"' {
-			return p[:idx+1], p[idx+1:], true
+			end = beg + idx + 1
+			return beg, end, true
 		}
 
 	}
 
-	return nil, p, false
+	return 0, 0, false
 }
 
 func parsePrefix(p, prefix []byte) ([]byte, bool) {
@@ -266,10 +360,150 @@ func parsePrefix(p, prefix []byte) ([]byte, bool) {
 }
 
 func skipSpace(p []byte) []byte {
+	return p[scanSpace(p):]
+}
+
+func scanSpace(p []byte) int {
 	for idx, r := range p {
 		if !(r == ' ' || r == '\t' || r == '\n') {
-			return p[idx:]
+			return idx
 		}
 	}
-	return nil
+	return 0
+}
+
+func scanAnyObjectValue(p []byte) (json.RawMessage, []byte, bool) {
+	var (
+		buf = p
+		idx = 0
+	)
+
+	for len(p) > 0 {
+		switch p[0] {
+
+		case '"':
+			_, end, ok := scanStringIdx(p)
+			if !ok {
+				return nil, buf, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '{':
+			end, ok := scanObject(p[1:])
+			if !ok {
+				return nil, buf, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '[':
+			end, ok := scanArray(p[1:])
+			if !ok {
+				return nil, buf, false
+			}
+			idx += end
+			p = p[end:]
+
+		case ',', '}':
+			return json.RawMessage(buf[:idx]), p, true
+
+		default:
+			idx += 1
+			p = p[1:]
+
+		}
+	}
+
+	return nil, nil, false
+}
+
+func scanObject(p []byte) (int, bool) {
+	var (
+		idx = 1
+	)
+
+	for len(p) > 0 {
+		switch p[0] {
+
+		case '"':
+			_, end, ok := scanStringIdx(p)
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '{':
+			end, ok := scanObject(p[1:])
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '[':
+			end, ok := scanArray(p[1:])
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '}':
+			return idx + 1, true
+
+		default:
+			idx += 1
+			p = p[1:]
+
+		}
+	}
+
+	return 0, false
+}
+
+func scanArray(p []byte) (int, bool) {
+	var (
+		idx = 1
+	)
+
+	for len(p) > 0 {
+		switch p[0] {
+
+		case '"':
+			_, end, ok := scanStringIdx(p)
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '{':
+			end, ok := scanObject(p[1:])
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case '[':
+			end, ok := scanArray(p[1:])
+			if !ok {
+				return 0, false
+			}
+			idx += end
+			p = p[end:]
+
+		case ']':
+			return idx + 1, true
+
+		default:
+			idx += 1
+			p = p[1:]
+
+		}
+	}
+
+	return 0, false
 }

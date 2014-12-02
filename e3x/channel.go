@@ -244,15 +244,16 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	}
 
 	c.oSeq++
-	pkt.Header().SetUint32("c", c.id)
+	hdr := pkt.Header()
+	hdr.C, hdr.HasC = c.id, true
 	if c.reliable {
-		pkt.Header().SetUint32("seq", c.oSeq)
+		hdr.Seq, hdr.HasSeq = c.oSeq, true
 	}
 	if !c.serverside && c.oSeq == cInitialSeq {
-		pkt.Header().SetString("type", c.typ)
+		hdr.Type, hdr.HasType = c.typ, true
 	}
 
-	end, _ := pkt.Header().GetBool("end")
+	end, _ := hdr.GetBool("end")
 	if end {
 		c.deliveredEnd = true
 		c.setCloseDeadline()
@@ -360,15 +361,15 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 
 	{ // clean headers
 		h := e.pkt.Header()
-		delete(h, "c")
-		delete(h, "type")
-		delete(h, "seq")
-		delete(h, "ack")
-		delete(h, "miss")
-		delete(h, "end")
+		h.HasAck = false
+		h.HasC = false
+		h.HasMiss = false
+		h.HasSeq = false
+		h.HasType = false
+		delete(h.Extra, "end")
 	}
 
-	if len(e.pkt.Body) == 0 && len(e.pkt.Header()) == 0 && e.end {
+	if len(e.pkt.Body) == 0 && e.pkt.Header().IsZero() && e.end {
 		// read empty `end` packet
 		c.readPacket()
 		return nil, io.EOF
@@ -415,10 +416,11 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	}
 
 	var (
-		seq, hasSeq   = pkt.Header().GetUint32("seq")
-		ack, hasAck   = pkt.Header().GetUint32("ack")
-		miss, hasMiss = pkt.Header().GetUint32Slice("miss")
-		end, hasEnd   = pkt.Header().GetBool("end")
+		hdr           = pkt.Header()
+		seq, hasSeq   = hdr.Seq, hdr.HasSeq
+		ack, hasAck   = hdr.Ack, hdr.HasAck
+		miss, hasMiss = hdr.Miss, hdr.HasMiss
+		end, hasEnd   = hdr.GetBool("end")
 	)
 
 	if !c.reliable {
@@ -670,11 +672,12 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 			continue
 		}
 
+		hdr := e.pkt.Header()
 		if c.iSeq >= cInitialSeq {
-			e.pkt.Header().SetUint32("ack", c.iSeq)
+			hdr.Ack, hdr.HasAck = c.iSeq, true
 		}
 		if len(omiss) > 0 {
-			e.pkt.Header().SetUint32Slice("miss", omiss)
+			hdr.Miss, hdr.HasMiss = omiss, true
 		}
 		e.lastResend = now
 
@@ -700,11 +703,12 @@ func (c *Channel) resendLastPacket() {
 	}
 
 	omiss := c.buildMissList()
+	hdr := e.pkt.Header()
 	if c.iSeq >= cInitialSeq {
-		e.pkt.Header().SetUint32("ack", c.iSeq)
+		hdr.Ack, hdr.HasAck = c.iSeq, true
 	}
 	if len(omiss) > 0 {
-		e.pkt.Header().SetUint32Slice("miss", omiss)
+		hdr.Miss, hdr.HasMiss = omiss, true
 	}
 	e.lastResend = time.Now()
 	c.x.deliverPacket(e.pkt, e.dst)
@@ -742,7 +746,8 @@ func (c *Channel) deliverAck() {
 	}
 
 	pkt := &lob.Packet{}
-	pkt.Header().SetUint32("c", c.id)
+	hdr := pkt.Header()
+	hdr.C, hdr.HasC = c.id, true
 	c.applyAckHeaders(pkt)
 	c.x.deliverPacket(pkt, nil)
 }
@@ -757,16 +762,16 @@ func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
 		return
 	}
 
+	hdr := pkt.Header()
 	if c.iSeq >= cInitialSeq {
-		pkt.Header().SetUint32("ack", c.iSeq)
+		hdr.Ack, hdr.HasAck = c.iSeq, true
 	}
 	if l := c.buildMissList(); len(l) > 0 {
-		pkt.Header().SetUint32Slice("miss", c.buildMissList())
+		hdr.Miss, hdr.HasMiss = l, true
 	}
 
 	c.iAckedSeq = c.iSeq
 	c.lastSentAck = time.Now()
-
 }
 
 func (c *Channel) setCloseDeadline() {

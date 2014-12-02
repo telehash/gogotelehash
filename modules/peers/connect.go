@@ -87,7 +87,7 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 
 		var parts = make(cipherset.Parts)
 		var csid uint8
-		for key, value := range inner.Header() {
+		for key, value := range inner.Header().Extra {
 			if len(key) != 2 {
 				continue
 			}

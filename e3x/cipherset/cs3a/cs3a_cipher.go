@@ -193,7 +193,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		delete(inner.Header(), "at")
+		delete(inner.Header().Extra, "at")
 
 		parts, err := cipherset.PartsFromHeader(inner.Header())
 		if err != nil {
@@ -552,7 +552,7 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || len(pkt.Header()) != 0 || len(pkt.Body) < 16+24 {
+	if len(pkt.Head) != 0 || !pkt.Header().IsZero() || len(pkt.Body) < 16+24 {
 		return nil, cipherset.ErrInvalidPacket
 	}
 

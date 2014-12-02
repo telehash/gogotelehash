@@ -59,18 +59,21 @@ func TestBasicUnrealiable(t *testing.T) {
 		c      *Channel
 		x      MockExchange
 		pkt    *lob.Packet
+		hdr    *lob.Header
 		err    error
 	)
 
 	{ // mock
 		pkt = &lob.Packet{Body: []byte("ping")}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetString("type", "ping")
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.Type, hdr.HasType = "ping", true
 		x.On("deliverPacket", pkt).Return(nil)
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetBool("end", true)
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.SetBool("end", true)
 		x.On("deliverPacket", pkt).Return(nil)
 
 		x.On("unregisterChannel", uint32(0)).Return().Once()
@@ -94,7 +97,8 @@ func TestBasicUnrealiable(t *testing.T) {
 	}
 
 	pkt = &lob.Packet{}
-	pkt.Header().SetBool("end", true)
+	hdr = pkt.Header()
+	hdr.SetBool("end", true)
 	c.receivedPacket(pkt)
 
 	err = c.Close()
@@ -111,37 +115,43 @@ func TestBasicRealiable(t *testing.T) {
 		c      *Channel
 		x      MockExchange
 		pkt    *lob.Packet
+		hdr    *lob.Header
 		err    error
 	)
 
 	{ // mock
 		pkt = &lob.Packet{Body: []byte("ping")}
-		pkt.Header().SetString("type", "ping")
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("seq", 1)
+		hdr = pkt.Header()
+		hdr.Type, hdr.HasType = "ping", true
+		hdr.C, hdr.HasC = 0, true
+		hdr.Seq, hdr.HasSeq = 1, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("ack", 1)
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.Ack, hdr.HasAck = 1, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("ack", 1)
-		pkt.Header().SetUint32Slice("miss", []uint32{1})
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.Ack, hdr.HasAck = 1, true
+		hdr.Miss, hdr.HasMiss = []uint32{1}, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("ack", 2)
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.Ack, hdr.HasAck = 2, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetInt("c", 0)
-		pkt.Header().SetInt("seq", 2)
-		pkt.Header().SetBool("end", true)
-		pkt.Header().SetInt("ack", 1)
+		hdr = pkt.Header()
+		hdr.C, hdr.HasC = 0, true
+		hdr.Seq, hdr.HasSeq = 2, true
+		hdr.Ack, hdr.HasAck = 1, true
+		hdr.SetBool("end", true)
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		x.On("unregisterChannel", uint32(0)).Return().Once()
@@ -156,8 +166,9 @@ func TestBasicRealiable(t *testing.T) {
 	assert.NoError(err)
 
 	pkt = &lob.Packet{Body: []byte("pong")}
-	pkt.Header().SetUint32("seq", 1)
-	pkt.Header().SetUint32("ack", 1)
+	hdr = pkt.Header()
+	hdr.Seq, hdr.HasSeq = 1, true
+	hdr.Ack, hdr.HasAck = 1, true
 	c.receivedPacket(pkt)
 
 	pkt, err = c.ReadPacket()
@@ -170,9 +181,10 @@ func TestBasicRealiable(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		pkt = &lob.Packet{}
-		pkt.Header().SetBool("end", true)
-		pkt.Header().SetUint32("seq", 2)
-		pkt.Header().SetUint32("ack", 2)
+		hdr = pkt.Header()
+		hdr.Seq, hdr.HasSeq = 2, true
+		hdr.Ack, hdr.HasAck = 2, true
+		hdr.SetBool("end", true)
 		c.receivedPacket(pkt)
 	}()
 
