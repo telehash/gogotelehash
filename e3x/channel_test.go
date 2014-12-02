@@ -410,6 +410,7 @@ func BenchmarkReadWrite(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
+			pkt.Free()
 		}
 
 		b.StopTimer()
