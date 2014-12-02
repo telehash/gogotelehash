@@ -322,9 +322,10 @@ func (x *Exchange) receivedPacket(op opRead) {
 		return // drop
 	}
 	var (
-		cid, hasC    = pkt.Header().GetUint32("c")
-		typ, hasType = pkt.Header().GetString("type")
-		_, hasSeq    = pkt.Header().GetUint32("seq")
+		hdr          = pkt.Header()
+		cid, hasC    = hdr.C, hdr.HasC
+		typ, hasType = hdr.Type, hdr.HasType
+		hasSeq       = hdr.HasSeq
 		c            *Channel
 	)
 

@@ -213,14 +213,14 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Empty(pkt.Header())
+	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sb.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Equal(lob.Header{"foo": 0xbeaf}, pkt.Header())
+	assert.Equal(&lob.Header{Extra: map[string]interface{}{"foo": 0xbeaf}}, pkt.Header())
 	assert.Equal([]byte("Hello world!"), pkt.Body)
 
 	pkt = &lob.Packet{Body: []byte("Bye world!")}
@@ -229,13 +229,13 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Empty(pkt.Header())
+	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sa.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Equal(lob.Header{"bar": 0xdead}, pkt.Header())
+	assert.Equal(&lob.Header{Extra: map[string]interface{}{"bar": 0xdead}}, pkt.Header())
 	assert.Equal([]byte("Bye world!"), pkt.Body)
 }

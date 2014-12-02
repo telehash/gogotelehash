@@ -6,9 +6,11 @@
 package lob
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/telehash/gogotelehash/util/bufpool"
 )
@@ -53,7 +55,7 @@ func Decode(p []byte) (*Packet, error) {
 	}
 
 	if len(head) >= 7 {
-		err := json.Unmarshal(head, &dict)
+		err := parseHeader(&dict, head)
 		if err != nil {
 			return nil, ErrInvalidPacket
 		}
@@ -66,53 +68,53 @@ func Decode(p []byte) (*Packet, error) {
 // Encode a packet
 func Encode(pkt *Packet) ([]byte, error) {
 	var (
-		head []byte
-		body []byte
-		p    []byte
-		err  error
+		p      []byte
+		hdrLen int
+		err    error
 	)
 
 	if pkt == nil {
 		return []byte{0, 0}, nil
 	}
 
-	if pkt.json != nil && len(pkt.json) > 0 {
-		head, err = json.Marshal(pkt.json)
+	p = bufpool.GetBuffer()
+	buf := bytes.NewBuffer(p[:0])
+	buf.WriteByte(0)
+	buf.WriteByte(0)
+
+	if !pkt.json.IsZero() {
+		err = pkt.json.writeTo(buf)
 		if err != nil {
 			return nil, err
 		}
-		if len(head) < 7 {
+		hdrLen = buf.Len() - 2
+		if hdrLen < 7 {
 			return nil, ErrInvalidPacket
 		}
 	} else if len(pkt.Head) > 0 {
-		head = pkt.Head
-		if len(head) >= 7 {
+		hdrLen = len(pkt.Head)
+		if hdrLen >= 7 {
 			return nil, ErrInvalidPacket
 		}
+		buf.Write(pkt.Head)
 	}
 
 	if len(pkt.Body) > 0 {
-		body = pkt.Body
+		buf.Write(pkt.Body)
 	}
 
-	p = bufpool.GetBuffer()
-	p = p[:2+len(head)+len(body)]
-	binary.BigEndian.PutUint16(p, uint16(len(head)))
-	copy(p[2:], head)
-	copy(p[2+len(head):], body)
+	p = p[:buf.Len()]
+	binary.BigEndian.PutUint16(p, uint16(hdrLen))
 
 	return p, nil
 }
 
 // Header returns the packet JSON header if present.
-func (p *Packet) Header() Header {
+func (p *Packet) Header() *Header {
 	if p.Head != nil {
 		return nil
 	}
-	if p.json == nil {
-		p.json = make(Header)
-	}
-	return p.json
+	return &p.json
 }
 
 // Free the packets backing buffer back to the buffer pool.
@@ -126,27 +128,128 @@ func (p *Packet) Free() {
 }
 
 // Header represents a packet header.
-type Header map[string]interface{}
+type Header struct {
+	C       uint32
+	Type    string
+	Seq     uint32
+	Ack     uint32
+	Miss    []uint32
+	HasC    bool
+	HasType bool
+	HasSeq  bool
+	HasAck  bool
+	HasMiss bool
+
+	Extra map[string]interface{}
+}
+
+func (h *Header) writeTo(buf *bytes.Buffer) error {
+	var first = true
+
+	buf.WriteByte('{')
+
+	if h.HasC {
+		buf.Write(hdrC)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%d", h.C)
+		first = false
+	}
+
+	if h.HasType {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrType)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%q", h.Type)
+		first = false
+	}
+
+	if h.HasSeq {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrSeq)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%d", h.Seq)
+		first = false
+	}
+
+	if h.HasAck {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrAck)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%d", h.Ack)
+		first = false
+	}
+
+	if h.HasMiss && len(h.Miss) > 0 {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrMiss)
+		buf.WriteByte(':')
+		buf.WriteByte('[')
+		for i, m := range h.Miss {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			fmt.Fprintf(buf, "%d", m)
+		}
+		buf.WriteByte(']')
+		first = false
+	}
+
+	if len(h.Extra) > 0 {
+		enc := json.NewEncoder(buf)
+		for k, v := range h.Extra {
+			if !first {
+				buf.WriteByte(',')
+			}
+
+			fmt.Fprintf(buf, "%q", k)
+			buf.WriteByte(':')
+			err := enc.Encode(v)
+			if err != nil {
+				return err
+			}
+			first = false
+		}
+	}
+
+	buf.WriteByte('}')
+	return nil
+}
+
+// IsZero returns true when the header is the zero value or equivalent.
+func (h *Header) IsZero() bool {
+	return !h.HasC && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && (len(h.Extra) == 0)
+}
 
 // Get the value for key k. found is false if k is not present.
-func (h Header) Get(k string) (v interface{}, found bool) {
-	if h == nil {
+func (h *Header) Get(k string) (v interface{}, found bool) {
+	if h == nil || h.Extra == nil {
 		return nil, false
 	}
-	v, found = h[k]
+	v, found = h.Extra[k]
 	return v, found
 }
 
 // Set a the header k to v.
-func (h Header) Set(k string, v interface{}) {
+func (h *Header) Set(k string, v interface{}) {
 	if h == nil {
 		return
 	}
-	h[k] = v
+	if h.Extra == nil {
+		h.Extra = make(map[string]interface{})
+	}
+	h.Extra[k] = v
 }
 
 // GetString returns the string value for key k. found is false if k is not present.
-func (h Header) GetString(k string) (v string, found bool) {
+func (h *Header) GetString(k string) (v string, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
 		return "", false
@@ -159,12 +262,12 @@ func (h Header) GetString(k string) (v string, found bool) {
 }
 
 // SetString a the header k to v.
-func (h Header) SetString(k string, v string) {
+func (h *Header) SetString(k string, v string) {
 	h.Set(k, v)
 }
 
 // GetBool returns the bool value for key k. found is false if k is not present.
-func (h Header) GetBool(k string) (v bool, found bool) {
+func (h *Header) GetBool(k string) (v bool, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
 		return false, false
@@ -177,12 +280,12 @@ func (h Header) GetBool(k string) (v bool, found bool) {
 }
 
 // SetBool a the header k to v.
-func (h Header) SetBool(k string, v bool) {
+func (h *Header) SetBool(k string, v bool) {
 	h.Set(k, v)
 }
 
 // GetInt returns the int value for key k. found is false if k is not present.
-func (h Header) GetInt(k string) (v int, found bool) {
+func (h *Header) GetInt(k string) (v int, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
 		return 0, false
@@ -218,12 +321,12 @@ func (h Header) GetInt(k string) (v int, found bool) {
 }
 
 // SetInt a the header k to v.
-func (h Header) SetInt(k string, v int) {
+func (h *Header) SetInt(k string, v int) {
 	h.Set(k, v)
 }
 
 // GetUint32 returns the uint32 value for key k. found is false if k is not present.
-func (h Header) GetUint32(k string) (v uint32, found bool) {
+func (h *Header) GetUint32(k string) (v uint32, found bool) {
 	x, ok := h.GetInt(k)
 	if !ok || x < 0 {
 		return 0, false
@@ -232,12 +335,12 @@ func (h Header) GetUint32(k string) (v uint32, found bool) {
 }
 
 // SetUint32 a the header k to v.
-func (h Header) SetUint32(k string, v uint32) {
+func (h *Header) SetUint32(k string, v uint32) {
 	h.SetInt(k, int(v))
 }
 
 // GetUint32Slice returns the []uint32 value for key k. found is false if k is not present.
-func (h Header) GetUint32Slice(k string) (v []uint32, found bool) {
+func (h *Header) GetUint32Slice(k string) (v []uint32, found bool) {
 	y, ok := h.Get(k)
 	if !ok {
 		return nil, false
@@ -258,6 +361,6 @@ func (h Header) GetUint32Slice(k string) (v []uint32, found bool) {
 }
 
 // SetUint32Slice a the header k to v.
-func (h Header) SetUint32Slice(k string, v []uint32) {
+func (h *Header) SetUint32Slice(k string, v []uint32) {
 	h.Set(k, v)
 }
