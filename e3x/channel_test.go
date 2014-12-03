@@ -131,12 +131,6 @@ func TestBasicRealiable(t *testing.T) {
 		hdr = pkt.Header()
 		hdr.C, hdr.HasC = 0, true
 		hdr.Ack, hdr.HasAck = 1, true
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.Ack, hdr.HasAck = 1, true
 		hdr.Miss, hdr.HasMiss = []uint32{1}, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
