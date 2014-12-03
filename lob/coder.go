@@ -11,6 +11,7 @@ import (
 	"errors"
 
 	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 // ErrInvalidPacket is returned by Decode
@@ -22,6 +23,7 @@ type Packet struct {
 	json Header
 	Head []byte
 	Body []byte
+	TID  tracer.ID
 }
 
 // Decode a packet
@@ -110,7 +112,7 @@ func (p *Packet) Header() Header {
 		return nil
 	}
 	if p.json == nil {
-		p.json = make(Header)
+		p.json = make(Header, 10)
 	}
 	return p.json
 }

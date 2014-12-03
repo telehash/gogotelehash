@@ -9,7 +9,7 @@ import (
 var defaultLogger = New(os.Stdout)
 
 func ResetLogger() {
-	defaultLogger = New(os.Stdout)
+	defaultLogger = New(os.Stderr)
 	disabledMods = map[string]bool{}
 }
 

@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/telehash/gogotelehash/transports/udp"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 type endpointState uint8
@@ -26,6 +28,8 @@ const (
 
 // Endpoint represents a Telehash endpoint.
 type Endpoint struct {
+	TID tracer.ID // tracer id
+
 	mtx   sync.Mutex
 	state endpointState
 	err   error
@@ -46,10 +50,12 @@ type opRead struct {
 	msg []byte
 	src transports.Addr
 	err error
+	TID tracer.ID
 }
 
 func Open(options ...func(e *Endpoint) error) (*Endpoint, error) {
 	e := &Endpoint{
+		TID:       tracer.NewID(),
 		listeners: make(map[string]*Listener),
 		modules:   make(map[interface{}]Module),
 		tokens:    make(map[cipherset.Token]*Exchange),
@@ -64,28 +70,89 @@ func Open(options ...func(e *Endpoint) error) (*Endpoint, error) {
 		RegisterModule(modForgetterKey, &modForgetter{e}),
 		RegisterModule(modTransportsKey, &modTransports{e}))
 	if err != nil {
-		return nil, err
+		return nil, e.traceError(err)
 	}
 
 	err = e.setOptions(options...)
 	if err != nil {
-		return nil, err
+		return nil, e.traceError(err)
 	}
 
 	err = e.setOptions(
 		defaultRandomKeys,
 		defaultTransport)
 	if err != nil {
-		return nil, err
+		return nil, e.traceError(err)
 	}
+
+	e.traceNew()
 
 	err = e.start()
 	if err != nil {
 		e.stop()
-		return nil, err
+		return nil, e.traceError(err)
 	}
 
+	e.traceStarted()
 	return e, nil
+}
+
+func (e *Endpoint) getTID() tracer.ID {
+	return e.TID
+}
+
+func (e *Endpoint) traceError(err error) error {
+	if tracer.Enabled && err != nil {
+		tracer.Emit("endpoint.error", tracer.Info{
+			"endpoint_id": e.TID,
+			"error":       err.Error(),
+		})
+	}
+	return err
+}
+
+func (e *Endpoint) traceNew() {
+	if tracer.Enabled {
+		tracer.Emit("endpoint.new", tracer.Info{
+			"endpoint_id": e.TID,
+			"hashname":    e.hashname.String(),
+		})
+	}
+}
+
+func (e *Endpoint) traceStarted() {
+	if tracer.Enabled {
+		tracer.Emit("endpoint.started", tracer.Info{
+			"endpoint_id": e.TID,
+		})
+	}
+}
+
+func (e *Endpoint) traceReceivedPacket(op opRead) {
+	if tracer.Enabled {
+		tracer.Emit("endpoint.rcv.packet", tracer.Info{
+			"endpoint_id": e.TID,
+			"packet_id":   op.TID,
+			"packet": tracer.Info{
+				"msg": base64.StdEncoding.EncodeToString(op.msg),
+				"src": op.src.String(),
+			},
+		})
+	}
+}
+
+func (e *Endpoint) traceDroppedPacket(op opRead, reason string) {
+	if tracer.Enabled {
+		tracer.Emit("endpoint.drop.packet", tracer.Info{
+			"endpoint_id": e.TID,
+			"packet_id":   op.TID,
+			"reason":      reason,
+			"packet": tracer.Info{
+				"msg": base64.StdEncoding.EncodeToString(op.msg),
+				"src": op.src.String(),
+			},
+		})
+	}
 }
 
 func (e *Endpoint) setOptions(options ...func(*Endpoint) error) error {
@@ -152,7 +219,7 @@ func defaultRandomKeys(e *Endpoint) error {
 
 func Log(w io.Writer) func(*Endpoint) error {
 	if w == nil {
-		w = os.Stdout
+		w = os.Stderr
 	}
 
 	return func(e *Endpoint) error {
@@ -310,7 +377,7 @@ func (e *Endpoint) runReader() {
 			return
 		}
 
-		e.received(opRead{buf[:n], src, err})
+		e.received(opRead{buf[:n], src, err, tracer.NewID()})
 	}
 }
 
@@ -327,6 +394,8 @@ func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 }
 
 func (e *Endpoint) received(op opRead) {
+	e.traceReceivedPacket(op)
+
 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
 		e.mtx.Lock()
 		defer e.mtx.Unlock()
@@ -341,9 +410,16 @@ func (e *Endpoint) received(op opRead) {
 	}
 
 	// drop
+	const dropReason = "invalid lob packet"
+	e.traceDroppedPacket(op, dropReason)
 }
 
 func (e *Endpoint) receivedHandshake(op opRead) {
+	const (
+		dropInvalidPacket   = "invalid lob packet"
+		dropUnsupportedCSID = "unsupported CSID"
+	)
+
 	var (
 		x          *Exchange
 		localIdent *Identity
@@ -357,28 +433,33 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 
 	token = cipherset.ExtractToken(op.msg)
 	if token == cipherset.ZeroToken {
+		e.traceDroppedPacket(op, dropInvalidPacket)
 		return // drop
 	}
 
 	localIdent, err = e.LocalIdentity()
 	if err != nil {
+		e.traceDroppedPacket(op, err.Error())
 		return // drop
 	}
 
 	csid = uint8(op.msg[2])
 	localKey = localIdent.keys[csid]
 	if localKey == nil {
+		e.traceDroppedPacket(op, dropUnsupportedCSID)
 		return // drop
 	}
 
 	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.msg[3:])
 	if err != nil {
+		e.traceDroppedPacket(op, err.Error())
 		return // drop
 	}
 
 	hn, err = hashname.FromKeyAndIntermediates(csid,
 		handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
+		e.traceDroppedPacket(op, err.Error())
 		return // drop
 	}
 
@@ -390,6 +471,7 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 
 	x, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
 	if err != nil {
+		e.traceDroppedPacket(op, err.Error())
 		return // drop
 	}
 
@@ -400,11 +482,17 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 }
 
 func (e *Endpoint) receivedPacket(op opRead) {
+	const (
+		dropInvalidPacket   = "invalid lob packet"
+		dropUnknownExchange = "unknown exchange"
+	)
+
 	var (
 		token = cipherset.ExtractToken(op.msg)
 	)
 
 	if token == cipherset.ZeroToken {
+		e.traceDroppedPacket(op, dropInvalidPacket)
 		return // drop
 	}
 
@@ -412,11 +500,9 @@ func (e *Endpoint) receivedPacket(op opRead) {
 	x := e.tokens[token]
 	e.mtx.Unlock()
 	if x == nil {
+		e.traceDroppedPacket(op, dropUnknownExchange)
 		return // drop
 	}
-
-	e.log.To(x.RemoteHashname()).Module("e3x.tx").
-		Printf("\x1B[36mRCV\x1B[0m token=%x from=%s", token, op.src)
 
 	x.received(op)
 }

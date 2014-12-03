@@ -1,9 +1,9 @@
 package e3x
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
-	"github.com/telehash/gogotelehash/transports"
 	"io"
 	"net"
 	"os"
@@ -12,7 +12,9 @@ import (
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 var (
@@ -45,6 +47,8 @@ const (
 )
 
 type Channel struct {
+	TID tracer.ID
+
 	mtx      sync.Mutex
 	cndRead  *sync.Cond
 	cndWrite *sync.Cond
@@ -90,6 +94,7 @@ type exchangeI interface {
 	deliverPacket(pkt *lob.Packet, dst transports.Addr) error
 	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
+	getTID() tracer.ID
 }
 
 type readBufferEntry struct {
@@ -111,6 +116,7 @@ func newChannel(
 	x exchangeI,
 ) *Channel {
 	c := &Channel{
+		TID:          tracer.NewID(),
 		x:            x,
 		hashname:     hn,
 		typ:          typ,
@@ -141,7 +147,101 @@ func newChannel(
 		c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
 	}
 
+	c.traceNew()
+
 	return c
+}
+
+func (c *Channel) traceNew() {
+	if tracer.Enabled {
+		tracer.Emit("channel.new", tracer.Info{
+			"exchange_id": c.x.getTID(),
+			"channel_id":  c.TID,
+			"channel": tracer.Info{
+				"type":     c.typ,
+				"reliable": c.reliable,
+				"cid":      c.id,
+			},
+		})
+	}
+}
+
+func (c *Channel) traceWriteError(pkt *lob.Packet, path transports.Addr, reason error) error {
+	if tracer.Enabled {
+		info := tracer.Info{
+			"channel_id": c.TID,
+			"reason":     reason.Error(),
+		}
+
+		if path != nil {
+			info["path"] = path.String()
+		}
+
+		if pkt != nil {
+			info["packet_id"] = pkt.TID
+			info["packet"] = tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			}
+		}
+
+		tracer.Emit("channel.write.error", info)
+	}
+	return reason
+}
+
+func (c *Channel) traceWrite(pkt *lob.Packet, path transports.Addr) {
+	if tracer.Enabled {
+		info := tracer.Info{
+			"channel_id": c.TID,
+		}
+
+		if path != nil {
+			info["path"] = path.String()
+		}
+
+		if pkt != nil {
+			info["packet_id"] = pkt.TID
+			info["packet"] = tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			}
+		}
+
+		tracer.Emit("channel.write", info)
+	}
+}
+
+func (c *Channel) traceDroppedPacket(pkt *lob.Packet, reason string) {
+	if tracer.Enabled {
+		info := tracer.Info{
+			"channel_id": c.TID,
+			"packet_id":  pkt.TID,
+			"reason":     reason,
+		}
+
+		if pkt != nil {
+			info["packet"] = tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			}
+		}
+
+		tracer.Emit("channel.rcv.packet", info)
+	}
+}
+
+func (c *Channel) traceReceivedPacket(pkt *lob.Packet) {
+	if tracer.Enabled {
+		tracer.Emit("channel.rcv.packet", tracer.Info{
+			"channel_id": c.TID,
+			"packet_id":  pkt.TID,
+			"packet": tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			},
+		})
+	}
 }
 
 func (c *Channel) RemoteHashname() hashname.H {
@@ -225,22 +325,29 @@ func (c *Channel) blockWrite() bool {
 }
 
 func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
+	if pkt.TID == 0 {
+		pkt.TID = tracer.NewID()
+	}
+
 	if c.broken {
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
-		return &BrokenChannelError{c.hashname, c.typ, c.id}
+		return c.traceWriteError(pkt, path,
+			&BrokenChannelError{c.hashname, c.typ, c.id})
 	}
 
 	if c.writeDeadlineReached {
 		// When a channel reached a write deadline then all writes
 		// must return a ErrTimeout.
-		return ErrTimeout
+		return c.traceWriteError(pkt, path,
+			ErrTimeout)
 	}
 
 	if c.deliveredEnd {
 		// When a channel sent a packet with the "end" header set
 		// then all subsequent writes must return io.EOF
-		return io.EOF
+		return c.traceWriteError(pkt, path,
+			io.EOF)
 	}
 
 	c.oSeq++
@@ -266,13 +373,14 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 
 	err := c.x.deliverPacket(pkt, path)
 	if err != nil {
-		return err
+		return c.traceWriteError(pkt, path, err)
 	}
 
 	if c.oSeq == cInitialSeq && c.serverside {
 		c.unsetOpenDeadline()
 	}
 
+	c.traceWrite(pkt, path)
 	return nil
 }
 
@@ -407,10 +515,18 @@ func (c *Channel) readPacket() {
 }
 
 func (c *Channel) receivedPacket(pkt *lob.Packet) {
+	const (
+		errBrokenChannel   = "broken channel"
+		errMissingSeq      = "missing seq"
+		errDuplicatePacket = "duplicate packet"
+		errFullBuffer      = "full buffer"
+	)
+
 	c.mtx.Lock()
 
 	if c.broken {
 		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errBrokenChannel)
 		return
 	}
 
@@ -464,6 +580,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if !hasSeq {
 		// drop: is not a valid packet
 		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errMissingSeq)
 		return
 	}
 
@@ -475,18 +592,21 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if seq <= c.iSeq {
 		// drop: the reader already read a packet with this seq
 		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errDuplicatePacket)
 		return
 	}
 
 	if _, found := c.readBuffer[seq]; found {
 		// drop: a packet with this seq is already buffered
 		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errDuplicatePacket)
 		return
 	}
 
 	if len(c.readBuffer) >= cReadBufferSize {
 		// drop: the read buffer is full
 		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errFullBuffer)
 		return
 	}
 
@@ -502,6 +622,8 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 	c.cndRead.Signal()
 	c.mtx.Unlock()
+
+	c.traceReceivedPacket(pkt)
 }
 
 func (c *Channel) Errorf(format string, args ...interface{}) error {
@@ -637,18 +759,25 @@ func (c *Channel) blockClose() bool {
 
 func (c *Channel) buildMissList() []uint32 {
 	var (
-		miss = make([]uint32, 0, 50)
+		miss []uint32
 		last = c.iSeq
 	)
+
 	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
 		if _, p := c.readBuffer[i]; !p {
+			if miss == nil {
+				miss = make([]uint32, 0, 100)
+			}
+
 			miss = append(miss, i-last)
 			last = i
 		}
 	}
+
 	if len(miss) > 100 {
 		miss = miss[:100]
 	}
+
 	return miss
 }
 

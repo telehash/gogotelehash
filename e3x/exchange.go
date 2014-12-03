@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -13,6 +14,7 @@ import (
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
@@ -63,6 +65,8 @@ func (s ExchangeState) String() string {
 }
 
 type Exchange struct {
+	TID tracer.ID
+
 	mtx      sync.Mutex
 	cndState *sync.Cond
 
@@ -96,6 +100,7 @@ type channelEntry struct {
 type endpointI interface {
 	writeMessage([]byte, transports.Addr) error
 	listener(channelType string) *Listener
+	getTID() tracer.ID
 }
 
 func (x *Exchange) State() ExchangeState {
@@ -116,12 +121,14 @@ func newExchange(
 	log *logs.Logger,
 ) (*Exchange, error) {
 	x := &Exchange{
+		TID:         tracer.NewID(),
 		localIdent:  localIdent,
 		remoteIdent: remoteIdent,
 		channels:    make(map[uint32]*channelEntry),
 		endpoint:    endpoint,
 		observers:   observers,
 	}
+	x.traceNew()
 
 	x.cndState = sync.NewCond(&x.mtx)
 
@@ -141,12 +148,12 @@ func newExchange(
 		csid := cipherset.SelectCSID(localIdent.keys, remoteIdent.keys)
 		cipher, err := cipherset.NewState(csid, localIdent.keys[csid])
 		if err != nil {
-			return nil, err
+			return nil, x.traceError(err)
 		}
 
 		err = cipher.SetRemoteKey(remoteIdent.keys[csid])
 		if err != nil {
-			return nil, err
+			return nil, x.traceError(err)
 		}
 
 		x.addressBook = newAddressBook(x.log)
@@ -162,16 +169,17 @@ func newExchange(
 		csid := handshake.CSID()
 		cipher, err := cipherset.NewState(csid, localIdent.keys[csid])
 		if err != nil {
-			return nil, err
+			return nil, x.traceError(err)
 		}
 
 		ok := cipher.ApplyHandshake(handshake)
 		if !ok {
-			return nil, ErrInvalidHandshake
+			return nil, x.traceError(ErrInvalidHandshake)
 		}
 
 		hn, err := hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Public(), handshake.Parts())
 		if err != nil {
+			x.traceError(err)
 			hn = "xxxx"
 		}
 
@@ -182,6 +190,114 @@ func newExchange(
 	}
 
 	return x, nil
+}
+
+func (x *Exchange) getTID() tracer.ID {
+	return x.TID
+}
+
+func (x *Exchange) traceError(err error) error {
+	if tracer.Enabled && err != nil {
+		tracer.Emit("exchange.error", tracer.Info{
+			"exchange_id": x.TID,
+			"error":       err.Error(),
+		})
+	}
+	return err
+}
+
+func (x *Exchange) traceNew() {
+	if tracer.Enabled {
+		tracer.Emit("exchange.new", tracer.Info{
+			"exchange_id": x.TID,
+			"endpoint_id": x.endpoint.getTID(),
+		})
+	}
+}
+
+func (x *Exchange) traceStarted() {
+	if tracer.Enabled {
+		tracer.Emit("exchange.started", tracer.Info{
+			"exchange_id": x.TID,
+			"peer":        x.remoteIdent.Hashname().String(),
+		})
+	}
+}
+
+func (x *Exchange) traceStopped() {
+	if tracer.Enabled {
+		tracer.Emit("exchange.stopped", tracer.Info{
+			"exchange_id": x.TID,
+		})
+	}
+}
+
+func (x *Exchange) traceDroppedHandshake(op opRead, handshake cipherset.Handshake, reason string) {
+	if tracer.Enabled {
+		info := tracer.Info{
+			"exchange_id": x.TID,
+			"packet_id":   op.TID,
+			"reason":      reason,
+		}
+
+		if handshake != nil {
+			info["handshake"] = tracer.Info{
+				"csid":       fmt.Sprintf("%x", handshake.CSID()),
+				"parts":      handshake.Parts(),
+				"at":         handshake.At(),
+				"public_key": handshake.PublicKey().String(),
+			}
+		}
+
+		tracer.Emit("exchange.drop.handshake", info)
+	}
+}
+
+func (x *Exchange) traceReceivedHandshake(op opRead, handshake cipherset.Handshake) {
+	if tracer.Enabled {
+		tracer.Emit("exchange.rcv.handshake", tracer.Info{
+			"exchange_id": x.TID,
+			"packet_id":   op.TID,
+			"handshake": tracer.Info{
+				"csid":       fmt.Sprintf("%x", handshake.CSID()),
+				"parts":      handshake.Parts(),
+				"at":         handshake.At(),
+				"public_key": handshake.PublicKey().String(),
+			},
+		})
+	}
+}
+
+func (x *Exchange) traceDroppedPacket(op opRead, pkt *lob.Packet, reason string) {
+	if tracer.Enabled {
+		info := tracer.Info{
+			"exchange_id": x.TID,
+			"packet_id":   op.TID,
+			"reason":      reason,
+		}
+
+		if pkt != nil {
+			info["packet"] = tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			}
+		}
+
+		tracer.Emit("exchange.rcv.packet", info)
+	}
+}
+
+func (x *Exchange) traceReceivedPacket(op opRead, pkt *lob.Packet) {
+	if tracer.Enabled {
+		tracer.Emit("exchange.rcv.packet", tracer.Info{
+			"exchange_id": x.TID,
+			"packet_id":   op.TID,
+			"packet": tracer.Info{
+				"header": pkt.Header(),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+			},
+		})
+	}
 }
 
 // Dial exchanges the initial handshakes. It will timeout after 2 minutes.
@@ -307,23 +423,37 @@ func (x *Exchange) rescheduleHandshake() {
 }
 
 func (x *Exchange) receivedPacket(op opRead) {
-	pkt, err := lob.Decode(op.msg)
-	if err != nil {
-		return // drop
-	}
+	const (
+		dropInvalidPacket         = "invalid lob packet"
+		dropExchangeIsNotOpen     = "exchange is not open"
+		dropMissingChannelID      = "missing channel id header"
+		dropMissingChannelType    = "missing channel type header"
+		dropMissingChannelHandler = "missing channel handler"
+	)
 
 	{
 		x.mtx.Lock()
-		if !x.state.IsOpen() {
+		state := x.state
+		x.mtx.Unlock()
+
+		if !state.IsOpen() {
+			x.traceDroppedPacket(op, nil, dropExchangeIsNotOpen)
 			return // drop
 		}
-		x.mtx.Unlock()
+	}
+
+	pkt, err := lob.Decode(op.msg)
+	if err != nil {
+		x.traceDroppedPacket(op, nil, dropInvalidPacket)
+		return // drop
 	}
 
 	pkt, err = x.cipher.DecryptPacket(pkt)
 	if err != nil {
+		x.traceDroppedPacket(op, nil, err.Error())
 		return // drop
 	}
+	pkt.TID = op.TID
 	var (
 		cid, hasC    = pkt.Header().GetUint32("c")
 		typ, hasType = pkt.Header().GetString("type")
@@ -334,6 +464,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 
 	if !hasC {
 		// drop: missing "c"
+		x.traceDroppedPacket(op, pkt, dropMissingChannelID)
 		return
 	}
 
@@ -343,12 +474,14 @@ func (x *Exchange) receivedPacket(op opRead) {
 		if entry == nil {
 			if !hasType {
 				x.mtx.Unlock()
+				x.traceDroppedPacket(op, pkt, dropMissingChannelType)
 				return // drop (missing typ)
 			}
 
 			listener := x.endpoint.listener(typ)
 			if listener == nil {
 				x.mtx.Unlock()
+				x.traceDroppedPacket(op, pkt, dropMissingChannelHandler)
 				return // drop (no handler)
 			}
 
@@ -376,6 +509,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 		}
 	}
 
+	x.traceReceivedPacket(op, pkt)
 	entry.c.receivedPacket(pkt)
 }
 
@@ -438,7 +572,7 @@ func (x *Exchange) expire(err error) {
 		e.c.onCloseDeadlineReached()
 	}
 
-	x.log.Printf("\x1B[31mClosed exchange\x1B[0m")
+	x.traceStopped()
 	x.observers.Trigger(&ExchangeClosedEvent{x, err})
 }
 
@@ -728,11 +862,12 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.
 	}
 
 	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
+		x.traceStarted()
+
 		x.state = ExchangeIdle
 		x.resetExpire()
 		x.cndState.Broadcast()
 
-		x.log.Printf("\x1B[32mOpened exchange\x1B[0m")
 		x.observers.Trigger(&ExchangeOpenedEvent{x})
 	}
 
@@ -751,26 +886,31 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 	)
 
 	if len(op.msg) < 3 {
+		x.traceDroppedHandshake(op, nil, "invalid packet")
 		return false
 	}
 
 	pkt, err = lob.Decode(op.msg)
 	if err != nil {
+		x.traceDroppedHandshake(op, nil, err.Error())
 		return false
 	}
 
 	if len(pkt.Head) != 1 {
+		x.traceDroppedHandshake(op, nil, "invalid header")
 		return false
 	}
 	csid = uint8(pkt.Head[0])
 
 	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
 	if err != nil {
+		x.traceDroppedHandshake(op, nil, err.Error())
 		return false
 	}
 
 	resp, ok := x.applyHandshake(handshake, op.src)
 	if !ok {
+		x.traceDroppedHandshake(op, handshake, "failed to apply")
 		return false
 	}
 
@@ -780,5 +920,6 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		x.endpoint.writeMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
 	}
 
+	x.traceReceivedHandshake(op, handshake)
 	return true
 }

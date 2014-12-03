@@ -204,12 +204,29 @@ func (c *Context) Done() {
 	fmt.Fprintln(os.Stdout, `{"cmd":"done"}`)
 }
 
-func (c *Context) AwaitDone() {
-	for {
-		cmd := ""
-		fmt.Fscanln(os.Stdin, &cmd)
-		if cmd == "DONE" {
-			return
-		}
+type Command struct {
+	Cmd      string `json:"cmd"`
+	Process  string `json:"proc,omitempty"`
+	Line     string `json:"line,omitempty"`
+	ExitCode int    `json:"code,omitempty"`
+	ID       int    `json:"id,omitempty"`
+	Value    string `json:"value,omitempty"`
+}
+
+func (c *Context) WriteCommand(cmd *Command) error {
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return err
+	}
+
+	_, err = fmt.Println(string(data))
+	return err
+}
+
+func (c *Context) Assert(id int, value string) {
+	err := c.WriteCommand(&Command{Cmd: "assert", ID: id, Value: value})
+	if err != nil {
+		fmt.Printf("error: %s\n", err)
+		os.Exit(1)
 	}
 }
