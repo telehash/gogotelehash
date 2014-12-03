@@ -83,7 +83,7 @@ type Channel struct {
 	tReadDeadline  *time.Timer
 	tWriteDeadline *time.Timer
 	tResend        *time.Timer
-	lastSentAck    time.Time
+	tAcker         *time.Timer
 }
 
 type exchangeI interface {
@@ -139,6 +139,7 @@ func newChannel(
 
 	if reliable {
 		c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
+		c.tAcker = time.AfterFunc(10*time.Second, c.autoDeliverAck)
 	}
 
 	return c
@@ -606,9 +607,7 @@ func (c *Channel) Close() error {
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
+	c.unsetTimers()
 
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
@@ -715,10 +714,6 @@ func (c *Channel) resendLastPacket() {
 }
 
 func (c *Channel) maybeDeliverAck() {
-	var (
-		shouldAck bool
-	)
-
 	if !c.reliable {
 		return
 	}
@@ -728,16 +723,16 @@ func (c *Channel) maybeDeliverAck() {
 	}
 
 	if c.iSeq-c.iAckedSeq >= 30 {
-		shouldAck = true
-	}
-
-	if time.Since(c.lastSentAck) > 10*time.Second {
-		shouldAck = true
-	}
-
-	if shouldAck {
 		c.deliverAck()
 	}
+}
+
+func (c *Channel) autoDeliverAck() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.deliverAck()
+	c.tAcker.Reset(10 * time.Second)
 }
 
 func (c *Channel) deliverAck() {
@@ -771,7 +766,6 @@ func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
 	}
 
 	c.iAckedSeq = c.iSeq
-	c.lastSentAck = time.Now()
 }
 
 func (c *Channel) setCloseDeadline() {
@@ -784,13 +778,6 @@ func (c *Channel) setCloseDeadline() {
 			60*time.Second,
 			c.onCloseDeadlineReached,
 		)
-	}
-}
-
-func (c *Channel) unsetCloseDeadline() {
-	if c.tCloseDeadline != nil {
-		c.tCloseDeadline.Stop()
-		c.tCloseDeadline = nil
 	}
 }
 
@@ -825,10 +812,48 @@ func (c *Channel) setOpenDeadline() {
 	}
 }
 
+func (c *Channel) unsetTimers() {
+	c.unsetOpenDeadline()
+	c.unsetCloseDeadline()
+	c.unsetReadDeadline()
+	c.unsetWriteDeadline()
+	c.unsetResender()
+	c.unsetAcker()
+}
+
+func (c *Channel) unsetReadDeadline() {
+	if c.tReadDeadline != nil {
+		c.tReadDeadline.Stop()
+	}
+}
+
+func (c *Channel) unsetWriteDeadline() {
+	if c.tWriteDeadline != nil {
+		c.tWriteDeadline.Stop()
+	}
+}
+
 func (c *Channel) unsetOpenDeadline() {
 	if c.tOpenDeadline != nil {
 		c.tOpenDeadline.Stop()
-		c.tOpenDeadline = nil
+	}
+}
+
+func (c *Channel) unsetCloseDeadline() {
+	if c.tCloseDeadline != nil {
+		c.tCloseDeadline.Stop()
+	}
+}
+
+func (c *Channel) unsetResender() {
+	if c.tResend != nil {
+		c.tResend.Stop()
+	}
+}
+
+func (c *Channel) unsetAcker() {
+	if c.tAcker != nil {
+		c.tAcker.Stop()
 	}
 }
 
@@ -838,9 +863,7 @@ func (c *Channel) onOpenDeadlineReached() {
 
 	c.broken = true
 	c.openDeadlineReached = true
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
+	c.unsetTimers()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -856,9 +879,7 @@ func (c *Channel) forget() {
 
 	c.broken = true
 	c.openDeadlineReached = false
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
+	c.unsetTimers()
 
 	// broadcast
 	c.cndWrite.Broadcast()
@@ -866,12 +887,6 @@ func (c *Channel) forget() {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-}
-
-func (c *Channel) unsetResender() {
-	if c.tResend != nil {
-		c.tResend.Stop()
-	}
 }
 
 // Read implements the net.Conn Read method.
