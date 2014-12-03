@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ func (err *BrokenChannelError) Error() string {
 const (
 	cReadBufferSize  = 100
 	cWriteBufferSize = 100
+	earlyBareAck     = 50
 	cBlankSeq        = uint32(0)
 	cInitialSeq      = uint32(1)
 )
@@ -75,7 +77,7 @@ type Channel struct {
 	readDeadlineReached  bool
 	closeDeadlineReached bool
 
-	readBuffer  map[uint32]*readBufferEntry
+	readBuffer  readBufferSlice
 	writeBuffer map[uint32]*writeBufferEntry
 
 	tOpenDeadline  *time.Timer
@@ -116,7 +118,7 @@ func newChannel(
 		typ:          typ,
 		reliable:     reliable,
 		serverside:   serverside,
-		readBuffer:   make(map[uint32]*readBufferEntry, cReadBufferSize),
+		readBuffer:   make([]*readBufferEntry, 0, cReadBufferSize),
 		writeBuffer:  make(map[uint32]*writeBufferEntry, cWriteBufferSize),
 		oSeq:         cBlankSeq,
 		iBufferedSeq: cBlankSeq,
@@ -329,7 +331,7 @@ func (c *Channel) blockRead() bool {
 	}
 
 	rSeq := c.iSeq + 1
-	if c.readBuffer[rSeq] == nil {
+	if len(c.readBuffer) == 0 || c.readBuffer[0].seq != rSeq {
 		// Packet has not yet been received
 		// defer the read
 		return true
@@ -357,8 +359,7 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		return nil, io.EOF
 	}
 
-	rSeq := c.iSeq + 1
-	e := c.readBuffer[rSeq]
+	e := c.readBuffer[0]
 
 	{ // clean headers
 		h := e.pkt.Header()
@@ -381,10 +382,13 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 
 func (c *Channel) readPacket() {
 	rSeq := c.iSeq + 1
-	e := c.readBuffer[rSeq]
+	e := c.readBuffer[0]
 
 	c.iSeq = rSeq
-	delete(c.readBuffer, rSeq)
+
+	// remove entry
+	copy(c.readBuffer, c.readBuffer[1:])
+	c.readBuffer = c.readBuffer[:len(c.readBuffer)-1]
 
 	if e.end {
 		c.deliverAck()
@@ -395,7 +399,7 @@ func (c *Channel) readPacket() {
 		c.unsetOpenDeadline()
 	}
 
-	c.maybeDeliverAck()
+	c.maybeDeliverBareAck()
 
 	if c.deliveredEnd && !c.blockClose() {
 		c.cndClose.Signal()
@@ -481,14 +485,14 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		return
 	}
 
-	if _, found := c.readBuffer[seq]; found {
-		// drop: a packet with this seq is already buffered
+	if len(c.readBuffer) >= cReadBufferSize {
+		// drop: the read buffer is full
 		c.mtx.Unlock()
 		return
 	}
 
-	if len(c.readBuffer) >= cReadBufferSize {
-		// drop: the read buffer is full
+	if c.readBuffer.IndexOf(seq) >= 0 {
+		// drop: a packet with this seq is already buffered
 		c.mtx.Unlock()
 		return
 	}
@@ -501,7 +505,8 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		c.deliverAck()
 	}
 
-	c.readBuffer[seq] = &readBufferEntry{pkt, seq, end}
+	c.readBuffer = append(c.readBuffer, &readBufferEntry{pkt, seq, end})
+	sort.Sort(c.readBuffer)
 
 	c.cndRead.Signal()
 	c.mtx.Unlock()
@@ -635,19 +640,55 @@ func (c *Channel) blockClose() bool {
 }
 
 func (c *Channel) buildMissList() []uint32 {
+	// iSeq last read packet
+	// iSeq+1 is the next packet to be read
+	// iSeenSeq is the highest seq sean.
+	// idx index of current packet in the read buffer
+	//
+	//
+
 	var (
-		miss = make([]uint32, 0, 50)
+		miss []uint32
 		last = c.iSeq
+		n    int
+		seq  uint32 = c.iSeq + 1
 	)
-	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
-		if _, p := c.readBuffer[i]; !p {
-			miss = append(miss, i-last)
-			last = i
+
+	for _, e := range c.readBuffer {
+		if seq == e.seq {
+			seq++
+			continue
+		}
+
+		for seq < e.seq {
+			if miss == nil {
+				miss = make([]uint32, 0, 100)
+			}
+			miss = append(miss, seq-last)
+			last = seq
+			seq++
+
+			n++
+			if n >= 100 {
+				return miss
+			}
 		}
 	}
-	if len(miss) > 100 {
-		miss = miss[:100]
+
+	for seq <= c.iSeenSeq {
+		if miss == nil {
+			miss = make([]uint32, 0, 100)
+		}
+		miss = append(miss, seq-last)
+		last = seq
+		seq++
+
+		n++
+		if n >= 100 {
+			return miss
+		}
 	}
+
 	return miss
 }
 
@@ -714,7 +755,7 @@ func (c *Channel) resendLastPacket() {
 	c.x.deliverPacket(e.pkt, e.dst)
 }
 
-func (c *Channel) maybeDeliverAck() {
+func (c *Channel) maybeDeliverBareAck() {
 	if !c.reliable {
 		return
 	}
@@ -723,7 +764,7 @@ func (c *Channel) maybeDeliverAck() {
 		return // nothing to ack
 	}
 
-	if c.iSeq-c.iAckedSeq >= 30 {
+	if c.iSeq-c.iAckedSeq >= earlyBareAck {
 		c.deliverAck()
 	}
 }
@@ -1031,4 +1072,19 @@ func (c *Channel) LocalAddr() net.Addr {
 // RemoteAddr returns the remote network address.
 func (c *Channel) RemoteAddr() net.Addr {
 	return c.RemoteHashname()
+}
+
+type readBufferSlice []*readBufferEntry
+
+func (s readBufferSlice) Len() int           { return len(s) }
+func (s readBufferSlice) Less(i, j int) bool { return s[i].seq < s[j].seq }
+func (s readBufferSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+func (s readBufferSlice) IndexOf(seq uint32) int {
+	l := len(s)
+	idx := sort.Search(l, func(i int) bool { return s[i].seq >= seq })
+	if idx == l {
+		return -1
+	}
+	return idx
 }
