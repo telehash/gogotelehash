@@ -1,7 +1,13 @@
 box: wercker-labs/docker
+
 build:
   steps:
     - script:
         name: docker version
         code: |
           docker -v
+
+    - script:
+        name: docker pull ubuntu
+        code: |
+          docker pull ubuntu
