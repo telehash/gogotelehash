@@ -8,6 +8,6 @@ build:
           docker -v
 
     - script:
-        name: docker pull ubuntu
+        name: docker build
         code: |
-          docker pull ubuntu
+          docker build .
