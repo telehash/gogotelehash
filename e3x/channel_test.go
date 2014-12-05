@@ -2,6 +2,8 @@ package e3x
 
 import (
 	"io"
+	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -29,12 +31,19 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 		e   *Endpoint
 	)
 
+	tr := mux.Config{
+		inproc.Config{},
+	}
+
+	if os.Getenv("UDP_TRANSPORT") != "false" {
+		tr = append(tr,
+			udp.Config{Network: "udp4"})
+		tr = append(tr,
+			udp.Config{Network: "udp6"})
+	}
+
 	e, err = Open(
-		Transport(mux.Config{
-			udp.Config{Network: "udp4"},
-			udp.Config{Network: "udp6"},
-			inproc.Config{},
-		}),
+		Transport(tr),
 		Log(nil))
 	if err != nil {
 		t.Fatal(err)
@@ -131,7 +140,7 @@ func TestBasicRealiable(t *testing.T) {
 		hdr = pkt.Header()
 		hdr.C, hdr.HasC = 0, true
 		hdr.Ack, hdr.HasAck = 1, true
-		hdr.Miss, hdr.HasMiss = []uint32{1}, true
+		hdr.Miss, hdr.HasMiss = []uint32{1, 99}, true
 		x.On("deliverPacket", pkt).Return(nil).Once()
 
 		pkt = &lob.Packet{}
@@ -352,7 +361,8 @@ func TestFloodReliable(t *testing.T) {
 	})
 }
 
-func BenchmarkReadWrite(b *testing.B) {
+func BenchmarkReadWriteReliable(b *testing.B) {
+	defer dumpExpVar(b)
 	logs.ResetLogger()
 
 	withTwoEndpoints(b, func(A, B *Endpoint) {
@@ -422,7 +432,82 @@ func BenchmarkReadWrite(b *testing.B) {
 	})
 }
 
+func BenchmarkReadWriteUnreliable(b *testing.B) {
+	defer dumpExpVar(b)
+	logs.ResetLogger()
+
+	withTwoEndpoints(b, func(A, B *Endpoint) {
+		A.setOptions(DisableLog())
+		B.setOptions(DisableLog())
+
+		var (
+			c     *Channel
+			ident *Identity
+			pkt   *lob.Packet
+			err   error
+		)
+
+		b.ResetTimer()
+
+		go func() {
+			c, err := A.Listen("flood", false).AcceptChannel()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			defer c.Close()
+
+			pkt, err = c.ReadPacket()
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			for i := 0; i < b.N; i++ {
+				pkt := &lob.Packet{Body: []byte("Hello World!")}
+				err = c.WritePacket(pkt)
+				if err != nil {
+					b.Fatal(err)
+				}
+
+				// Give the other go routines some room to breath when GOMAXPROCS=1
+				runtime.Gosched()
+			}
+		}()
+
+		ident, err = A.LocalIdentity()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		c, err = B.Open(ident, "flood", false)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		defer c.Close()
+
+		err = c.WritePacket(&lob.Packet{})
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		for {
+			pkt, err = c.ReadPacket()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			pkt.Free()
+		}
+
+		b.StopTimer()
+	})
+}
+
 func BenchmarkChannels(b *testing.B) {
+	defer dumpExpVar(b)
 	logs.ResetLogger()
 
 	var (
@@ -492,6 +577,100 @@ func BenchmarkChannels(b *testing.B) {
 		b.ResetTimer()
 
 		l := A.Listen("ping", false)
+		defer l.Close()
+		go accept(l)
+
+		ident, err = A.LocalIdentity()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		x, err := B.Dial(ident)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		b.ResetTimer()
+
+		for i := 0; i < b.N; i++ {
+			client(x)
+		}
+
+		b.StopTimer()
+	})
+}
+
+func BenchmarkChannelsReliable(b *testing.B) {
+	defer dumpExpVar(b)
+	logs.ResetLogger()
+
+	var (
+		ping = []byte("ping")
+		pong = []byte("pong")
+	)
+
+	client := func(x *Exchange) {
+		c, err := x.Open("ping", true)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		defer c.Close()
+
+		pkt := &lob.Packet{Body: ping}
+		err = c.WritePacket(pkt)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		pkt, err = c.ReadPacket()
+		if err != nil {
+			b.Fatal(err)
+		}
+		pkt.Free()
+	}
+
+	server := func(c *Channel) {
+		defer c.Close()
+
+		pkt, err := c.ReadPacket()
+		if err != nil {
+			b.Fatal(err)
+		}
+		pkt.Free()
+
+		pkt = &lob.Packet{Body: pong}
+		err = c.WritePacket(pkt)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+
+	accept := func(l *Listener) {
+		for {
+			c, err := l.AcceptChannel()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				b.Fatal(err)
+			}
+			go server(c)
+		}
+	}
+
+	withTwoEndpoints(b, func(A, B *Endpoint) {
+		A.setOptions(DisableLog())
+		B.setOptions(DisableLog())
+
+		var (
+			ident *Identity
+			err   error
+		)
+
+		b.ResetTimer()
+
+		l := A.Listen("ping", true)
 		defer l.Close()
 		go accept(l)
 
