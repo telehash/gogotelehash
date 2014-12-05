@@ -36,15 +36,13 @@ func ObjectsAreEqual(expected, actual interface{}) bool {
 		return true
 	}
 
-	expectedValue := reflect.ValueOf(expected)
-	actualValue := reflect.ValueOf(actual)
-	if expectedValue == actualValue {
-		return true
-	}
-
-	// Attempt comparison after type conversion
-	if actualValue.Type().ConvertibleTo(expectedValue.Type()) && expectedValue == actualValue.Convert(expectedValue.Type()) {
-		return true
+	actualType := reflect.TypeOf(actual)
+	if reflect.TypeOf(actual).ConvertibleTo(reflect.TypeOf(expected)) {
+		expectedValue := reflect.ValueOf(expected)
+		// Attempt comparison after type conversion
+		if actual == expectedValue.Convert(actualType).Interface() {
+			return true
+		}
 	}
 
 	// Last ditch effort
@@ -456,7 +454,7 @@ func includeElement(list interface{}, element interface{}) (ok, found bool) {
 	}
 
 	for i := 0; i < listValue.Len(); i++ {
-		if listValue.Index(i).Interface() == element {
+		if ObjectsAreEqual(listValue.Index(i).Interface(), element) {
 			return true, true
 		}
 	}

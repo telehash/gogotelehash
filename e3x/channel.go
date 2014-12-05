@@ -263,7 +263,7 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	}
 
 	if c.reliable {
-		if c.oSeq%30 == 0 {
+		if c.oSeq%30 == 0 || hdr.End {
 			c.applyAckHeaders(pkt)
 		}
 		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
@@ -689,7 +689,7 @@ func (c *Channel) buildMissList() []uint32 {
 			seq++
 
 			n++
-			if n >= (cReadBufferSize - 1) {
+			if n >= cReadBufferSize-1 {
 				goto ADD_HIGHEST_ACCEPTABLE_SEQ
 			}
 		}
@@ -704,14 +704,14 @@ func (c *Channel) buildMissList() []uint32 {
 		seq++
 
 		n++
-		if n >= (cReadBufferSize - 1) {
+		if n >= cReadBufferSize-1 {
 			goto ADD_HIGHEST_ACCEPTABLE_SEQ
 		}
 	}
 
 ADD_HIGHEST_ACCEPTABLE_SEQ:
 	if n > 0 {
-		miss = append(miss, (c.iSeq+cReadBufferSize)-last)
+		miss = append(miss, c.iSeq+cReadBufferSize-last)
 	}
 
 	return miss
