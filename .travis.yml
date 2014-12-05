@@ -7,4 +7,3 @@ go:
 env:
   - GOMAXPROCS=1
   - GOMAXPROCS=2
-  - GOMAXPROCS=4
