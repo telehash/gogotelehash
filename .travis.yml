@@ -8,7 +8,3 @@ env:
   - GOMAXPROCS=1
   - GOMAXPROCS=2
   - GOMAXPROCS=4
-
-matrix:
-  allow_failures:
-    - go: tip
