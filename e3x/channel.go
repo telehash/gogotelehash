@@ -41,7 +41,7 @@ func (err *BrokenChannelError) Error() string {
 const (
 	cReadBufferSize  = 100
 	cWriteBufferSize = 100
-	earlyBareAck     = 50
+	earlyAdHocAck    = 50
 	cBlankSeq        = uint32(0)
 	cInitialSeq      = uint32(1)
 )
@@ -263,7 +263,9 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	}
 
 	if c.reliable {
-		c.applyAckHeaders(pkt)
+		if c.oSeq%30 == 0 || hdr.End {
+			c.applyAckHeaders(pkt)
+		}
 		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
 		c.needsResend = false
 	}
@@ -271,6 +273,10 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	err := c.x.deliverPacket(pkt, path)
 	if err != nil {
 		return err
+	}
+	statChannelSndPkt.Add(1)
+	if pkt.Header().HasAck {
+		statChannelSndAckInline.Add(1)
 	}
 
 	if c.oSeq == cInitialSeq && c.serverside {
@@ -399,7 +405,7 @@ func (c *Channel) readPacket() {
 		c.unsetOpenDeadline()
 	}
 
-	c.maybeDeliverBareAck()
+	c.maybeDeliverAdHocAck()
 
 	if c.deliveredEnd && !c.blockClose() {
 		c.cndClose.Signal()
@@ -417,6 +423,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 	if c.broken {
 		c.mtx.Unlock()
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
@@ -436,6 +443,12 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	} else {
 		// determine what to drop from the write buffer
 		if hasAck {
+			if hasSeq {
+				statChannelRcvAckInline.Add(1)
+			} else {
+				statChannelRcvAckAdHoc.Add(1)
+			}
+
 			var (
 				oldAck  = c.oAckedSeq
 				changed bool
@@ -457,7 +470,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 			if changed {
 				c.cndWrite.Signal()
-				if c.deliveredEnd {
+				if c.deliveredEnd || c.receivedEnd {
 					c.cndClose.Signal()
 				}
 			}
@@ -471,6 +484,11 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if !hasSeq {
 		// drop: is not a valid packet
 		c.mtx.Unlock()
+
+		if !hasAck {
+			statChannelRcvPktDrop.Add(1)
+		}
+
 		return
 	}
 
@@ -482,18 +500,21 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if seq <= c.iSeq {
 		// drop: the reader already read a packet with this seq
 		c.mtx.Unlock()
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
 	if len(c.readBuffer) >= cReadBufferSize {
 		// drop: the read buffer is full
 		c.mtx.Unlock()
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
 	if c.readBuffer.IndexOf(seq) >= 0 {
 		// drop: a packet with this seq is already buffered
 		c.mtx.Unlock()
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
@@ -510,6 +531,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 	c.cndRead.Signal()
 	c.mtx.Unlock()
+	statChannelRcvPkt.Add(1)
 }
 
 func (c *Channel) Errorf(format string, args ...interface{}) error {
@@ -640,12 +662,10 @@ func (c *Channel) blockClose() bool {
 }
 
 func (c *Channel) buildMissList() []uint32 {
-	// iSeq last read packet
-	// iSeq+1 is the next packet to be read
-	// iSeenSeq is the highest seq sean.
-	// idx index of current packet in the read buffer
-	//
-	//
+	// c.iSeq last read packet
+	// c.iSeq+1 is the next packet to be read
+	// c.iSeenSeq is the highest seq sean.
+	// c.iSeq + cReadBufferSize must be the last seq in the miss list
 
 	var (
 		miss []uint32
@@ -662,31 +682,36 @@ func (c *Channel) buildMissList() []uint32 {
 
 		for seq < e.seq {
 			if miss == nil {
-				miss = make([]uint32, 0, 100)
+				miss = make([]uint32, 0, cReadBufferSize)
 			}
 			miss = append(miss, seq-last)
 			last = seq
 			seq++
 
 			n++
-			if n >= 100 {
-				return miss
+			if n >= cReadBufferSize-1 {
+				goto ADD_HIGHEST_ACCEPTABLE_SEQ
 			}
 		}
 	}
 
 	for seq <= c.iSeenSeq {
 		if miss == nil {
-			miss = make([]uint32, 0, 100)
+			miss = make([]uint32, 0, cReadBufferSize)
 		}
 		miss = append(miss, seq-last)
 		last = seq
 		seq++
 
 		n++
-		if n >= 100 {
-			return miss
+		if n >= cReadBufferSize-1 {
+			goto ADD_HIGHEST_ACCEPTABLE_SEQ
 		}
+	}
+
+ADD_HIGHEST_ACCEPTABLE_SEQ:
+	if n > 0 {
+		miss = append(miss, c.iSeq+cReadBufferSize-last)
 	}
 
 	return miss
@@ -722,24 +747,28 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 		}
 		e.lastResend = now
 
-		c.x.deliverPacket(e.pkt, e.dst)
+		err := c.x.deliverPacket(e.pkt, e.dst)
+		if err == nil {
+			statChannelSndPkt.Add(1)
+		}
 	}
 }
 
 func (c *Channel) resendLastPacket() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	var needsResend bool
 	needsResend, c.needsResend = c.needsResend, true
 	c.tResend.Reset(1 * time.Second)
 
 	if !needsResend {
+		c.mtx.Unlock()
 		return
 	}
 
 	e := c.writeBuffer[c.oSeq]
 	if e == nil {
+		c.mtx.Unlock()
 		return
 	}
 
@@ -752,10 +781,15 @@ func (c *Channel) resendLastPacket() {
 		hdr.Miss, hdr.HasMiss = omiss, true
 	}
 	e.lastResend = time.Now()
-	c.x.deliverPacket(e.pkt, e.dst)
+	c.mtx.Unlock()
+
+	err := c.x.deliverPacket(e.pkt, e.dst)
+	if err == nil {
+		statChannelSndPkt.Add(1)
+	}
 }
 
-func (c *Channel) maybeDeliverBareAck() {
+func (c *Channel) maybeDeliverAdHocAck() {
 	if !c.reliable {
 		return
 	}
@@ -764,7 +798,7 @@ func (c *Channel) maybeDeliverBareAck() {
 		return // nothing to ack
 	}
 
-	if c.iSeq-c.iAckedSeq >= earlyBareAck {
+	if c.iSeq-c.iAckedSeq >= earlyAdHocAck {
 		c.deliverAck()
 	}
 }
@@ -786,7 +820,10 @@ func (c *Channel) deliverAck() {
 	hdr := pkt.Header()
 	hdr.C, hdr.HasC = c.id, true
 	c.applyAckHeaders(pkt)
-	c.x.deliverPacket(pkt, nil)
+	err := c.x.deliverPacket(pkt, nil)
+	if err == nil {
+		statChannelSndAckAdHoc.Add(1)
+	}
 }
 
 func (c *Channel) applyAckHeaders(pkt *lob.Packet) {

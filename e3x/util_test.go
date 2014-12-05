@@ -187,3 +187,8 @@ func (m mockAddr) Associate(hn hashname.H) transports.Addr {
 func (m mockAddr) Hashname() hashname.H {
 	return m.hn
 }
+
+func dumpExpVar(tb testing.TB) {
+	tb.Logf("stat: %s", statsMap)
+	resetStats()
+}
