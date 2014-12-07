@@ -36,7 +36,7 @@ func main() {
 
 	}
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatal(err)
 	}

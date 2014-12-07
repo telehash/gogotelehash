@@ -16,7 +16,7 @@ func Test_resolveHTTP(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-	defer e.Stop()
+	defer e.Close()
 
 	s := httptest.NewServer(WellKnown(e))
 	defer s.Close()

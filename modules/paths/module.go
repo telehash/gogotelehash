@@ -21,7 +21,7 @@ type module struct {
 	mesh     mesh.Mesh
 }
 
-func Module() func(*e3x.Endpoint) error {
+func Module() e3x.EndpointOption {
 	return func(e *e3x.Endpoint) error {
 		return e3x.RegisterModule(moduleKey, &module{endpoint: e})(e)
 	}

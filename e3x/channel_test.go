@@ -50,7 +50,7 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 	}
 
 	defer func() {
-		err = e.Stop()
+		err = e.Close()
 
 		if err != nil {
 			t.Fatal(err)
@@ -61,6 +61,7 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 }
 
 func TestBasicUnrealiable(t *testing.T) {
+	t.Parallel()
 	logs.ResetLogger()
 
 	var (
@@ -117,6 +118,7 @@ func TestBasicUnrealiable(t *testing.T) {
 }
 
 func TestBasicRealiable(t *testing.T) {
+	t.Parallel()
 	logs.ResetLogger()
 
 	var (
@@ -198,6 +200,7 @@ func TestBasicRealiable(t *testing.T) {
 }
 
 func TestPingPong(t *testing.T) {
+	t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
@@ -246,6 +249,7 @@ func TestPingPong(t *testing.T) {
 }
 
 func TestPingPongReliable(t *testing.T) {
+	t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
@@ -320,7 +324,7 @@ func TestFloodReliable(t *testing.T) {
 				assert.NoError(err)
 				assert.NotNil(pkt)
 
-				for i := 0; i < 1000000; i++ {
+				for i := 0; i < 100000; i++ {
 					pkt := &lob.Packet{}
 					pkt.Header().SetInt("flood_id", i)
 					err = c.WritePacket(pkt)

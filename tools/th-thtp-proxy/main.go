@@ -76,7 +76,7 @@ func main() {
 
 	tag.Release()
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

@@ -58,7 +58,7 @@ func main() {
 		signal.Stop(sig)
 	}
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

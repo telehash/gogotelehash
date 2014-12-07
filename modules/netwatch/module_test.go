@@ -13,7 +13,7 @@ func TestModule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	defer e.Stop()
+	defer e.Close()
 
 	time.Sleep(5 * time.Second)
 }
