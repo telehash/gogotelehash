@@ -23,7 +23,7 @@ var (
 	_ e3x.Module          = (*module)(nil)
 )
 
-func Server(handler http.Handler) func(*e3x.Endpoint) error {
+func Server(handler http.Handler) e3x.EndpointOption {
 	return func(e *e3x.Endpoint) error {
 		return e3x.RegisterModule(moduleKey, &module{
 			endpoint: e,

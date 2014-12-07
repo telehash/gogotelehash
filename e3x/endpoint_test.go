@@ -14,6 +14,7 @@ import (
 )
 
 func TestSimpleEndpoint(t *testing.T) {
+	t.Parallel()
 	logs.ResetLogger()
 
 	if testing.Short() {
@@ -59,9 +60,9 @@ func TestSimpleEndpoint(t *testing.T) {
 
 	time.Sleep(2*time.Minute + 10*time.Second)
 
-	err = ea.Stop()
+	err = ea.Close()
 	assert.NoError(err)
 
-	err = eb.Stop()
+	err = eb.Close()
 	assert.NoError(err)
 }
