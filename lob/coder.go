@@ -241,7 +241,7 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 
 // IsZero returns true when the header is the zero value or equivalent.
 func (h *Header) IsZero() bool {
-	return !h.HasC && !h.HasEnd && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && (len(h.Extra) == 0)
+	return !h.HasC && !h.HasEnd && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && len(h.Extra) == 0
 }
 
 // Get the value for key k. found is false if k is not present.
