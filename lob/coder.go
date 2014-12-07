@@ -131,20 +131,20 @@ func (p *Packet) Free() {
 
 // Header represents a packet header.
 type Header struct {
-	C       uint32
-	Type    string
-	End     bool
-	Seq     uint32
-	Ack     uint32
-	Miss    []uint32
-	HasC    bool
-	HasType bool
-	HasEnd  bool
-	HasSeq  bool
-	HasAck  bool
-	HasMiss bool
+	C       uint32   `json:"c,omitempty"`
+	Type    string   `json:"type,omitempty"`
+	End     bool     `json:"end,omitempty"`
+	Seq     uint32   `json:"seq,omitempty"`
+	Ack     uint32   `json:"ack,omitempty"`
+	Miss    []uint32 `json:"miss,omitempty"`
+	HasC    bool     `json:"-"`
+	HasType bool     `json:"-"`
+	HasEnd  bool     `json:"-"`
+	HasSeq  bool     `json:"-"`
+	HasAck  bool     `json:"-"`
+	HasMiss bool     `json:"-"`
 
-	Extra map[string]interface{}
+	Extra map[string]interface{} `json:"extra,omitempty"`
 }
 
 func (h *Header) writeTo(buf *bytes.Buffer) error {

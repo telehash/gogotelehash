@@ -10,13 +10,12 @@ import (
 	"sort"
 	"text/tabwriter"
 
-	"github.com/docopt/docopt-go"
+	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/docopt/docopt-go"
 
 	"github.com/telehash/gogotelehash/e3x"
 )
 
 var usage = `Test tool for telehash
-
 
 Usage:
   th-test list

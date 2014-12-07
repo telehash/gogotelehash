@@ -132,27 +132,37 @@ func (e *Endpoint) traceStarted() {
 
 func (e *Endpoint) traceReceivedPacket(op opRead) {
 	if tracer.Enabled {
+		pkt := tracer.Info{
+			"msg": base64.StdEncoding.EncodeToString(op.msg),
+		}
+
+		if op.src != nil {
+			pkt["src"] = op.src.String()
+		}
+
 		tracer.Emit("endpoint.rcv.packet", tracer.Info{
 			"endpoint_id": e.TID,
 			"packet_id":   op.TID,
-			"packet": tracer.Info{
-				"msg": base64.StdEncoding.EncodeToString(op.msg),
-				"src": op.src.String(),
-			},
+			"packet":      pkt,
 		})
 	}
 }
 
 func (e *Endpoint) traceDroppedPacket(op opRead, reason string) {
 	if tracer.Enabled {
+		pkt := tracer.Info{
+			"msg": base64.StdEncoding.EncodeToString(op.msg),
+		}
+
+		if op.src != nil {
+			pkt["src"] = op.src.String()
+		}
+
 		tracer.Emit("endpoint.drop.packet", tracer.Info{
 			"endpoint_id": e.TID,
 			"packet_id":   op.TID,
 			"reason":      reason,
-			"packet": tracer.Info{
-				"msg": base64.StdEncoding.EncodeToString(op.msg),
-				"src": op.src.String(),
-			},
+			"packet":      pkt,
 		})
 	}
 }
