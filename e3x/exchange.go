@@ -349,8 +349,6 @@ func (x *Exchange) receivedPacket(op opRead) {
 				return // drop (no handler)
 			}
 
-			x.resetExpire()
-
 			c = newChannel(
 				x.remoteIdent.Hashname(),
 				typ,
@@ -360,6 +358,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 			)
 			c.id = cid
 			x.channels[cid] = c
+			x.resetExpire()
 
 			x.mtx.Unlock()
 
@@ -409,7 +408,7 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, addr transports.Addr) error {
 func (x *Exchange) expire(err error) {
 
 	x.mtx.Lock()
-	if x.state == ExchangeExpired || x.state == ExchangeExpired {
+	if x.state == ExchangeExpired || x.state == ExchangeBroken {
 		x.mtx.Unlock()
 		return
 	}
