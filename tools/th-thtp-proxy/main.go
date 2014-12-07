@@ -34,7 +34,6 @@ func main() {
 	}
 
 	e, err := e3x.Open(
-		e3x.Log(nil),
 		mesh.Module(nil),
 		paths.Module(),
 		netwatch.Module(),

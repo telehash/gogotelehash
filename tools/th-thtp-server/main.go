@@ -22,7 +22,6 @@ import (
 
 func main() {
 	e, err := e3x.Open(
-		e3x.Log(nil),
 		thtp.Server(http.DefaultServeMux),
 		mesh.Module(nil),
 		netwatch.Module(),
