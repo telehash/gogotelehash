@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -42,6 +43,7 @@ func (err *BrokenChannelError) Error() string {
 const (
 	cReadBufferSize  = 100
 	cWriteBufferSize = 100
+	earlyAdHocAck    = 50
 	cBlankSeq        = uint32(0)
 	cInitialSeq      = uint32(1)
 )
@@ -79,7 +81,7 @@ type Channel struct {
 	readDeadlineReached  bool
 	closeDeadlineReached bool
 
-	readBuffer  map[uint32]*readBufferEntry
+	readBuffer  readBufferSlice
 	writeBuffer map[uint32]*writeBufferEntry
 
 	tOpenDeadline  *time.Timer
@@ -87,7 +89,7 @@ type Channel struct {
 	tReadDeadline  *time.Timer
 	tWriteDeadline *time.Timer
 	tResend        *time.Timer
-	lastSentAck    time.Time
+	tAcker         *time.Timer
 }
 
 type exchangeI interface {
@@ -122,7 +124,7 @@ func newChannel(
 		typ:          typ,
 		reliable:     reliable,
 		serverside:   serverside,
-		readBuffer:   make(map[uint32]*readBufferEntry, cReadBufferSize),
+		readBuffer:   make([]*readBufferEntry, 0, cReadBufferSize),
 		writeBuffer:  make(map[uint32]*writeBufferEntry, cWriteBufferSize),
 		oSeq:         cBlankSeq,
 		iBufferedSeq: cBlankSeq,
@@ -145,6 +147,7 @@ func newChannel(
 
 	if reliable {
 		c.tResend = time.AfterFunc(1*time.Second, c.resendLastPacket)
+		c.tAcker = time.AfterFunc(10*time.Second, c.autoDeliverAck)
 	}
 
 	c.traceNew()
@@ -309,7 +312,7 @@ func (c *Channel) blockWrite() bool {
 		return true
 	}
 
-	if !c.serverside && c.iSeq == cBlankSeq && c.oSeq >= cInitialSeq {
+	if !c.serverside && (c.iSeq == cBlankSeq && c.oAckedSeq == cBlankSeq) && c.oSeq >= cInitialSeq {
 		// When a client channel sent a packet but did not yet read a response
 		// to the initial packet then subsequent writes must be deferred.
 		return true
@@ -351,22 +354,25 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	}
 
 	c.oSeq++
-	pkt.Header().SetUint32("c", c.id)
+	hdr := pkt.Header()
+	hdr.C, hdr.HasC = c.id, true
 	if c.reliable {
-		pkt.Header().SetUint32("seq", c.oSeq)
+		hdr.Seq, hdr.HasSeq = c.oSeq, true
 	}
 	if !c.serverside && c.oSeq == cInitialSeq {
-		pkt.Header().SetString("type", c.typ)
+		hdr.Type, hdr.HasType = c.typ, true
 	}
 
-	end, _ := pkt.Header().GetBool("end")
+	end := hdr.HasEnd && hdr.End
 	if end {
 		c.deliveredEnd = true
 		c.setCloseDeadline()
 	}
 
 	if c.reliable {
-		c.applyAckHeaders(pkt)
+		if c.oSeq%30 == 0 || hdr.End {
+			c.applyAckHeaders(pkt)
+		}
 		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
 		c.needsResend = false
 	}
@@ -374,6 +380,10 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	err := c.x.deliverPacket(pkt, path)
 	if err != nil {
 		return c.traceWriteError(pkt, path, err)
+	}
+	statChannelSndPkt.Add(1)
+	if pkt.Header().HasAck {
+		statChannelSndAckInline.Add(1)
 	}
 
 	if c.oSeq == cInitialSeq && c.serverside {
@@ -435,7 +445,7 @@ func (c *Channel) blockRead() bool {
 	}
 
 	rSeq := c.iSeq + 1
-	if c.readBuffer[rSeq] == nil {
+	if len(c.readBuffer) == 0 || c.readBuffer[0].seq != rSeq {
 		// Packet has not yet been received
 		// defer the read
 		return true
@@ -463,20 +473,19 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		return nil, io.EOF
 	}
 
-	rSeq := c.iSeq + 1
-	e := c.readBuffer[rSeq]
+	e := c.readBuffer[0]
 
 	{ // clean headers
 		h := e.pkt.Header()
-		delete(h, "c")
-		delete(h, "type")
-		delete(h, "seq")
-		delete(h, "ack")
-		delete(h, "miss")
-		delete(h, "end")
+		h.HasAck = false
+		h.HasC = false
+		h.HasMiss = false
+		h.HasSeq = false
+		h.HasType = false
+		h.HasEnd = false
 	}
 
-	if len(e.pkt.Body) == 0 && len(e.pkt.Header()) == 0 && e.end {
+	if len(e.pkt.Body) == 0 && e.pkt.Header().IsZero() && e.end {
 		// read empty `end` packet
 		c.readPacket()
 		return nil, io.EOF
@@ -487,10 +496,13 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 
 func (c *Channel) readPacket() {
 	rSeq := c.iSeq + 1
-	e := c.readBuffer[rSeq]
+	e := c.readBuffer[0]
 
 	c.iSeq = rSeq
-	delete(c.readBuffer, rSeq)
+
+	// remove entry
+	copy(c.readBuffer, c.readBuffer[1:])
+	c.readBuffer = c.readBuffer[:len(c.readBuffer)-1]
 
 	if e.end {
 		c.deliverAck()
@@ -501,7 +513,7 @@ func (c *Channel) readPacket() {
 		c.unsetOpenDeadline()
 	}
 
-	c.maybeDeliverAck()
+	c.maybeDeliverAdHocAck()
 
 	if c.deliveredEnd && !c.blockClose() {
 		c.cndClose.Signal()
@@ -527,14 +539,16 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if c.broken {
 		c.mtx.Unlock()
 		c.traceDroppedPacket(pkt, errBrokenChannel)
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
 	var (
-		seq, hasSeq   = pkt.Header().GetUint32("seq")
-		ack, hasAck   = pkt.Header().GetUint32("ack")
-		miss, hasMiss = pkt.Header().GetUint32Slice("miss")
-		end, hasEnd   = pkt.Header().GetBool("end")
+		hdr           = pkt.Header()
+		seq, hasSeq   = hdr.Seq, hdr.HasSeq
+		ack, hasAck   = hdr.Ack, hdr.HasAck
+		miss, hasMiss = hdr.Miss, hdr.HasMiss
+		end, hasEnd   = hdr.End, hdr.HasEnd
 	)
 
 	if !c.reliable {
@@ -545,6 +559,12 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	} else {
 		// determine what to drop from the write buffer
 		if hasAck {
+			if hasSeq {
+				statChannelRcvAckInline.Add(1)
+			} else {
+				statChannelRcvAckAdHoc.Add(1)
+			}
+
 			var (
 				oldAck  = c.oAckedSeq
 				changed bool
@@ -566,7 +586,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 
 			if changed {
 				c.cndWrite.Signal()
-				if c.deliveredEnd {
+				if c.deliveredEnd || c.receivedEnd {
 					c.cndClose.Signal()
 				}
 			}
@@ -581,6 +601,11 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		// drop: is not a valid packet
 		c.mtx.Unlock()
 		c.traceDroppedPacket(pkt, errMissingSeq)
+
+		if !hasAck {
+			statChannelRcvPktDrop.Add(1)
+		}
+
 		return
 	}
 
@@ -593,13 +618,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		// drop: the reader already read a packet with this seq
 		c.mtx.Unlock()
 		c.traceDroppedPacket(pkt, errDuplicatePacket)
-		return
-	}
-
-	if _, found := c.readBuffer[seq]; found {
-		// drop: a packet with this seq is already buffered
-		c.mtx.Unlock()
-		c.traceDroppedPacket(pkt, errDuplicatePacket)
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
@@ -607,6 +626,15 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		// drop: the read buffer is full
 		c.mtx.Unlock()
 		c.traceDroppedPacket(pkt, errFullBuffer)
+		statChannelRcvPktDrop.Add(1)
+		return
+	}
+
+	if c.readBuffer.IndexOf(seq) >= 0 {
+		// drop: a packet with this seq is already buffered
+		c.mtx.Unlock()
+		c.traceDroppedPacket(pkt, errDuplicatePacket)
+		statChannelRcvPktDrop.Add(1)
 		return
 	}
 
@@ -618,12 +646,14 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 		c.deliverAck()
 	}
 
-	c.readBuffer[seq] = &readBufferEntry{pkt, seq, end}
+	c.readBuffer = append(c.readBuffer, &readBufferEntry{pkt, seq, end})
+	sort.Sort(c.readBuffer)
 
 	c.cndRead.Signal()
 	c.mtx.Unlock()
 
 	c.traceReceivedPacket(pkt)
+	statChannelRcvPkt.Add(1)
 }
 
 func (c *Channel) Errorf(format string, args ...interface{}) error {
@@ -676,11 +706,11 @@ func (c *Channel) Close() error {
 	}
 
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
 
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
-		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -693,9 +723,9 @@ func (c *Channel) Close() error {
 
 		if !c.deliveredEnd {
 			pkt := &lob.Packet{}
-			pkt.Header().SetBool("end", true)
+			hdr := pkt.Header()
+			hdr.End, hdr.HasEnd = true, true
 			if err := c.write(pkt, nil); err != nil {
-				c.mtx.Unlock()
 				return err
 			}
 		}
@@ -724,20 +754,16 @@ func (c *Channel) Close() error {
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
-		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
+	c.unsetTimers()
 
 	c.cndWrite.Broadcast()
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 	return nil
 }
 
@@ -758,24 +784,56 @@ func (c *Channel) blockClose() bool {
 }
 
 func (c *Channel) buildMissList() []uint32 {
+	// c.iSeq last read packet
+	// c.iSeq+1 is the next packet to be read
+	// c.iSeenSeq is the highest seq sean.
+	// c.iSeq + cReadBufferSize must be the last seq in the miss list
+
 	var (
 		miss []uint32
 		last = c.iSeq
+		n    int
+		seq  uint32 = c.iSeq + 1
 	)
 
-	for i := c.iSeq + 1; i <= c.iSeenSeq; i++ {
-		if _, p := c.readBuffer[i]; !p {
-			if miss == nil {
-				miss = make([]uint32, 0, 100)
-			}
+	for _, e := range c.readBuffer {
+		if seq == e.seq {
+			seq++
+			continue
+		}
 
-			miss = append(miss, i-last)
-			last = i
+		for seq < e.seq {
+			if miss == nil {
+				miss = make([]uint32, 0, cReadBufferSize)
+			}
+			miss = append(miss, seq-last)
+			last = seq
+			seq++
+
+			n++
+			if n >= cReadBufferSize-1 {
+				goto ADD_HIGHEST_ACCEPTABLE_SEQ
+			}
 		}
 	}
 
-	if len(miss) > 100 {
-		miss = miss[:100]
+	for seq <= c.iSeenSeq {
+		if miss == nil {
+			miss = make([]uint32, 0, cReadBufferSize)
+		}
+		miss = append(miss, seq-last)
+		last = seq
+		seq++
+
+		n++
+		if n >= cReadBufferSize-1 {
+			goto ADD_HIGHEST_ACCEPTABLE_SEQ
+		}
+	}
+
+ADD_HIGHEST_ACCEPTABLE_SEQ:
+	if n > 0 {
+		miss = append(miss, c.iSeq+cReadBufferSize-last)
 	}
 
 	return miss
@@ -802,51 +860,58 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 			continue
 		}
 
+		hdr := e.pkt.Header()
 		if c.iSeq >= cInitialSeq {
-			e.pkt.Header().SetUint32("ack", c.iSeq)
+			hdr.Ack, hdr.HasAck = c.iSeq, true
 		}
 		if len(omiss) > 0 {
-			e.pkt.Header().SetUint32Slice("miss", omiss)
+			hdr.Miss, hdr.HasMiss = omiss, true
 		}
 		e.lastResend = now
 
-		c.x.deliverPacket(e.pkt, e.dst)
+		err := c.x.deliverPacket(e.pkt, e.dst)
+		if err == nil {
+			statChannelSndPkt.Add(1)
+		}
 	}
 }
 
 func (c *Channel) resendLastPacket() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	var needsResend bool
 	needsResend, c.needsResend = c.needsResend, true
 	c.tResend.Reset(1 * time.Second)
 
 	if !needsResend {
+		c.mtx.Unlock()
 		return
 	}
 
 	e := c.writeBuffer[c.oSeq]
 	if e == nil {
+		c.mtx.Unlock()
 		return
 	}
 
 	omiss := c.buildMissList()
+	hdr := e.pkt.Header()
 	if c.iSeq >= cInitialSeq {
-		e.pkt.Header().SetUint32("ack", c.iSeq)
+		hdr.Ack, hdr.HasAck = c.iSeq, true
 	}
 	if len(omiss) > 0 {
-		e.pkt.Header().SetUint32Slice("miss", omiss)
+		hdr.Miss, hdr.HasMiss = omiss, true
 	}
 	e.lastResend = time.Now()
-	c.x.deliverPacket(e.pkt, e.dst)
+	c.mtx.Unlock()
+
+	err := c.x.deliverPacket(e.pkt, e.dst)
+	if err == nil {
+		statChannelSndPkt.Add(1)
+	}
 }
 
-func (c *Channel) maybeDeliverAck() {
-	var (
-		shouldAck bool
-	)
-
+func (c *Channel) maybeDeliverAdHocAck() {
 	if !c.reliable {
 		return
 	}
@@ -855,17 +920,17 @@ func (c *Channel) maybeDeliverAck() {
 		return // nothing to ack
 	}
 
-	if c.iSeq-c.iAckedSeq >= 30 {
-		shouldAck = true
-	}
-
-	if time.Since(c.lastSentAck) > 10*time.Second {
-		shouldAck = true
-	}
-
-	if shouldAck {
+	if c.iSeq-c.iAckedSeq >= earlyAdHocAck {
 		c.deliverAck()
 	}
+}
+
+func (c *Channel) autoDeliverAck() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.deliverAck()
+	c.tAcker.Reset(10 * time.Second)
 }
 
 func (c *Channel) deliverAck() {
@@ -874,9 +939,13 @@ func (c *Channel) deliverAck() {
 	}
 
 	pkt := &lob.Packet{}
-	pkt.Header().SetUint32("c", c.id)
+	hdr := pkt.Header()
+	hdr.C, hdr.HasC = c.id, true
 	c.applyAckHeaders(pkt)
-	c.x.deliverPacket(pkt, nil)
+	err := c.x.deliverPacket(pkt, nil)
+	if err == nil {
+		statChannelSndAckAdHoc.Add(1)
+	}
 }
 
 func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
@@ -889,16 +958,15 @@ func (c *Channel) applyAckHeaders(pkt *lob.Packet) {
 		return
 	}
 
+	hdr := pkt.Header()
 	if c.iSeq >= cInitialSeq {
-		pkt.Header().SetUint32("ack", c.iSeq)
+		hdr.Ack, hdr.HasAck = c.iSeq, true
 	}
 	if l := c.buildMissList(); len(l) > 0 {
-		pkt.Header().SetUint32Slice("miss", c.buildMissList())
+		hdr.Miss, hdr.HasMiss = l, true
 	}
 
 	c.iAckedSeq = c.iSeq
-	c.lastSentAck = time.Now()
-
 }
 
 func (c *Channel) setCloseDeadline() {
@@ -914,15 +982,10 @@ func (c *Channel) setCloseDeadline() {
 	}
 }
 
-func (c *Channel) unsetCloseDeadline() {
-	if c.tCloseDeadline != nil {
-		c.tCloseDeadline.Stop()
-		c.tCloseDeadline = nil
-	}
-}
-
 func (c *Channel) onCloseDeadlineReached() {
 	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
 	c.broken = true
 	c.closeDeadlineReached = true
 	c.unsetOpenDeadline()
@@ -935,7 +998,6 @@ func (c *Channel) onCloseDeadlineReached() {
 	c.cndClose.Broadcast()
 
 	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
 }
 
 func (c *Channel) setOpenDeadline() {
@@ -951,51 +1013,81 @@ func (c *Channel) setOpenDeadline() {
 	}
 }
 
-func (c *Channel) unsetOpenDeadline() {
-	if c.tOpenDeadline != nil {
-		c.tOpenDeadline.Stop()
-		c.tOpenDeadline = nil
+func (c *Channel) unsetTimers() {
+	c.unsetOpenDeadline()
+	c.unsetCloseDeadline()
+	c.unsetReadDeadline()
+	c.unsetWriteDeadline()
+	c.unsetResender()
+	c.unsetAcker()
+}
+
+func (c *Channel) unsetReadDeadline() {
+	if c.tReadDeadline != nil {
+		c.tReadDeadline.Stop()
 	}
 }
 
-func (c *Channel) onOpenDeadlineReached() {
-	c.mtx.Lock()
-	c.broken = true
-	c.openDeadlineReached = true
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
-
-	// broadcast
-	c.cndWrite.Broadcast()
-	c.cndRead.Broadcast()
-	c.cndClose.Broadcast()
-
-	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
+func (c *Channel) unsetWriteDeadline() {
+	if c.tWriteDeadline != nil {
+		c.tWriteDeadline.Stop()
+	}
 }
 
-func (c *Channel) forget() {
-	c.mtx.Lock()
-	c.broken = true
-	c.openDeadlineReached = false
-	c.unsetOpenDeadline()
-	c.unsetCloseDeadline()
-	c.unsetResender()
+func (c *Channel) unsetOpenDeadline() {
+	if c.tOpenDeadline != nil {
+		c.tOpenDeadline.Stop()
+	}
+}
 
-	// broadcast
-	c.cndWrite.Broadcast()
-	c.cndRead.Broadcast()
-	c.cndClose.Broadcast()
-
-	c.x.unregisterChannel(c.id)
-	c.mtx.Unlock()
+func (c *Channel) unsetCloseDeadline() {
+	if c.tCloseDeadline != nil {
+		c.tCloseDeadline.Stop()
+	}
 }
 
 func (c *Channel) unsetResender() {
 	if c.tResend != nil {
 		c.tResend.Stop()
 	}
+}
+
+func (c *Channel) unsetAcker() {
+	if c.tAcker != nil {
+		c.tAcker.Stop()
+	}
+}
+
+func (c *Channel) onOpenDeadlineReached() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.broken = true
+	c.openDeadlineReached = true
+	c.unsetTimers()
+
+	// broadcast
+	c.cndWrite.Broadcast()
+	c.cndRead.Broadcast()
+	c.cndClose.Broadcast()
+
+	c.x.unregisterChannel(c.id)
+}
+
+func (c *Channel) forget() {
+	c.mtx.Lock()
+	defer c.mtx.Unlock()
+
+	c.broken = true
+	c.openDeadlineReached = false
+	c.unsetTimers()
+
+	// broadcast
+	c.cndWrite.Broadcast()
+	c.cndRead.Broadcast()
+	c.cndClose.Broadcast()
+
+	c.x.unregisterChannel(c.id)
 }
 
 // Read implements the net.Conn Read method.
@@ -1139,4 +1231,19 @@ func (c *Channel) LocalAddr() net.Addr {
 // RemoteAddr returns the remote network address.
 func (c *Channel) RemoteAddr() net.Addr {
 	return c.RemoteHashname()
+}
+
+type readBufferSlice []*readBufferEntry
+
+func (s readBufferSlice) Len() int           { return len(s) }
+func (s readBufferSlice) Less(i, j int) bool { return s[i].seq < s[j].seq }
+func (s readBufferSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+
+func (s readBufferSlice) IndexOf(seq uint32) int {
+	l := len(s)
+	idx := sort.Search(l, func(i int) bool { return s[i].seq >= seq })
+	if idx == l {
+		return -1
+	}
+	return idx
 }

@@ -6,6 +6,7 @@ package mux
 
 import (
 	"io"
+	"sync"
 
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
@@ -29,6 +30,7 @@ type Config []transports.Config
 type muxer struct {
 	transports []transports.Transport
 	cRead      chan readOp
+	wg         sync.WaitGroup
 }
 
 type readOp struct {
@@ -52,6 +54,7 @@ func (c Config) Open() (transports.Transport, error) {
 	}
 
 	for _, t := range m.transports {
+		m.wg.Add(1)
 		go m.runReader(t)
 	}
 
@@ -69,7 +72,11 @@ func (m *muxer) LocalAddresses() []transports.Addr {
 }
 
 func (m *muxer) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
-	op := <-m.cRead
+	op, ok := <-m.cRead
+
+	if !ok {
+		return 0, nil, transports.ErrClosed
+	}
 
 	if len(p) < len(op.msg) {
 		return 0, nil, io.ErrShortBuffer
@@ -105,6 +112,8 @@ func (m *muxer) WriteMessage(p []byte, dst transports.Addr) error {
 func (m *muxer) Close() error {
 	var lastErr error
 
+	close(m.cRead)
+
 	for _, t := range m.transports {
 		err := t.Close()
 		if err != nil {
@@ -112,10 +121,13 @@ func (m *muxer) Close() error {
 		}
 	}
 
+	m.wg.Wait()
+
 	return lastErr
 }
 
 func (m *muxer) runReader(t transports.Transport) {
+	defer m.wg.Done()
 	for {
 		buf := bufpool.GetBuffer()
 
@@ -124,6 +136,9 @@ func (m *muxer) runReader(t transports.Transport) {
 			return
 		}
 
-		m.cRead <- readOp{buf[:n], src, err}
+		func() {
+			defer func() { recover() }()
+			m.cRead <- readOp{buf[:n], src, err}
+		}()
 	}
 }

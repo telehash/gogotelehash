@@ -30,7 +30,7 @@ type module struct {
 	addresses []transports.Addr
 }
 
-func Module() func(*e3x.Endpoint) error {
+func Module() e3x.EndpointOption {
 	return func(e *e3x.Endpoint) error {
 		return e3x.RegisterModule(moduleKey, &module{endpoint: e})(e)
 	}

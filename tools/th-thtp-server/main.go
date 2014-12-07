@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "net/http/pprof"
+
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/modules/netwatch"
@@ -20,7 +22,6 @@ import (
 
 func main() {
 	e, err := e3x.Open(
-		e3x.Log(nil),
 		thtp.Server(http.DefaultServeMux),
 		mesh.Module(nil),
 		netwatch.Module(),
@@ -56,7 +57,7 @@ func main() {
 		signal.Stop(sig)
 	}
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

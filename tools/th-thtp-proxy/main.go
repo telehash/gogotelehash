@@ -34,7 +34,6 @@ func main() {
 	}
 
 	e, err := e3x.Open(
-		e3x.Log(nil),
 		mesh.Module(nil),
 		paths.Module(),
 		netwatch.Module(),
@@ -76,7 +75,7 @@ func main() {
 
 	tag.Release()
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

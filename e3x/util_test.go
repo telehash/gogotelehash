@@ -33,6 +33,7 @@ func (m *MockExchange) getTID() tracer.ID {
 }
 
 func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst transports.Addr) error {
+	pkt.TID = 0
 	args := m.Called(pkt)
 	return args.Error(0)
 }
@@ -191,4 +192,9 @@ func (m mockAddr) Associate(hn hashname.H) transports.Addr {
 
 func (m mockAddr) Hashname() hashname.H {
 	return m.hn
+}
+
+func dumpExpVar(tb testing.TB) {
+	tb.Logf("stat: %s", statsMap)
+	resetStats()
 }

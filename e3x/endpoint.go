@@ -53,7 +53,9 @@ type opRead struct {
 	TID tracer.ID
 }
 
-func Open(options ...func(e *Endpoint) error) (*Endpoint, error) {
+type EndpointOption func(e *Endpoint) error
+
+func Open(options ...EndpointOption) (*Endpoint, error) {
 	e := &Endpoint{
 		TID:       tracer.NewID(),
 		listeners: make(map[string]*Listener),
@@ -89,7 +91,7 @@ func Open(options ...func(e *Endpoint) error) (*Endpoint, error) {
 
 	err = e.start()
 	if err != nil {
-		e.stop()
+		e.close()
 		return nil, e.traceError(err)
 	}
 
@@ -155,7 +157,7 @@ func (e *Endpoint) traceDroppedPacket(op opRead, reason string) {
 	}
 }
 
-func (e *Endpoint) setOptions(options ...func(*Endpoint) error) error {
+func (e *Endpoint) setOptions(options ...EndpointOption) error {
 	for _, option := range options {
 		if err := option(e); err != nil {
 			return err
@@ -164,7 +166,7 @@ func (e *Endpoint) setOptions(options ...func(*Endpoint) error) error {
 	return nil
 }
 
-func RegisterModule(key interface{}, mod Module) func(*Endpoint) error {
+func RegisterModule(key interface{}, mod Module) EndpointOption {
 	return func(e *Endpoint) error {
 		e.mtx.Lock()
 		defer e.mtx.Unlock()
@@ -182,7 +184,7 @@ func RegisterModule(key interface{}, mod Module) func(*Endpoint) error {
 	}
 }
 
-func Keys(keys cipherset.Keys) func(*Endpoint) error {
+func Keys(keys cipherset.Keys) EndpointOption {
 	return func(e *Endpoint) error {
 		if e.keys != nil && len(e.keys) > 0 {
 			return nil
@@ -217,7 +219,7 @@ func defaultRandomKeys(e *Endpoint) error {
 	return Keys(keys)(e)
 }
 
-func Log(w io.Writer) func(*Endpoint) error {
+func Log(w io.Writer) EndpointOption {
 	if w == nil {
 		w = os.Stderr
 	}
@@ -231,14 +233,14 @@ func Log(w io.Writer) func(*Endpoint) error {
 	}
 }
 
-func DisableLog() func(*Endpoint) error {
+func DisableLog() EndpointOption {
 	return func(e *Endpoint) error {
 		e.log = nil
 		return nil
 	}
 }
 
-func Transport(config transports.Config) func(*Endpoint) error {
+func Transport(config transports.Config) EndpointOption {
 	return func(e *Endpoint) error {
 		if e.transportConfig != nil {
 			return fmt.Errorf("endpoint already has a transport")
@@ -332,14 +334,14 @@ func (e *Endpoint) start() error {
 	return nil
 }
 
-func (e *Endpoint) Stop() error {
+func (e *Endpoint) Close() error {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
-	return e.stop()
+	return e.close()
 }
 
-func (e *Endpoint) stop() error {
+func (e *Endpoint) close() error {
 	e.mtx.Unlock()
 	for _, mod := range e.modules {
 		err := mod.Stop()
@@ -465,7 +467,15 @@ func (e *Endpoint) receivedHandshake(op opRead) {
 
 	x = e.hashnames[hn]
 	if x != nil {
+		oldToken := x.LocalToken()
 		x.received(op)
+		newToken := x.LocalToken()
+
+		if oldToken != newToken {
+			delete(e.tokens, oldToken)
+			e.tokens[newToken] = x
+		}
+
 		return
 	}
 

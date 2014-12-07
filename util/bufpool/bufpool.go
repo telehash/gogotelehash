@@ -6,15 +6,12 @@ import (
 
 const bufferSize = 1500
 
-var zeroBuffer = make([]byte, bufferSize)
-
 var bufferPool = sync.Pool{
 	New: func() interface{} { return make([]byte, bufferSize) },
 }
 
 func GetBuffer() []byte {
-	buf := bufferPool.Get().([]byte)
-	return buf[:bufferSize]
+	return bufferPool.Get().([]byte)
 }
 
 func PutBuffer(buf []byte) {
@@ -23,7 +20,5 @@ func PutBuffer(buf []byte) {
 	}
 
 	buf = buf[:bufferSize]
-	copy(buf, zeroBuffer)
-
 	bufferPool.Put(buf)
 }

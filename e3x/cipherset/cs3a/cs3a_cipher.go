@@ -193,7 +193,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		delete(inner.Header(), "at")
+		delete(inner.Header().Extra, "at")
 
 		parts, err := cipherset.PartsFromHeader(inner.Header())
 		if err != nil {
@@ -321,7 +321,8 @@ func (s *state) update() {
 	}
 
 	// generate line keys
-	if s.localToken != nil && s.remoteToken != nil {
+	if s.localToken != nil && s.remoteToken != nil &&
+		(s.lineEncryptionKey == nil || s.lineDecryptionKey == nil) {
 		var sharedKey [32]byte
 		box.Precompute(&sharedKey, s.remoteLineKey.pub, s.localLineKey.prv)
 
@@ -473,16 +474,21 @@ func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
 		return false
 	}
 
-	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
-		return false
-	}
-
 	if s.remoteKey != nil && *s.remoteKey.pub != *hs.key.pub {
 		return false
 	}
 
+	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
+		s.remoteLineKey = nil
+		s.remoteToken = nil
+		s.lineDecryptionKey = nil
+		s.lineEncryptionKey = nil
+	}
+
 	s.setRemoteLineKey(hs.lineKey)
-	s.SetRemoteKey(hs.key)
+	if s.remoteKey == nil {
+		s.SetRemoteKey(hs.key)
+	}
 	return true
 }
 
@@ -546,13 +552,13 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || len(pkt.Header()) != 0 || len(pkt.Body) < 16+24 {
+	if len(pkt.Head) != 0 || !pkt.Header().IsZero() || len(pkt.Body) < 16+24 {
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	var (
 		nonce [24]byte
-		inner = make([]byte, len(pkt.Body))
+		inner = bufpool.GetBuffer()
 		ok    bool
 	)
 

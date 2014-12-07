@@ -10,7 +10,6 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 var (
@@ -82,7 +81,7 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 
 func (rt *RoundTripper) writeRequest(req *http.Request, c *e3x.Channel) error {
 	var (
-		w   = bufio.NewWriterSize(&clientPacketWriter{c: c}, 1200)
+		w   = bufio.NewWriterSize(c, 1200)
 		err error
 	)
 
@@ -200,6 +199,8 @@ func (rt *RoundTripper) readResponse(c *e3x.Channel) (*http.Response, error) {
 				resp.StatusCode = i
 				resp.Status = http.StatusText(i)
 			}
+
+			delete(header, ":status")
 		}
 		if resp.StatusCode == 0 {
 			return nil, &http.ProtocolError{"missing `status` header"}
@@ -226,34 +227,6 @@ func (rt *RoundTripper) readResponse(c *e3x.Channel) (*http.Response, error) {
 	return resp, nil
 }
 
-type clientPacketWriter struct {
-	c              *e3x.Channel
-	read_handshake bool
-}
-
-func (w *clientPacketWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	if n > 1200 {
-		n = 1200
-		p = p[:1200]
-	}
-
-	err := w.c.WritePacket(&lob.Packet{Body: p})
-	if err != nil {
-		return 0, err
-	}
-
-	if !w.read_handshake {
-		_, err = w.c.ReadPacket()
-		if err != nil {
-			return 0, err
-		}
-		w.read_handshake = true
-	}
-
-	return n, nil
-}
-
 type clientPacketReadCloser struct {
 	io.Reader
 	io.Closer
@@ -261,25 +234,7 @@ type clientPacketReadCloser struct {
 
 func newClientPacketReadCloser(c *e3x.Channel) io.ReadCloser {
 	return &clientPacketReadCloser{
-		Reader: bufio.NewReaderSize(&clientPacketReader{c}, 64*1024),
+		Reader: bufio.NewReaderSize(c, 64*1024),
 		Closer: c,
 	}
-}
-
-type clientPacketReader struct {
-	c *e3x.Channel
-}
-
-func (r *clientPacketReader) Read(p []byte) (int, error) {
-	pkt, err := r.c.ReadPacket()
-	if err != nil {
-		return 0, err
-	}
-
-	if len(p) < len(pkt.Body) {
-		return 0, io.ErrShortBuffer
-	}
-
-	copy(p, pkt.Body)
-	return len(pkt.Body), nil
 }

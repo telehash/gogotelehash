@@ -51,7 +51,7 @@ func ChannelUnreliable_SUT(ctx *Context) error {
 		return err
 	}
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func ChannelUnreliable_Driver(ctx *Context) error {
 	}
 
 	ctx.Done()
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		return err
 	}

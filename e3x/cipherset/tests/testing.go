@@ -120,7 +120,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	if assert.NotNil(hb) {
 		assert.Equal(ka.Public(), hb.PublicKey().Public())
 		assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
-		assert.Equal(1, hb.At())
+		assert.Equal(uint32(1), hb.At())
 	}
 
 	sb, err = c.NewState(kb)
@@ -152,7 +152,7 @@ func (s *cipherTestSuite) TestHandshake() {
 	assert.NotNil(ha)
 	assert.Equal(kb.Public(), ha.PublicKey().Public())
 	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, ha.Parts())
-	assert.Equal(1, ha.At())
+	assert.Equal(uint32(1), ha.At())
 
 	ok = sa.ApplyHandshake(ha)
 	assert.True(ok)
@@ -213,14 +213,14 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Empty(pkt.Header())
+	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sb.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Equal(lob.Header{"foo": 0xbeaf}, pkt.Header())
+	assert.Equal(&lob.Header{Extra: map[string]interface{}{"foo": 0xbeaf}}, pkt.Header())
 	assert.Equal([]byte("Hello world!"), pkt.Body)
 
 	pkt = &lob.Packet{Body: []byte("Bye world!")}
@@ -229,13 +229,13 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Empty(pkt.Header())
+	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sa.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
 	assert.Nil(pkt.Head)
-	assert.Equal(lob.Header{"bar": 0xdead}, pkt.Header())
+	assert.Equal(&lob.Header{Extra: map[string]interface{}{"bar": 0xdead}}, pkt.Header())
 	assert.Equal([]byte("Bye world!"), pkt.Body)
 }

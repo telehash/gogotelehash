@@ -67,13 +67,13 @@ func KeysFromJSON(i interface{}) (Keys, error) {
 	return y, nil
 }
 
-func PartsFromHeader(h lob.Header) (Parts, error) {
-	if h == nil || len(h) == 0 {
+func PartsFromHeader(h *lob.Header) (Parts, error) {
+	if h.IsZero() {
 		return nil, nil
 	}
 
-	y := make(Parts, len(h))
-	for k, v := range h {
+	y := make(Parts, len(h.Extra))
+	for k, v := range h.Extra {
 		if len(k) != 2 {
 			return nil, ErrInvalidParts
 		}
@@ -246,13 +246,13 @@ func (p *Parts) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (p Parts) ApplyToHeader(h lob.Header) {
+func (p Parts) ApplyToHeader(h *lob.Header) {
 	for k, v := range p {
 		h.Set(hex.EncodeToString([]byte{k}), v)
 	}
 }
 
-func (k Keys) ApplyToHeader(h lob.Header) {
+func (k Keys) ApplyToHeader(h *lob.Header) {
 	for csid, v := range k {
 		h.Set(hex.EncodeToString([]byte{csid}), v.String())
 	}

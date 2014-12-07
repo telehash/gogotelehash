@@ -27,7 +27,7 @@ func NetLink_SUT(ctx *Context) error {
 
 	time.Sleep(5 * time.Minute)
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func NetLink_Driver(ctx *Context) error {
 	}
 
 	ctx.Done()
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		return err
 	}
