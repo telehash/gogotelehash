@@ -20,7 +20,7 @@ func ChannelReliable_SUT(ctx *Context) error {
 		return err
 	}
 
-	ctx.WriteIdenity(e)
+	ctx.WriteIdentity(e)
 	ctx.Ready()
 
 	l := e.Listen("test-channel", true)
@@ -68,7 +68,7 @@ func ChannelReliable_Driver(ctx *Context) error {
 	ctx.Ready()
 
 	var (
-		ident = ctx.ReadIdenity("sut")
+		ident = ctx.ReadIdentity("sut")
 		pkt   *lob.Packet
 		token string
 	)

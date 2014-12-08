@@ -13,6 +13,7 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/docopt/docopt-go"
 
 	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 var usage = `Test tool for telehash
@@ -141,7 +142,7 @@ type Context struct {
 	Out  io.Writer
 }
 
-func (c *Context) WriteIdenity(e *e3x.Endpoint) {
+func (c *Context) WriteIdentity(e *e3x.Endpoint) {
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
 			c.dir = "/shared"
@@ -169,7 +170,7 @@ func (c *Context) WriteIdenity(e *e3x.Endpoint) {
 	}
 }
 
-func (c *Context) ReadIdenity(role string) *e3x.Identity {
+func (c *Context) ReadIdentity(role string) *e3x.Identity {
 
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
@@ -196,36 +197,16 @@ func (c *Context) ReadIdenity(role string) *e3x.Identity {
 }
 
 func (c *Context) Ready() {
-	fmt.Fprintln(os.Stdout, `{"cmd":"ready"}`)
+	tracer.Emit("ready", tracer.Info{})
 }
 
 func (c *Context) Done() {
-	fmt.Fprintln(os.Stdout, `{"cmd":"done"}`)
-}
-
-type Command struct {
-	Cmd      string `json:"cmd"`
-	Process  string `json:"proc,omitempty"`
-	Line     string `json:"line,omitempty"`
-	ExitCode int    `json:"code,omitempty"`
-	ID       int    `json:"id,omitempty"`
-	Value    string `json:"value,omitempty"`
-}
-
-func (c *Context) WriteCommand(cmd *Command) error {
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return err
-	}
-
-	_, err = fmt.Println(string(data))
-	return err
+	tracer.Emit("done", tracer.Info{})
 }
 
 func (c *Context) Assert(id int, value string) {
-	err := c.WriteCommand(&Command{Cmd: "assert", ID: id, Value: value})
-	if err != nil {
-		fmt.Printf("error: %s\n", err)
-		os.Exit(1)
-	}
+	tracer.Emit("assert", tracer.Info{
+		"assrt_id": id,
+		"value":    value,
+	})
 }

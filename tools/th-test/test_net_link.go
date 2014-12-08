@@ -22,7 +22,7 @@ func NetLink_SUT(ctx *Context) error {
 		return err
 	}
 
-	ctx.WriteIdenity(e)
+	ctx.WriteIdentity(e)
 	ctx.Ready()
 
 	time.Sleep(5 * time.Minute)
@@ -45,7 +45,7 @@ func NetLink_Driver(ctx *Context) error {
 	}
 
 	{
-		var ident = ctx.ReadIdenity("sut")
+		var ident = ctx.ReadIdentity("sut")
 		ctx.Ready()
 
 		m := mesh.FromEndpoint(e)
