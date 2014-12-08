@@ -6,11 +6,11 @@ import (
 
 func init() {
 	RegisterTest("sanity").
-		SUT(Sanity_SUT).
+		Worker(Sanity_Worker).
 		Driver(Sanity_Driver)
 }
 
-func Sanity_SUT(ctx *Context) error {
+func Sanity_Worker(ctx *Context) error {
 	ctx.Ready()
 	time.Sleep(10 * time.Second)
 	return nil

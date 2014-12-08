@@ -10,11 +10,11 @@ import (
 
 func init() {
 	RegisterTest("net-link").
-		SUT(NetLink_SUT).
+		Worker(NetLink_Worker).
 		Driver(NetLink_Driver)
 }
 
-func NetLink_SUT(ctx *Context) error {
+func NetLink_Worker(ctx *Context) error {
 	e, err := e3x.Open(
 		e3x.Log(ctx.Out),
 		mesh.Module(nil))
@@ -45,7 +45,7 @@ func NetLink_Driver(ctx *Context) error {
 	}
 
 	{
-		var ident = ctx.ReadIdentity("sut")
+		var ident = ctx.ReadIdentity("worker")
 		ctx.Ready()
 
 		m := mesh.FromEndpoint(e)

@@ -48,7 +48,7 @@ func main() {
 
 type Test struct {
 	Name   string
-	sut    func(*Context) error
+	worker func(*Context) error
 	driver func(*Context) error
 }
 
@@ -64,14 +64,14 @@ func runList() {
 	sort.Sort(sorted)
 
 	for _, t := range sorted {
-		sut, drv := "-", "-"
-		if t.sut != nil {
-			sut = "sut"
+		worker, driver := "-", "-"
+		if t.worker != nil {
+			worker = "worker"
 		}
 		if t.driver != nil {
-			drv = "drv"
+			driver = "driver"
 		}
-		fmt.Fprintf(tab, "%s\t%s\t%s\n", t.Name, sut, drv)
+		fmt.Fprintf(tab, "%s\t%s\t%s\n", t.Name, worker, driver)
 	}
 
 	tab.Flush()
@@ -90,8 +90,8 @@ func runTest(test, role string) {
 	}
 
 	switch role {
-	case "sut":
-		f = t.sut
+	case "worker":
+		f = t.worker
 	case "driver":
 		f = t.driver
 	default:
@@ -126,8 +126,8 @@ func RegisterTest(name string) *Test {
 	return t
 }
 
-func (t *Test) SUT(f func(*Context) error) *Test {
-	t.sut = f
+func (t *Test) Worker(f func(*Context) error) *Test {
+	t.worker = f
 	return t
 }
 

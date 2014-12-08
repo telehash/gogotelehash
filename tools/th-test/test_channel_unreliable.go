@@ -9,11 +9,11 @@ import (
 
 func init() {
 	RegisterTest("channel-unreliable").
-		SUT(ChannelUnreliable_SUT).
+		Worker(ChannelUnreliable_Worker).
 		Driver(ChannelUnreliable_Driver)
 }
 
-func ChannelUnreliable_SUT(ctx *Context) error {
+func ChannelUnreliable_Worker(ctx *Context) error {
 	e, err := e3x.Open(
 		e3x.Log(ctx.Out))
 	if err != nil {
@@ -68,7 +68,7 @@ func ChannelUnreliable_Driver(ctx *Context) error {
 	ctx.Ready()
 
 	var (
-		ident = ctx.ReadIdentity("sut")
+		ident = ctx.ReadIdentity("worker")
 		pkt   *lob.Packet
 		token string
 	)
