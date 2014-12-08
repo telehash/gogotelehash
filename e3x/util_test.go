@@ -13,6 +13,7 @@ import (
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 func registerEventLoggers(e *Endpoint, t *testing.T) {
@@ -27,7 +28,12 @@ type MockExchange struct {
 	mock.Mock
 }
 
+func (m *MockExchange) getTID() tracer.ID {
+	return tracer.ID(0)
+}
+
 func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst transports.Addr) error {
+	pkt.TID = 0
 	args := m.Called(pkt)
 	return args.Error(0)
 }
