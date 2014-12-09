@@ -5,6 +5,7 @@ import (
 	"container/list"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/modules/mesh"
@@ -21,6 +22,7 @@ const (
 )
 
 type table struct {
+	mtx           sync.RWMutex
 	localHashname hashname.H
 	buckets       [numBuckets]*bucket
 }
@@ -55,12 +57,15 @@ func (t *table) init() {
 }
 
 func (t *table) findKey(key [keyLen]byte, n uint) []hashname.H {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+
 	var (
 		dist      = keyDistance(t.localHashname, key[:])
 		bucketIdx = bucketFromDistance(dist)
 		bucket    *bucket
 		offset    = 1
-		peers     []*activePeer
+		peers     []peerInfo
 		out       []hashname.H
 	)
 
@@ -86,7 +91,7 @@ func (t *table) findKey(key [keyLen]byte, n uint) []hashname.H {
 	}
 
 	// add additional peers
-	for len(peers) < n && offset < numBuckets {
+	for len(peers) < int(n) && offset < int(numBuckets) {
 
 		// lower bucket
 		idx := bucketIdx - offset
@@ -128,7 +133,7 @@ func (t *table) findKey(key [keyLen]byte, n uint) []hashname.H {
 	sort.Sort(peerInfoByDistance(peers))
 
 	// trim
-	if len(peers) > n {
+	if len(peers) > int(n) {
 		peers = peers[:n]
 	}
 
@@ -161,6 +166,9 @@ func (t *table) findNode(hn hashname.H, n uint) []hashname.H {
 }
 
 func (t *table) nextCandidate() *candidatePeer {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
 	for _, b := range t.buckets {
 
 		// bucket is full or will be full soon
@@ -185,6 +193,9 @@ func (t *table) nextCandidate() *candidatePeer {
 }
 
 func (t *table) activatePeer(hn hashname.H, tag mesh.Tag) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
 	var (
 		dist      = distance(t.localHashname, hn)
 		bucketIdx = bucketFromDistance(dist)
@@ -236,6 +247,9 @@ func (t *table) activatePeer(hn hashname.H, tag mesh.Tag) {
 }
 
 func (t *table) deactivatePeer(hn hashname.H) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
 	var (
 		dist      = distance(t.localHashname, hn)
 		bucketIdx = bucketFromDistance(dist)
@@ -279,6 +293,9 @@ func (t *table) deactivatePeer(hn hashname.H) {
 }
 
 func (t *table) addCandidate(hn hashname.H, router hashname.H) {
+	t.mtx.Lock()
+	defer t.mtx.Unlock()
+
 	var (
 		dist      = distance(t.localHashname, hn)
 		bucketIdx = bucketFromDistance(dist)
@@ -427,8 +444,14 @@ func distanceLess(a, b [keyLen]byte) bool {
 	return bytes.Compare(a[:], b[:]) < 0
 }
 
-func (c *table) String() string {
-	return fmt.Sprintf("{%s}", c.buckets)
+func distanceLessOrEqual(a, b [keyLen]byte) bool {
+	return bytes.Compare(a[:], b[:]) <= 0
+}
+
+func (t *table) String() string {
+	t.mtx.RLock()
+	defer t.mtx.RUnlock()
+	return fmt.Sprintf("{%s}", t.buckets)
 }
 
 func (c *bucket) String() string {
