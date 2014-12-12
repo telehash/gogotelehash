@@ -1,7 +1,6 @@
 package kademlia
 
 import (
-	"bytes"
 	"container/list"
 	"fmt"
 	"sort"
@@ -13,8 +12,7 @@ import (
 )
 
 const (
-	keyLen                 = 32
-	numBuckets             = keyLen * 8
+	numBuckets             = KeyLen * 8
 	maxPeers               = 32
 	maxCandidates          = 128
 	maxRoutersPerCandidate = 5
@@ -46,7 +44,7 @@ type candidatePeer struct {
 
 type peerInfo struct {
 	bucket   int
-	distance [keyLen]byte
+	distance keyDist
 	hashname hashname.H
 }
 
@@ -56,7 +54,7 @@ func (t *table) init() {
 	}
 }
 
-func (t *table) findKey(key [keyLen]byte, n uint) []hashname.H {
+func (t *table) findKey(key Key, n uint) []hashname.H {
 	t.mtx.RLock()
 	defer t.mtx.RUnlock()
 
@@ -149,14 +147,14 @@ func (t *table) findNode(hn hashname.H, n uint) []hashname.H {
 	var (
 		keyData []byte
 		err     error
-		key     [keyLen]byte
+		key     Key
 	)
 
 	keyData, err = base32util.DecodeString(string(hn))
 	if err != nil {
 		return nil
 	}
-	if len(keyData) != keyLen {
+	if len(keyData) != KeyLen {
 		return nil
 	}
 
@@ -357,95 +355,6 @@ func (t *table) addCandidate(hn hashname.H, router hashname.H) {
 			routers: []hashname.H{router},
 		})
 	}
-}
-
-func distance(a, b hashname.H) [keyLen]byte {
-	var (
-		bData []byte
-		err   error
-		d     [keyLen]byte
-	)
-
-	bData, err = base32util.DecodeString(string(b))
-	if err != nil {
-		return d
-	}
-
-	return keyDistance(a, bData)
-}
-
-func keyDistance(a hashname.H, bData []byte) [keyLen]byte {
-	var (
-		aData []byte
-		err   error
-		d     [keyLen]byte
-	)
-
-	aData, err = base32util.DecodeString(string(a))
-	if err != nil {
-		return d
-	}
-
-	if len(aData) != len(bData) {
-		return d
-	}
-
-	if len(aData) != keyLen {
-		return d
-	}
-
-	for i, x := range aData {
-		d[i] = x ^ bData[i]
-	}
-
-	return d
-}
-
-func bucketFromDistance(distance [keyLen]byte) int {
-	var (
-		b = 0
-		x byte
-	)
-
-	for _, x = range distance {
-		if x > 0 {
-			break
-		}
-		b += 8
-	}
-
-	if b == numBuckets {
-		return -1
-	}
-
-	switch {
-	case (x >> 7) > 0: // 1xxx xxxx
-		b += 0
-	case (x >> 6) > 0: // 01xx xxxx
-		b += 1
-	case (x >> 5) > 0: // 001x xxxx
-		b += 2
-	case (x >> 4) > 0: // 0001 xxxx
-		b += 3
-	case (x >> 3) > 0: // 0000 1xxx
-		b += 4
-	case (x >> 2) > 0: // 0000 01xx
-		b += 5
-	case (x >> 1) > 0: // 0000 001x
-		b += 6
-	default: // 0000 0001
-		b += 7
-	}
-
-	return b
-}
-
-func distanceLess(a, b [keyLen]byte) bool {
-	return bytes.Compare(a[:], b[:]) < 0
-}
-
-func distanceLessOrEqual(a, b [keyLen]byte) bool {
-	return bytes.Compare(a[:], b[:]) <= 0
 }
 
 func (t *table) String() string {

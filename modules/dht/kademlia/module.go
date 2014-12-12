@@ -18,15 +18,30 @@ var (
 )
 
 type module struct {
-	mtx      sync.Mutex
-	table    table
-	e        *e3x.Endpoint
-	mesh     mesh.Mesh
-	peers    peers.Peers
-	seekFunc func(target string, peer *e3x.Exchange) ([]hashname.H, error)
+	mtx    sync.Mutex
+	table  table
+	e      *e3x.Endpoint
+	mesh   mesh.Mesh
+	peers  peers.Peers
+	driver Driver
 }
 
 type DHT interface {
+	Seek(key Key, options ...SeekOption) ([]hashname.H, error)
+}
+
+// Driver must be implemented by the user of the Kademlia DHT.
+type Driver interface {
+	// Seek must asks peer for other peers that are kloser to target than peer itself.
+	Seek(peer hashname.H, target Key) ([]hashname.H, error)
+
+	// Link to peer to maintain an open exchange.
+	// Link is called for all peers that are added to the lookup table.
+	Link(peer hashname.H) error
+
+	// Unlink from peer.
+	// Unlink is called for all peers that are removed from the lookup table.
+	Unlink(peer hashname.H)
 }
 
 func Module() func(*e3x.Endpoint) error {
@@ -53,6 +68,21 @@ func (mod *module) Init() error {
 
 func (mod *module) Start() error { return nil }
 func (mod *module) Stop() error  { return nil }
+
+func (mod *module) Seek(key Key, options ...SeekOption) ([]hashname.H, error) {
+	seek := Seek{
+		target: key,
+		table:  &mod.table,
+		driver: mod.driver,
+	}
+
+	err := seek.setOptions(options...)
+	if err != nil {
+		return nil, err
+	}
+
+	return seek.seek(), nil
+}
 
 func (mod *module) connectToCandidate(c *candidatePeer) (next bool) {
 	var (

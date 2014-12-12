@@ -1,36 +1,86 @@
 package kademlia
 
 import (
+	"log"
 	"sort"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/telehash/gogotelehash/hashname"
 )
 
 type Seek struct {
-	target              hashname.H
+	target              Key
 	numLocalCandidates  int
 	numQueuedCandidates int
 	numParallelSeeks    int
 	numResults          int
+
+	table         *table
+	driver        Driver
+	wg            sync.WaitGroup
+	cntQueries    uint32
+	cntCandidates uint32
 }
 
-// maintenance:
-// - seek self with peers
-//   if no new candidates break
-// - connect to candidates
-//   if new peers continue seek with new peers
-//
-// - seek random with peers
-//   if no new candidates break
-// - connect to candidates
-//   if new peers continue seek with new peers
+type SeekOption func(*Seek) error
 
-func (op *Seek) seek() {
+func (op *Seek) setOptions(options ...SeekOption) error {
+	for _, opt := range options {
+		if err := opt(op); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func NumLocalCandidates(n int) SeekOption {
+	return func(op *Seek) error {
+		if n < 0 {
+			n = 0
+		}
+		op.numLocalCandidates = n
+		return nil
+	}
+}
+
+func NumQueuedCandidates(n int) SeekOption {
+	return func(op *Seek) error {
+		if n < 0 {
+			n = 0
+		}
+		op.numQueuedCandidates = n
+		return nil
+	}
+}
+
+func NumParallelSeeks(n int) SeekOption {
+	return func(op *Seek) error {
+		if n < 0 {
+			n = 0
+		}
+		op.numParallelSeeks = n
+		return nil
+	}
+}
+
+func NumResults(n int) SeekOption {
+	return func(op *Seek) error {
+		if n < 0 {
+			n = 0
+		}
+		op.numResults = n
+		return nil
+	}
+}
+
+func (op *Seek) seek() []hashname.H {
 	var (
 		results <-chan []hashname.H
 		peers   <-chan hashname.H
-		reenter = make(chan hashname.H)
+		reenter = make(chan hashname.H, 1)
+		start   = time.Now()
 	)
 
 	if op.numLocalCandidates == 0 {
@@ -58,21 +108,26 @@ func (op *Seek) seek() {
 		// - when the queue is empty and when there are no running lookups
 		peers = op.reenterSeekJoin(peers, reenter)
 		peers = op.deduplicatePeers(peers)
-		peers = op.prioritizePeers(peers)
-		// peers = op.cancelableStream(peers, cancel)
-		peers = op.queryPeersForMorePeers(peers)
+		peers = op.prioritizePeers(peers, reenter)
+		peers = op.queryPeersForMorePeers(peers, reenter)
 		peers = op.reenterSeekSplit(peers, reenter)
 	}
 	results = op.collectClosestPeers(peers)
-	return <-results
+	out := <-results
+
+	log.Printf("SEEK %x duration=%s queries=%d candidates=%d", op.target, time.Since(start), op.cntQueries, op.cntCandidates)
+
+	return out
 }
 
 func (op *Seek) querySelfForPeers() <-chan hashname.H {
 	out := make(chan hashname.H)
+	op.wg.Add(1)
 	go func() {
 		defer close(out)
+		defer op.wg.Done()
 
-		peers := mod.table.findNode(op.target, op.numLocalCandidates)
+		peers := op.table.findKey(op.target, uint(op.numLocalCandidates))
 
 		for _, peer := range peers {
 			out <- peer
@@ -82,7 +137,22 @@ func (op *Seek) querySelfForPeers() <-chan hashname.H {
 }
 
 func (op *Seek) reenterSeekJoin(in, reenter <-chan hashname.H) <-chan hashname.H {
-	out := make(chan hashname.H)
+	var (
+		out    = make(chan hashname.H)
+		closer = make(chan struct{})
+	)
+
+	go func() {
+		op.wg.Wait()
+		close(closer)
+
+		// flush reenter
+		for _ = range reenter {
+		}
+	}()
+
+	op.wg.Add(1)
+
 	go func() {
 		defer close(out)
 
@@ -93,10 +163,14 @@ func (op *Seek) reenterSeekJoin(in, reenter <-chan hashname.H) <-chan hashname.H
 
 			select {
 
+			case <-closer:
+				return
+
 			case peer, ok := <-in:
 				if ok {
 					out <- peer
 				} else {
+					op.wg.Done()
 					in = nil
 				}
 
@@ -137,23 +211,33 @@ func (op *Seek) deduplicatePeers(in <-chan hashname.H) <-chan hashname.H {
 		)
 
 		for peer := range in {
-			if !cache[peer] {
-				cache[peer] = true
+			done, found := cache[peer]
+
+			if !found {
+				atomic.AddUint32(&op.cntCandidates, 1)
+				op.wg.Add(1)
+				cache[peer] = false
 				out <- peer
+				continue
+			}
+
+			if !done {
+				op.wg.Done()
+				cache[peer] = true
+				continue
 			}
 		}
 	}()
 	return out
 }
 
-func (op *Seek) prioritizePeers(in <-chan hashname.H) <-chan hashname.H {
+func (op *Seek) prioritizePeers(in <-chan hashname.H, reenter chan<- hashname.H) <-chan hashname.H {
 	out := make(chan hashname.H)
 	go func() {
 		defer close(out)
 
 		var (
-			closedIn bool
-			queue    seekQueue
+			queue seekQueue
 		)
 
 	LOOP:
@@ -185,12 +269,18 @@ func (op *Seek) prioritizePeers(in <-chan hashname.H) <-chan hashname.H {
 
 				item := &seekQueueItem{
 					hashname: peer,
-					distance: distance(peer, op.target),
+					distance: keyDistance(peer, op.target[:]),
 				}
 
 				queue = append(queue, item)
 				sort.Sort(queue)
 				if len(queue) > op.numQueuedCandidates {
+					// reenter the dropped peers (this maintains the wait group)
+					for _, item := range queue[op.numQueuedCandidates:] {
+						reenter <- item.hashname
+					}
+
+					// trim the queue
 					queue = queue[:op.numQueuedCandidates]
 				}
 
@@ -204,7 +294,7 @@ func (op *Seek) prioritizePeers(in <-chan hashname.H) <-chan hashname.H {
 	return out
 }
 
-func (op *Seek) queryPeersForMorePeers(in <-chan hashname.H) <-chan hashname.H {
+func (op *Seek) queryPeersForMorePeers(in <-chan hashname.H, reenter chan<- hashname.H) <-chan hashname.H {
 	var (
 		out = make(chan hashname.H)
 		wg  = &sync.WaitGroup{}
@@ -224,18 +314,17 @@ func (op *Seek) queryPeersForMorePeers(in <-chan hashname.H) <-chan hashname.H {
 
 			for peer := range in {
 
-				x, err := mod.e.Dial(identifier)
-				if err != nil {
-					continue
-				}
+				atomic.AddUint32(&op.cntQueries, 1)
 
-				l, err := op.mod.seekFunc(op.target, x)
+				l, err := op.driver.Seek(peer, op.target)
 				if err != nil {
+					// reenter the dropped peers (this maintains the wait group)
+					reenter <- peer
 					continue
 				}
 
 				for _, candidate := range l {
-					op.mod.table.addCandidate(candidate, peer)
+					op.table.addCandidate(candidate, peer)
 				}
 
 				// pass on peer
@@ -259,14 +348,14 @@ func (op *Seek) collectClosestPeers(in <-chan hashname.H) <-chan []hashname.H {
 		defer close(out)
 
 		var (
-			buffer = make(seekQueue, op.numResults+1)
+			buffer = make(seekQueue, 0, op.numResults+1)
 			result = make([]hashname.H, 0, op.numResults)
 		)
 
 		for peer := range in {
 			buffer = append(buffer, &seekQueueItem{
 				hashname: peer,
-				distance: distance(op.target, peer),
+				distance: keyDistance(peer, op.target[:]),
 			})
 
 			sort.Sort(buffer)
@@ -289,7 +378,7 @@ type seekQueue []*seekQueueItem
 
 type seekQueueItem struct {
 	hashname hashname.H
-	distance [keyLen]byte
+	distance keyDist
 }
 
 func (s seekQueue) Len() int           { return len(s) }
