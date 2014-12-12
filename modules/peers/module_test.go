@@ -73,7 +73,7 @@ func TestPeers(t *testing.T) {
 	BR_tag.Release()
 	<-fase2
 
-	assert.NoError(A.Stop())
-	assert.NoError(B.Stop())
-	assert.NoError(R.Stop())
+	assert.NoError(A.Close())
+	assert.NoError(B.Close())
+	assert.NoError(R.Close())
 }

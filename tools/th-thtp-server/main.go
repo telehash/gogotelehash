@@ -22,7 +22,6 @@ import (
 
 func main() {
 	e, err := e3x.Open(
-		e3x.Log(nil),
 		thtp.Server(http.DefaultServeMux),
 		mesh.Module(nil),
 		netwatch.Module(),
@@ -58,7 +57,7 @@ func main() {
 		signal.Stop(sig)
 	}
 
-	err = e.Stop()
+	err = e.Close()
 	if err != nil {
 		log.Fatalf("error: %s", err)
 	}

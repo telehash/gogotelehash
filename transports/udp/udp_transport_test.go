@@ -51,7 +51,7 @@ func Benchmark(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := 0; i < b.N; i += 2 {
 		err = A.WriteMessage(msg, dst)
 		if err != nil {
 			b.Fatal(err)

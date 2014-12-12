@@ -48,6 +48,6 @@ func TestPeers(t *testing.T) {
 
 	<-fase2
 
-	assert.NoError(A.Stop())
-	assert.NoError(B.Stop())
+	assert.NoError(A.Close())
+	assert.NoError(B.Close())
 }

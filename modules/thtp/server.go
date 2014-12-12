@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 var (
@@ -23,7 +22,7 @@ var (
 	_ e3x.Module          = (*module)(nil)
 )
 
-func Server(handler http.Handler) func(*e3x.Endpoint) error {
+func Server(handler http.Handler) e3x.EndpointOption {
 	return func(e *e3x.Endpoint) error {
 		return e3x.RegisterModule(moduleKey, &module{
 			endpoint: e,
@@ -108,7 +107,7 @@ func (mod *module) serveTelehash(c *e3x.Channel) {
 
 func (mod *module) readRequest(c *e3x.Channel) (*http.Request, error) {
 	var (
-		r   = bufio.NewReaderSize(&serverPacketReader{c: c}, 64*1024)
+		r   = bufio.NewReaderSize(c, 64*1024)
 		req *http.Request
 		err error
 	)
@@ -168,34 +167,6 @@ func (mod *module) readRequest(c *e3x.Channel) (*http.Request, error) {
 	return req, nil
 }
 
-type serverPacketReader struct {
-	c              *e3x.Channel
-	send_handshake bool
-}
-
-func (r *serverPacketReader) Read(p []byte) (int, error) {
-	pkt, err := r.c.ReadPacket()
-	if err != nil {
-		return 0, err
-	}
-
-	if len(p) < len(pkt.Body) {
-		return 0, io.ErrShortBuffer
-	}
-
-	if !r.send_handshake {
-		err := r.c.WritePacket(&lob.Packet{})
-		if err != nil {
-			return 0, err
-		}
-
-		r.send_handshake = true
-	}
-
-	copy(p, pkt.Body)
-	return len(pkt.Body), nil
-}
-
 type responseWriter struct {
 	header http.Header
 	code   int
@@ -205,7 +176,7 @@ type responseWriter struct {
 func newResponseWriter(c *e3x.Channel) *responseWriter {
 	return &responseWriter{
 		header: make(http.Header),
-		buf:    bufio.NewWriterSize(&serverPacketWriter{c}, 1200),
+		buf:    bufio.NewWriterSize(c, 1200),
 	}
 }
 
@@ -269,23 +240,4 @@ func (rw *responseWriter) WriteHeader(code int) {
 	if err != nil {
 		return
 	}
-}
-
-type serverPacketWriter struct {
-	c *e3x.Channel
-}
-
-func (w *serverPacketWriter) Write(p []byte) (int, error) {
-	n := len(p)
-	if n > 1200 {
-		n = 1200
-		p = p[:1200]
-	}
-
-	err := w.c.WritePacket(&lob.Packet{Body: p})
-	if err != nil {
-		return 0, err
-	}
-
-	return n, nil
 }
