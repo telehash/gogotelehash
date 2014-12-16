@@ -2,12 +2,13 @@ package udp
 
 import (
 	"bytes"
+	"net"
 	"testing"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 )
 
-func TestLocalAddresses(t *testing.T) {
+func TestAddrs(t *testing.T) {
 	assert := assert.New(t)
 	var tab = []Config{
 		{},
@@ -20,7 +21,7 @@ func TestLocalAddresses(t *testing.T) {
 	for _, factory := range tab {
 		trans, err := factory.Open()
 		if assert.NoError(err) && assert.NotNil(trans) {
-			addrs := trans.LocalAddresses()
+			addrs := trans.Addrs()
 			assert.NotEmpty(addrs)
 
 			t.Logf("factory=%v addrs=%v", factory, addrs)
@@ -44,20 +45,49 @@ func Benchmark(b *testing.B) {
 	defer B.Close()
 
 	var (
-		msg = []byte("hello")
-		dst = B.LocalAddresses()[0]
-		out = make([]byte, 100)
+		msg = bytes.Repeat([]byte{'x'}, 1450)
+		dst = B.Addrs()[0]
+		out [1500]byte
+		w   net.Conn
+		r   net.Conn
 	)
 
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i += 2 {
-		err = A.WriteMessage(msg, dst)
+	{ // setup
+		w, err = A.Dial(dst)
 		if err != nil {
 			b.Fatal(err)
 		}
 
-		n, _, err := B.ReadMessage(out)
+		_, err = w.Write(msg)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		r, err = B.Accept()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		n, err := r.Read(out[:])
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if !bytes.Equal(out[:n], msg) {
+			b.Fatalf("invalid message")
+		}
+	}
+
+	b.SetBytes(int64(len(msg)))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i += 2 {
+		_, err = w.Write(msg)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		n, err := r.Read(out[:])
 		if err != nil {
 			b.Fatal(err)
 		}
