@@ -270,6 +270,10 @@ func (m *mesh) handle_link(ch *e3x.Channel) {
 	go m.keepChannelOpen(ch)
 }
 
+func (t Tag) Hashname() hashname.H {
+	return t.hashname
+}
+
 func (t Tag) Release() {
 	var (
 		m = t.mesh
