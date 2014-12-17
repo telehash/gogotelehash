@@ -24,6 +24,8 @@ type Transport interface {
 
 	// Dial will open a new connection to addr.
 	// io.EOF is returned when the transport is closed.
+	// ErrInvalidAddr must be returned when the addr is
+	// not suppoorted by the transport.
 	Dial(addr net.Addr) (net.Conn, error)
 
 	// Accept will accept the next incomming connection.

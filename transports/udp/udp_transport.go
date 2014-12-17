@@ -94,11 +94,11 @@ func (c Config) Open() (transports.Transport, error) {
 			return nil, err
 		}
 
-		if c.Network == UDPv4 && addr.IP != nil && addr.IP.To4() == nil {
+		if c.Network == UDPv4 && addr.IP != nil && !ipIs4(addr.IP) {
 			return nil, errors.New("udp: expected a IPv4 address")
 		}
 
-		if c.Network == UDPv6 && addr.IP != nil && addr.IP.To4() != nil {
+		if c.Network == UDPv6 && addr.IP != nil && ipIs4(addr.IP) {
 			return nil, errors.New("udp: expected a IPv6 address")
 		}
 	}
@@ -126,6 +126,10 @@ func (t *transport) Close() error {
 		return nil
 	}
 
+	for _, conn := range t.conns {
+		conn.markAsClosed()
+	}
+
 	t.mtxAccept.Lock()
 	defer t.mtxAccept.Unlock()
 
@@ -145,7 +149,7 @@ func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
 		conn, _ := t.getConnection(a)
 		return conn, nil
 	} else {
-		return nil, &net.OpError{Op: "dial", Net: t.net, Addr: addr, Err: errors.New("invalid address")}
+		return nil, transports.ErrInvalidAddr
 	}
 }
 
@@ -153,7 +157,7 @@ func (t *transport) Accept() (net.Conn, error) {
 	t.mtxAccept.Lock()
 	defer t.mtxAccept.Unlock()
 
-	for len(t.acceptQueue) == 0 || t.closed {
+	for len(t.acceptQueue) == 0 && !t.closed {
 		t.cndAccept.Wait()
 	}
 
@@ -164,6 +168,11 @@ func (t *transport) Accept() (net.Conn, error) {
 	conn := t.acceptQueue[0]
 	copy(t.acceptQueue, t.acceptQueue[1:])
 	t.acceptQueue = t.acceptQueue[:len(t.acceptQueue)-1]
+
+	if len(t.acceptQueue) > 0 {
+		t.cndAccept.Signal()
+	}
+
 	return conn, nil
 }
 
