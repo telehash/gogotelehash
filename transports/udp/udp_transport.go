@@ -12,13 +12,9 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/transportsutil"
 	// "github.com/telehash/gogotelehash/transports/nat"
 )
-
-// func init() {
-// 	transports.RegisterAddrDecoder("udp4", decodeAddress)
-// 	transports.RegisterAddrDecoder("udp6", decodeAddress)
-// }
 
 // Config for the UDP transport. Typically the zero value is sufficient to get started.
 //
@@ -46,7 +42,7 @@ type connKey [18]byte
 
 type transport struct {
 	net   string
-	laddr *net.UDPAddr
+	laddr udpAddr
 	c     *net.UDPConn
 
 	mtx    sync.RWMutex
@@ -60,7 +56,7 @@ type transport struct {
 
 type connection struct {
 	transport *transport
-	raddr     *net.UDPAddr
+	raddr     udpAddr
 
 	mtx       sync.RWMutex
 	cndRead   *sync.Cond
@@ -114,7 +110,7 @@ func (c Config) Open() (transports.Transport, error) {
 
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
-	t := &transport{net: c.Network, laddr: addr, c: conn}
+	t := &transport{net: c.Network, laddr: wrapAddr(addr), c: conn}
 	t.cndAccept = sync.NewCond(&t.mtxAccept)
 
 	go t.reader()
@@ -140,11 +136,16 @@ func (t *transport) Close() error {
 }
 
 func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
-	if udpAddr, ok := addr.(*net.UDPAddr); ok {
-		conn, _ := t.getConnection(udpAddr)
+	if a, ok := addr.(*net.UDPAddr); ok {
+		return t.Dial(wrapAddr(a))
+	} else if a, ok := addr.(*udpv4); ok && t.net == UDPv4 {
+		conn, _ := t.getConnection(a)
+		return conn, nil
+	} else if a, ok := addr.(*udpv6); ok && t.net == UDPv6 {
+		conn, _ := t.getConnection(a)
 		return conn, nil
 	} else {
-		return nil, &net.OpError{Op: "dial", Net: t.net, Addr: addr, Err: errors.New("invlaid address")}
+		return nil, &net.OpError{Op: "dial", Net: t.net, Addr: addr, Err: errors.New("invalid address")}
 	}
 }
 
@@ -166,13 +167,13 @@ func (t *transport) Accept() (net.Conn, error) {
 	return conn, nil
 }
 
-func (t *transport) getConnection(addr *net.UDPAddr) (conn *connection, created bool) {
+func (t *transport) getConnection(addr udpAddr) (conn *connection, created bool) {
 	var (
 		k connKey
 	)
 
-	copy(k[:16], addr.IP.To16())
-	binary.BigEndian.PutUint16(k[16:], uint16(addr.Port))
+	copy(k[:16], addr.GetIP().To16())
+	binary.BigEndian.PutUint16(k[16:], addr.GetPort())
 
 	t.mtx.RLock()
 	if t.conns != nil {
@@ -198,15 +199,15 @@ func (t *transport) getConnection(addr *net.UDPAddr) (conn *connection, created 
 	return conn, created
 }
 
-func (t *transport) dropConnection(addr *net.UDPAddr) {
+func (t *transport) dropConnection(addr udpAddr) {
 	var (
 		k     connKey
 		conn1 *connection
 		conn2 *connection
 	)
 
-	copy(k[:16], addr.IP.To16())
-	binary.BigEndian.PutUint16(k[16:], uint16(addr.Port))
+	copy(k[:16], addr.GetIP().To16())
+	binary.BigEndian.PutUint16(k[16:], addr.GetPort())
 
 	// still there?
 	t.mtx.RLock()
@@ -241,7 +242,9 @@ func (t *transport) reader() {
 			return
 		}
 
-		conn, created := t.getConnection(addr)
+		taddr := wrapAddr(addr)
+
+		conn, created := t.getConnection(taddr)
 		queued := false
 
 		if created {
@@ -254,7 +257,7 @@ func (t *transport) reader() {
 			t.mtxAccept.Unlock()
 
 			if !queued {
-				t.dropConnection(addr)
+				t.dropConnection(taddr)
 				conn = nil
 			}
 		}
@@ -319,7 +322,7 @@ func (c *connection) Write(b []byte) (n int, err error) {
 	}
 	c.mtx.RUnlock()
 
-	return c.transport.c.WriteTo(b, c.raddr)
+	return c.transport.c.WriteTo(b, c.raddr.ToUDPAddr())
 }
 
 func (c *connection) Close() error {
@@ -358,97 +361,33 @@ func (c *connection) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-// func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
-// 	const errUseOfClosedNet = "use of closed network connection"
-
-// 	n, a, err := t.c.ReadFromUDP(p)
-// 	if err != nil {
-// 		if err.Error() == errUseOfClosedNet {
-// 			err = transports.ErrClosed
-// 		}
-// 		return 0, nil, err
-// 	}
-
-// 	return n, &addr{net: t.net, UDPAddr: *a}, nil
-// }
-
-// func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-// 	a, ok := dst.(*addr)
-// 	if !ok || a == nil {
-// 		return transports.ErrInvalidAddr
-// 	}
-
-// 	if a.net != t.net {
-// 		return transports.ErrInvalidAddr
-// 	}
-
-// 	if !t.dest.Contains(a.IP) {
-// 		return transports.ErrInvalidAddr
-// 	}
-
-// 	n, err := t.c.WriteToUDP(p, &a.UDPAddr)
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	if n != len(p) {
-// 		return io.ErrShortWrite
-// 	}
-
-// 	return nil
-// }
-
 func (t *transport) Addrs() []net.Addr {
 	var (
-		port  int
+		port  uint16
 		addrs []net.Addr
 	)
 
 	{
-		port = t.laddr.Port
-		if !t.laddr.IP.IsUnspecified() {
+		port = t.laddr.GetPort()
+		if !t.laddr.GetIP().IsUnspecified() {
 			addrs = append(addrs, t.laddr)
 			return addrs
 		}
 	}
 
-	ifaces, err := net.Interfaces()
+	ips, err := transportsutil.InterfaceIPs()
 	if err != nil {
 		return addrs
 	}
-	for _, iface := range ifaces {
-		iaddrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
 
-		for _, iaddr := range iaddrs {
-			var (
-				ip   net.IP
-				zone string
-			)
-
-			switch x := iaddr.(type) {
-			case *net.IPAddr:
-				ip = x.IP
-				zone = x.Zone
-			case *net.IPNet:
-				ip = x.IP
-				zone = ""
-			}
-
-			if ip.IsMulticast() ||
-				ip.IsUnspecified() ||
-				ip.IsInterfaceLocalMulticast() ||
-				ip.IsLinkLocalMulticast() {
-				continue
-			}
-
-			addrs = append(addrs, &net.UDPAddr{
-				IP:   ip.To4(),
-				Port: port,
-				Zone: zone,
-			})
+	for _, addr := range ips {
+		addr := wrapAddr(&net.UDPAddr{
+			IP:   addr.IP,
+			Zone: addr.Zone,
+			Port: int(port),
+		})
+		if (addr.IsIPv6() && t.net == UDPv6) || (!addr.IsIPv6() && t.net == UDPv4) {
+			addrs = append(addrs, addr)
 		}
 	}
 
