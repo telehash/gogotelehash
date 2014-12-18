@@ -1,7 +1,7 @@
 package fw
 
 import (
-	"github.com/telehash/gogotelehash/transports"
+	"net"
 )
 
 var (
@@ -10,11 +10,11 @@ var (
 )
 
 // The RuleFunc type is an adapter to allow the use of ordinary functions as firewall rules.
-type RuleFunc func(p []byte, src transports.Addr) bool
+type RuleFunc func(src net.Addr) bool
 
 // Match calls r(p, src) and returns its result.
-func (r RuleFunc) Match(p []byte, src transports.Addr) bool {
-	return r(p, src)
+func (r RuleFunc) Match(src net.Addr) bool {
+	return r(src)
 }
 
 var (
@@ -30,8 +30,8 @@ type (
 	matchAllRule  string
 )
 
-func (r matchNoneRule) Match(p []byte, src transports.Addr) bool { return false }
-func (r matchAllRule) Match(p []byte, src transports.Addr) bool  { return true }
+func (r matchNoneRule) Match(src net.Addr) bool { return false }
+func (r matchAllRule) Match(src net.Addr) bool  { return true }
 
 // Negate matches when r doesn't Match
 func Negate(r Rule) Rule {
@@ -43,7 +43,7 @@ func Negate(r Rule) Rule {
 
 type negateRule struct{ Rule }
 
-func (r *negateRule) Allow(p []byte, src transports.Addr) bool { return !r.Rule.Match(p, src) }
+func (r *negateRule) Allow(src net.Addr) bool { return !r.Rule.Match(src) }
 
 // WhenAll matches when all rules Match
 func WhenAll(rules ...Rule) Rule {
@@ -55,9 +55,9 @@ func WhenAll(rules ...Rule) Rule {
 		return rules[0]
 	}
 
-	return RuleFunc(func(p []byte, src transports.Addr) bool {
+	return RuleFunc(func(src net.Addr) bool {
 		for _, rule := range rules {
-			if !rule.Match(p, src) {
+			if !rule.Match(src) {
 				return false
 			}
 		}
@@ -81,19 +81,12 @@ func WhenAny(rules ...Rule) Rule {
 		return rules[0]
 	}
 
-	return RuleFunc(func(p []byte, src transports.Addr) bool {
+	return RuleFunc(func(src net.Addr) bool {
 		for _, rule := range rules {
-			if rule.Match(p, src) {
+			if rule.Match(src) {
 				return true
 			}
 		}
 		return false
-	})
-}
-
-// From returns a Rule that matches when the source address equals addr.
-func From(addr transports.Addr) Rule {
-	return RuleFunc(func(p []byte, src transports.Addr) bool {
-		return transports.EqualAddr(src, addr)
 	})
 }

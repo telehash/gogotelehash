@@ -4,16 +4,13 @@
 package udp
 
 import (
-	"encoding/binary"
 	"errors"
-	"io"
 	"net"
-	"sync"
-	"time"
 
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/transports/transportsutil"
+	"github.com/telehash/gogotelehash/transports/dgram"
 	// "github.com/telehash/gogotelehash/transports/nat"
+	"github.com/telehash/gogotelehash/transports/transportsutil"
 )
 
 // Config for the UDP transport. Typically the zero value is sufficient to get started.
@@ -44,30 +41,12 @@ type transport struct {
 	net   string
 	laddr udpAddr
 	c     *net.UDPConn
-
-	mtx    sync.RWMutex
-	conns  map[connKey]*connection
-	closed bool
-
-	mtxAccept   sync.Mutex
-	cndAccept   *sync.Cond
-	acceptQueue []*connection
-}
-
-type connection struct {
-	transport *transport
-	raddr     udpAddr
-
-	mtx       sync.RWMutex
-	cndRead   *sync.Cond
-	closed    bool
-	readQueue [][]byte
 }
 
 var (
-	// _ nat.NATableAddr      = (*addr)(nil)
-	_ transports.Transport = (*transport)(nil)
-	_ transports.Config    = Config{}
+	// _ nat.NATableAddr      = (*udpAddr)(nil)
+	_ dgram.Transport   = (*transport)(nil)
+	_ transports.Config = Config{}
 )
 
 // Open opens the transport.
@@ -111,263 +90,35 @@ func (c Config) Open() (transports.Transport, error) {
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
 	t := &transport{net: c.Network, laddr: wrapAddr(addr), c: conn}
-	t.cndAccept = sync.NewCond(&t.mtxAccept)
-
-	go t.reader()
-
-	return t, nil
+	return dgram.Wrap(t)
 }
 
 func (t *transport) Close() error {
-	t.mtx.Lock()
-	defer t.mtx.Unlock()
-
-	if t.closed {
-		return nil
-	}
-
-	for _, conn := range t.conns {
-		conn.markAsClosed()
-	}
-
-	t.mtxAccept.Lock()
-	defer t.mtxAccept.Unlock()
-
-	err := t.c.Close()
-	t.closed = true
-	t.cndAccept.Broadcast()
-	return err
+	return t.c.Close()
 }
 
-func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
+func (t *transport) NormalizeAddr(addr net.Addr) (dgram.Addr, error) {
 	if a, ok := addr.(*net.UDPAddr); ok {
-		return t.Dial(wrapAddr(a))
+		return t.NormalizeAddr(wrapAddr(a))
 	} else if a, ok := addr.(*udpv4); ok && t.net == UDPv4 {
-		conn, _ := t.getConnection(a)
-		return conn, nil
+		return a, nil
 	} else if a, ok := addr.(*udpv6); ok && t.net == UDPv6 {
-		conn, _ := t.getConnection(a)
-		return conn, nil
+		return a, nil
 	} else {
 		return nil, transports.ErrInvalidAddr
 	}
 }
 
-func (t *transport) Accept() (net.Conn, error) {
-	t.mtxAccept.Lock()
-	defer t.mtxAccept.Unlock()
-
-	for len(t.acceptQueue) == 0 && !t.closed {
-		t.cndAccept.Wait()
+func (t *transport) Read(b []byte) (n int, addr dgram.Addr, err error) {
+	n, uaddr, err := t.c.ReadFromUDP(b)
+	if err != nil {
+		return 0, nil, err
 	}
-
-	if t.closed {
-		return nil, io.EOF
-	}
-
-	conn := t.acceptQueue[0]
-	copy(t.acceptQueue, t.acceptQueue[1:])
-	t.acceptQueue = t.acceptQueue[:len(t.acceptQueue)-1]
-
-	if len(t.acceptQueue) > 0 {
-		t.cndAccept.Signal()
-	}
-
-	return conn, nil
+	return n, wrapAddr(uaddr), nil
 }
 
-func (t *transport) getConnection(addr udpAddr) (conn *connection, created bool) {
-	var (
-		k connKey
-	)
-
-	copy(k[:16], addr.GetIP().To16())
-	binary.BigEndian.PutUint16(k[16:], addr.GetPort())
-
-	t.mtx.RLock()
-	if t.conns != nil {
-		conn = t.conns[k]
-	}
-	t.mtx.RUnlock()
-
-	if conn == nil {
-		t.mtx.Lock()
-		if t.conns == nil {
-			t.conns = make(map[connKey]*connection)
-		}
-		conn = t.conns[k]
-		if conn == nil {
-			created = true
-			conn = &connection{transport: t, raddr: addr}
-			conn.cndRead = sync.NewCond(&conn.mtx)
-			t.conns[k] = conn
-		}
-		t.mtx.Unlock()
-	}
-
-	return conn, created
-}
-
-func (t *transport) dropConnection(addr udpAddr) {
-	var (
-		k     connKey
-		conn1 *connection
-		conn2 *connection
-	)
-
-	copy(k[:16], addr.GetIP().To16())
-	binary.BigEndian.PutUint16(k[16:], addr.GetPort())
-
-	// still there?
-	t.mtx.RLock()
-	if t.conns != nil {
-		conn1 = t.conns[k]
-	}
-	t.mtx.RUnlock()
-
-	if conn1 == nil {
-		return
-	}
-
-	t.mtx.Lock()
-	conn2 = t.conns[k]
-	if conn2 != nil && conn2 == conn1 {
-		// remove if still there
-		delete(t.conns, k)
-	}
-	t.mtx.Unlock()
-
-	if conn2 != nil {
-		conn2.markAsClosed()
-	}
-}
-
-func (t *transport) reader() {
-	var b [1500]byte
-
-	for {
-		n, addr, err := t.c.ReadFromUDP(b[:])
-		if err != nil {
-			return
-		}
-
-		taddr := wrapAddr(addr)
-
-		conn, created := t.getConnection(taddr)
-		queued := false
-
-		if created {
-			t.mtxAccept.Lock()
-			if len(t.acceptQueue) < 1024 {
-				t.acceptQueue = append(t.acceptQueue, conn)
-				t.cndAccept.Signal()
-				queued = true
-			}
-			t.mtxAccept.Unlock()
-
-			if !queued {
-				t.dropConnection(taddr)
-				conn = nil
-			}
-		}
-
-		if conn != nil {
-			conn.pushMessage(b[:n])
-		}
-	}
-}
-
-func (c *connection) pushMessage(p []byte) {
-	c.mtx.Lock()
-
-	if c.closed {
-		c.mtx.Unlock()
-		return
-	}
-
-	buf := make([]byte, len(p))
-	copy(buf, p)
-	c.readQueue = append(c.readQueue, buf)
-
-	c.cndRead.Signal()
-	c.mtx.Unlock()
-}
-
-func (c *connection) Read(b []byte) (n int, err error) {
-	c.mtx.Lock()
-
-	for !c.closed && len(c.readQueue) == 0 {
-		c.cndRead.Wait()
-	}
-	if c.closed {
-		c.mtx.Unlock()
-		return 0, io.EOF
-	}
-
-	buf := c.readQueue[0]
-	copy(b, buf)
-	n = len(buf)
-
-	copy(c.readQueue, c.readQueue[1:])
-	c.readQueue = c.readQueue[:len(c.readQueue)-1]
-
-	if len(c.readQueue) > 0 {
-		c.cndRead.Signal()
-	}
-
-	c.mtx.Unlock()
-	return n, nil
-}
-
-func (c *connection) Write(b []byte) (n int, err error) {
-	if len(b) > 1472 {
-		return 0, io.ErrShortWrite
-	}
-
-	c.mtx.RLock()
-	if c.closed {
-		c.mtx.RUnlock()
-		return 0, io.EOF
-	}
-	c.mtx.RUnlock()
-
-	return c.transport.c.WriteTo(b, c.raddr.ToUDPAddr())
-}
-
-func (c *connection) Close() error {
-	c.markAsClosed()
-	c.transport.dropConnection(c.raddr)
-	return nil
-}
-
-func (c *connection) markAsClosed() {
-	c.mtx.Lock()
-	c.closed = true
-	c.cndRead.Signal()
-	c.mtx.Unlock()
-}
-
-func (c *connection) LocalAddr() net.Addr {
-	return c.transport.laddr
-}
-
-func (c *connection) RemoteAddr() net.Addr {
-	return c.raddr
-}
-
-func (c *connection) SetDeadline(t time.Time) error {
-	// noop
-	return nil
-}
-
-func (c *connection) SetReadDeadline(t time.Time) error {
-	// noop
-	return nil
-}
-
-func (c *connection) SetWriteDeadline(t time.Time) error {
-	// noop
-	return nil
+func (t *transport) Write(b []byte, addr dgram.Addr) (n int, err error) {
+	return t.c.WriteToUDP(b, addr.(udpAddr).ToUDPAddr())
 }
 
 func (t *transport) Addrs() []net.Addr {

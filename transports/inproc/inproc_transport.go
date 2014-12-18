@@ -3,10 +3,12 @@ package inproc
 
 import (
 	"encoding/json"
+	"io"
+	"net"
 	"sync"
 
-	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/dgram"
 	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
@@ -16,25 +18,24 @@ import (
 type Config struct {
 }
 
-type addr struct {
-	hn hashname.H
+type inprocAddr struct {
 	id uint32
 }
 
 type transport struct {
-	id uint32
-	c  chan packet
+	laddr *inprocAddr
+	c     chan packet
 }
 
 type packet struct {
-	from uint32
+	from *inprocAddr
 	buf  []byte
 }
 
 var (
-	_ transports.Addr      = (*addr)(nil)
-	_ transports.Transport = (*transport)(nil)
-	_ transports.Config    = Config{}
+	_ dgram.Addr        = (*inprocAddr)(nil)
+	_ dgram.Transport   = (*transport)(nil)
+	_ transports.Config = Config{}
 )
 
 var (
@@ -47,31 +48,39 @@ var (
 func (c Config) Open() (transports.Transport, error) {
 	mtx.Lock()
 	id := netxID
-	t := &transport{id, make(chan packet, 10)}
+	t := &transport{&inprocAddr{id}, make(chan packet, 10)}
 	netxID++
 	pipes[id] = t
 	mtx.Unlock()
 
-	return t, nil
+	return dgram.Wrap(t)
 }
 
-func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
+func (t *transport) NormalizeAddr(addr net.Addr) (dgram.Addr, error) {
+	if a, ok := addr.(*inprocAddr); ok {
+		return a, nil
+	} else {
+		return nil, transports.ErrInvalidAddr
+	}
+}
+
+func (t *transport) Read(p []byte) (int, dgram.Addr, error) {
 	pkt, open := <-t.c
 	if !open {
-		return 0, nil, transports.ErrClosed
+		return 0, nil, io.EOF
 	}
 
 	n := len(pkt.buf)
 	copy(p, pkt.buf)
 	bufpool.PutBuffer(pkt.buf)
 
-	return n, &addr{"", pkt.from}, nil
+	return n, pkt.from, nil
 }
 
-func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-	a, ok := dst.(*addr)
+func (t *transport) Write(p []byte, dst dgram.Addr) (int, error) {
+	a, ok := dst.(*inprocAddr)
 	if !ok || a == nil {
-		return transports.ErrInvalidAddr
+		return 0, transports.ErrInvalidAddr
 	}
 
 	mtx.RLock()
@@ -79,7 +88,7 @@ func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
 	mtx.RUnlock()
 
 	if dstT == nil {
-		return nil // drop
+		return 0, nil // drop
 	}
 
 	buf := bufpool.GetBuffer()
@@ -88,32 +97,38 @@ func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
 
 	func() {
 		defer func() { recover() }()
-		dstT.c <- packet{t.id, buf}
+		dstT.c <- packet{t.laddr, buf}
 	}()
 
-	return nil
+	return len(p), nil
 }
 
-func (t *transport) LocalAddresses() []transports.Addr {
-	return []transports.Addr{
-		&addr{"", t.id},
-	}
+func (t *transport) Addrs() []net.Addr {
+	return []net.Addr{t.laddr}
 }
 
 func (t *transport) Close() error {
 	mtx.Lock()
-	delete(pipes, t.id)
+	delete(pipes, t.laddr.id)
 	mtx.Unlock()
 
 	close(t.c)
 	return nil
 }
 
-func (a *addr) Network() string {
+func (a *inprocAddr) Network() string {
 	return "inproc"
 }
 
-func (a *addr) MarshalJSON() ([]byte, error) {
+func (a *inprocAddr) String() string {
+	data, err := a.MarshalJSON()
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func (a *inprocAddr) MarshalJSON() ([]byte, error) {
 	var desc = struct {
 		Type string `json:"type"`
 		ID   int    `json:"id"`
@@ -124,31 +139,6 @@ func (a *addr) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&desc)
 }
 
-func (a *addr) Equal(x transports.Addr) bool {
-	b := x.(*addr)
-
-	if a.id != b.id {
-		return false
-	}
-
-	return true
-}
-
-func (a *addr) String() string {
-	data, err := a.MarshalJSON()
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
-}
-
-func (a *addr) Associate(hn hashname.H) transports.Addr {
-	b := new(addr)
-	*b = *a
-	b.hn = hn
-	return b
-}
-
-func (a *addr) Hashname() hashname.H {
-	return a.hn
+func (a *inprocAddr) Key() interface{} {
+	return a.id
 }

@@ -1,6 +1,8 @@
 package fw
 
 import (
+	"net"
+
 	"github.com/telehash/gogotelehash/transports"
 )
 
@@ -17,8 +19,8 @@ type Config struct {
 
 // Rule must be implemented by rule objects.
 type Rule interface {
-	// Match must return true when p and/or src match the rule.
-	Match(p []byte, src transports.Addr) bool
+	// Match must return true when src match the rule.
+	Match(src net.Addr) bool
 }
 
 type firewall struct {
@@ -36,27 +38,27 @@ func (c Config) Open() (transports.Transport, error) {
 	return &firewall{t, c.Allow}, nil
 }
 
-func (fw *firewall) LocalAddresses() []transports.Addr {
-	return fw.t.LocalAddresses()
+func (fw *firewall) Addrs() []net.Addr {
+	return fw.t.Addrs()
 }
 
-func (fw *firewall) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
-	for {
-		n, src, err = fw.t.ReadMessage(p)
-		if err != nil {
-			return n, src, err
-		}
+func (fw *firewall) Dial(addr net.Addr) (net.Conn, error) {
+	return fw.t.Dial(addr)
+}
 
-		if fw.rule == nil || fw.rule.Match(p[:n], src) {
-			return n, src, err
-		}
-
-		// continue
+func (fw *firewall) Accept() (c net.Conn, err error) {
+RETRY:
+	conn, err := fw.t.Accept()
+	if err != nil {
+		return nil, err
 	}
-}
 
-func (fw *firewall) WriteMessage(p []byte, dst transports.Addr) error {
-	return fw.t.WriteMessage(p, dst)
+	if fw.rule != nil && !fw.rule.Match(conn.RemoteAddr()) {
+		conn.Close()
+		goto RETRY
+	}
+
+	return conn, nil
 }
 
 func (fw *firewall) Close() error {

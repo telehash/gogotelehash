@@ -1,10 +1,12 @@
 package udp
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"net"
 
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/dgram"
 	"github.com/telehash/gogotelehash/transports/nat"
 )
 
@@ -14,7 +16,7 @@ func init() {
 }
 
 type udpAddr interface {
-	net.Addr
+	dgram.Addr
 	GetIP() net.IP
 	GetPort() uint16
 	ToUDPAddr() *net.UDPAddr
@@ -75,6 +77,27 @@ func (u *udpv6) ToUDPAddr() *net.UDPAddr { return (*net.UDPAddr)(u) }
 
 func (u *udpv4) IsIPv6() bool { return false }
 func (u *udpv6) IsIPv6() bool { return true }
+
+func (u *udpv4) Key() interface{} {
+	var (
+		k connKey
+	)
+
+	copy(k[:16], u.IP.To16())
+	binary.BigEndian.PutUint16(k[16:], uint16(u.Port))
+
+	return k
+}
+func (u *udpv6) Key() interface{} {
+	var (
+		k connKey
+	)
+
+	copy(k[:16], u.IP.To16())
+	binary.BigEndian.PutUint16(k[16:], uint16(u.Port))
+
+	return k
+}
 
 func (u *udpv4) UnmarshalJSON(data []byte) error {
 	var desc struct {
