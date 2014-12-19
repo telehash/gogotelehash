@@ -12,6 +12,10 @@ import (
 	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
+func init() {
+	transports.RegisterAddr(&inprocAddr{})
+}
+
 // Config for the inproc transport. There are no configuration options for now.
 //
 //   e3x.New(keys, inproc.Config{})
@@ -137,6 +141,25 @@ func (a *inprocAddr) MarshalJSON() ([]byte, error) {
 		ID:   int(a.id),
 	}
 	return json.Marshal(&desc)
+}
+
+func (a *inprocAddr) UnmarshalJSON(data []byte) error {
+	var desc struct {
+		Type string `json:"type"`
+		ID   int    `json:"id"`
+	}
+
+	err := json.Unmarshal(data, &desc)
+	if err != nil {
+		return err
+	}
+
+	if desc.ID < 0 {
+		return transports.ErrInvalidAddr
+	}
+
+	a.id = uint32(desc.ID)
+	return nil
 }
 
 func (a *inprocAddr) Key() interface{} {

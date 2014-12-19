@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
 	"github.com/telehash/gogotelehash/util/tracer"
@@ -94,7 +94,7 @@ type Exchange struct {
 }
 
 type endpointI interface {
-	writeMessage([]byte, transports.Addr) error
+	writeMessage([]byte, net.Addr) error
 	listener(channelType string) *Listener
 	getTID() tracer.ID
 }
@@ -157,7 +157,7 @@ func newExchange(
 		x.csid = csid
 
 		for _, addr := range remoteIdent.addrs {
-			x.addressBook.AddAddress(addr.Associate(remoteIdent.Hashname()))
+			x.addressBook.AddAddress(addr)
 		}
 	}
 
@@ -335,7 +335,7 @@ func (x *Exchange) RemoteIdentity() *Identity {
 }
 
 // ActivePath returns the path that is currently used for channel packets.
-func (x *Exchange) ActivePath() transports.Addr {
+func (x *Exchange) ActivePath() net.Addr {
 	x.mtx.Lock()
 	addr := x.addressBook.ActiveAddress()
 	x.mtx.Unlock()
@@ -343,7 +343,7 @@ func (x *Exchange) ActivePath() transports.Addr {
 }
 
 // KnownPaths returns all the know addresses of the remote endpoint.
-func (x *Exchange) KnownPaths() []transports.Addr {
+func (x *Exchange) KnownPaths() []net.Addr {
 	x.mtx.Lock()
 	addrs := x.addressBook.KnownAddresses()
 	x.mtx.Unlock()
@@ -368,12 +368,12 @@ func (x *Exchange) onDeliverHandshake() {
 	x.deliverHandshake(0, nil)
 }
 
-func (x *Exchange) deliverHandshake(seq uint32, addr transports.Addr) error {
+func (x *Exchange) deliverHandshake(seq uint32, addr net.Addr) error {
 	// e.addressBook.id, e, addr == nil, addr)
 
 	var (
 		pktData []byte
-		addrs   []transports.Addr
+		addrs   []net.Addr
 		err     error
 	)
 
@@ -507,7 +507,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 	c.receivedPacket(pkt)
 }
 
-func (x *Exchange) deliverPacket(pkt *lob.Packet, addr transports.Addr) error {
+func (x *Exchange) deliverPacket(pkt *lob.Packet, addr net.Addr) error {
 	x.mtx.Lock()
 	for x.state == ExchangeDialing {
 		x.cndState.Wait()
@@ -744,11 +744,11 @@ func (x *Exchange) RemoteToken() cipherset.Token {
 
 // AddPathCandidate adds a new path tto the exchange. The path is
 // only used when it performs better than any other paths.
-func (x *Exchange) AddPathCandidate(addr transports.Addr) {
+func (x *Exchange) AddPathCandidate(addr net.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	x.addressBook.AddAddress(addr.Associate(x.remoteIdent.Hashname()))
+	x.addressBook.AddAddress(addr)
 }
 
 // GenerateHandshake can be used to generate a new handshake packet.
@@ -791,14 +791,14 @@ func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
 // ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
 // handshake is accepted err is nil. When the handshake is a request-handshake
 // and it is accepted response will contain a response-handshake packet.
-func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
+func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src net.Addr) (response []byte, ok bool) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	return x.applyHandshake(handshake, src)
 }
 
-func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.Addr) (response []byte, ok bool) {
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src net.Addr) (response []byte, ok bool) {
 	var (
 		seq uint32
 		err error
@@ -837,14 +837,12 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src transports.
 		x.remoteIdent = ident
 	}
 
-	srcAddr := src.Associate(x.remoteIdent.Hashname())
-
 	if x.isLocalSeq(seq) {
 		x.resetBreak()
-		x.addressBook.ReceivedHandshake(srcAddr)
+		x.addressBook.ReceivedHandshake(src)
 
 	} else {
-		x.addressBook.AddAddress(srcAddr)
+		x.addressBook.AddAddress(src)
 
 		response, err = x.generateHandshake(seq)
 		if err != nil {
@@ -909,7 +907,7 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 	x.lastRemoteSeq = handshake.At()
 
 	if resp != nil {
-		x.endpoint.writeMessage(resp, op.src.Associate(x.remoteIdent.Hashname()))
+		x.endpoint.writeMessage(resp, op.src)
 	}
 
 	x.traceReceivedHandshake(op, handshake)

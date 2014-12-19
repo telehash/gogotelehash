@@ -3,6 +3,7 @@ package e3x
 import (
 	"encoding/json"
 	"errors"
+	"net"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
@@ -16,10 +17,10 @@ type Identity struct {
 	hashname hashname.H
 	keys     cipherset.Keys
 	parts    cipherset.Parts
-	addrs    []transports.Addr
+	addrs    []net.Addr
 }
 
-func NewIdentity(keys cipherset.Keys, parts cipherset.Parts, addrs []transports.Addr) (*Identity, error) {
+func NewIdentity(keys cipherset.Keys, parts cipherset.Parts, addrs []net.Addr) (*Identity, error) {
 	var err error
 
 	ident := &Identity{
@@ -58,10 +59,10 @@ func (i *Identity) String() string {
 
 func (i *Identity) MarshalJSON() ([]byte, error) {
 	var jsonAddr = struct {
-		Hashname hashname.H        `json:"hashname"`
-		Keys     cipherset.Keys    `json:"keys"`
-		Parts    cipherset.Parts   `json:"parts"`
-		Addrs    []transports.Addr `json:"paths"`
+		Hashname hashname.H      `json:"hashname"`
+		Keys     cipherset.Keys  `json:"keys"`
+		Parts    cipherset.Parts `json:"parts"`
+		Addrs    []net.Addr      `json:"paths"`
 	}{i.hashname, i.keys, i.parts, i.addrs}
 	return json.Marshal(&jsonAddr)
 }
@@ -78,7 +79,7 @@ func (i *Identity) UnmarshalJSON(p []byte) error {
 		return err
 	}
 
-	var addrs []transports.Addr
+	var addrs []net.Addr
 	for _, m := range jsonAddr.Addrs {
 		addr, err := transports.DecodeAddr(m)
 		if err != nil {
@@ -97,7 +98,7 @@ func (i *Identity) UnmarshalJSON(p []byte) error {
 	return nil
 }
 
-func (i *Identity) withPaths(paths []transports.Addr) *Identity {
+func (i *Identity) withPaths(paths []net.Addr) *Identity {
 	return &Identity{
 		hashname: i.hashname,
 		keys:     i.keys,
@@ -110,7 +111,7 @@ func (i *Identity) Keys() cipherset.Keys {
 	return i.keys
 }
 
-func (i *Identity) Addresses() []transports.Addr {
+func (i *Identity) Addresses() []net.Addr {
 	return i.addrs
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sync"
 
@@ -12,7 +13,6 @@ import (
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
 	"github.com/telehash/gogotelehash/util/tracer"
 )
@@ -48,7 +48,7 @@ type Endpoint struct {
 
 type opRead struct {
 	msg []byte
-	src transports.Addr
+	src net.Addr
 	err error
 	TID tracer.ID
 }
@@ -305,7 +305,7 @@ func (e *Endpoint) LocalHashname() hashname.H {
 }
 
 func (e *Endpoint) LocalIdentity() (*Identity, error) {
-	return NewIdentity(e.keys, nil, e.transport.LocalAddresses())
+	return NewIdentity(e.keys, nil, e.transport.Addrs())
 }
 
 func (e *Endpoint) start() error {
@@ -331,7 +331,7 @@ func (e *Endpoint) start() error {
 		return err
 	}
 	e.transport = t
-	go e.runReader()
+	go e.acceptConnections()
 
 	for _, mod := range e.modules {
 		err := mod.Start()
@@ -381,15 +381,14 @@ func (e *Endpoint) close() error {
 	return e.err
 }
 
-func (e *Endpoint) runReader() {
+func (e *Endpoint) acceptConnections() {
 	for {
-		buf := bufpool.GetBuffer()
-		n, src, err := e.transport.ReadMessage(buf)
-		if err == transports.ErrClosed {
-			return
+		conn, err := e.transport.Accept()
+		if err != nil {
+			panic(err)
 		}
 
-		e.received(opRead{buf[:n], src, err, tracer.NewID()})
+		e.accept(conn)
 	}
 }
 
@@ -604,7 +603,7 @@ func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
 }
 
-func (e *Endpoint) writeMessage(p []byte, dst transports.Addr) error {
+func (e *Endpoint) writeMessage(p []byte, dst net.Addr) error {
 	return e.transport.WriteMessage(p, dst)
 }
 

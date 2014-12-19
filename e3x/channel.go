@@ -13,7 +13,6 @@ import (
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/tracer"
 )
@@ -93,7 +92,7 @@ type Channel struct {
 }
 
 type exchangeI interface {
-	deliverPacket(pkt *lob.Packet, dst transports.Addr) error
+	deliverPacket(pkt *lob.Packet, dst net.Addr) error
 	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
 	getTID() tracer.ID
@@ -109,7 +108,7 @@ type writeBufferEntry struct {
 	pkt        *lob.Packet
 	end        bool
 	lastResend time.Time
-	dst        transports.Addr
+	dst        net.Addr
 }
 
 func newChannel(
@@ -169,7 +168,7 @@ func (c *Channel) traceNew() {
 	}
 }
 
-func (c *Channel) traceWriteError(pkt *lob.Packet, path transports.Addr, reason error) error {
+func (c *Channel) traceWriteError(pkt *lob.Packet, path net.Addr, reason error) error {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
@@ -193,7 +192,7 @@ func (c *Channel) traceWriteError(pkt *lob.Packet, path transports.Addr, reason 
 	return reason
 }
 
-func (c *Channel) traceWrite(pkt *lob.Packet, path transports.Addr) {
+func (c *Channel) traceWrite(pkt *lob.Packet, path net.Addr) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
@@ -277,7 +276,7 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	return c.WritePacketTo(pkt, nil)
 }
 
-func (c *Channel) WritePacketTo(pkt *lob.Packet, path transports.Addr) error {
+func (c *Channel) WritePacketTo(pkt *lob.Packet, path net.Addr) error {
 	if c == nil {
 		return os.ErrInvalid
 	}
@@ -327,7 +326,7 @@ func (c *Channel) blockWrite() bool {
 	return false
 }
 
-func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
+func (c *Channel) write(pkt *lob.Packet, path net.Addr) error {
 	if pkt.TID == 0 {
 		pkt.TID = tracer.NewID()
 	}

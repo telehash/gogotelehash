@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"net"
 	"sort"
 	"time"
 
@@ -25,7 +26,7 @@ const (
 )
 
 type addressBookEntry struct {
-	Address             transports.Addr
+	Address             net.Addr
 	SendHandshakeAt     time.Time
 	ReceivedHandshakeAt time.Time
 	Added               time.Time
@@ -41,7 +42,7 @@ func newAddressBook(log *logs.Logger) *addressBook {
 	return &addressBook{log: log.Module("addrbook")}
 }
 
-func (book *addressBook) ActiveAddress() transports.Addr {
+func (book *addressBook) ActiveAddress() net.Addr {
 	if book.active == nil {
 		return nil
 	}
@@ -49,16 +50,16 @@ func (book *addressBook) ActiveAddress() transports.Addr {
 	return book.active.Address
 }
 
-func (book *addressBook) KnownAddresses() []transports.Addr {
-	s := make([]transports.Addr, len(book.known))
+func (book *addressBook) KnownAddresses() []net.Addr {
+	s := make([]net.Addr, len(book.known))
 	for i, e := range book.known {
 		s[i] = e.Address
 	}
 	return s
 }
 
-func (book *addressBook) HandshakeAddresses() []transports.Addr {
-	s := make([]transports.Addr, 0, len(book.known))
+func (book *addressBook) HandshakeAddresses() []net.Addr {
+	s := make([]net.Addr, 0, len(book.known))
 	for _, e := range book.known {
 		if !e.IsBackup {
 			continue
@@ -142,7 +143,7 @@ func (book *addressBook) NextHandshakeEpoch() {
 
 }
 
-func (book *addressBook) AddAddress(addr transports.Addr) {
+func (book *addressBook) AddAddress(addr net.Addr) {
 	var (
 		now = time.Now()
 		idx = book.indexOf(addr)
@@ -169,7 +170,7 @@ func (book *addressBook) AddAddress(addr transports.Addr) {
 	}
 }
 
-func (book *addressBook) SentHandshake(addr transports.Addr) {
+func (book *addressBook) SentHandshake(addr net.Addr) {
 	var (
 		idx = book.indexOf(addr)
 	)
@@ -182,7 +183,7 @@ func (book *addressBook) SentHandshake(addr transports.Addr) {
 	e.SendHandshakeAt = time.Now()
 }
 
-func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
+func (book *addressBook) ReceivedHandshake(addr net.Addr) {
 	var (
 		idx = book.indexOf(addr)
 		e   *addressBookEntry
@@ -199,7 +200,7 @@ func (book *addressBook) ReceivedHandshake(addr transports.Addr) {
 	}
 }
 
-func (book *addressBook) indexOf(addr transports.Addr) int {
+func (book *addressBook) indexOf(addr net.Addr) int {
 	for i, e := range book.known {
 		if transports.EqualAddr(e.Address, addr) {
 			return i
