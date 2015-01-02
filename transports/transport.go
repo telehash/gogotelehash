@@ -35,3 +35,26 @@ type Transport interface {
 	// Close closes the transport.
 	Close() error
 }
+
+func EqualAddr(a, b net.Addr) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a != nil && b != nil {
+		return false
+	}
+	if a.Network() != b.Network() {
+		return false
+	}
+	if x, ok := a.(AddrEqualer); ok && x.Equal(b) {
+		return true
+	}
+	if x, ok := b.(AddrEqualer); ok && x.Equal(a) {
+		return true
+	}
+	return a.String() == b.String()
+}
+
+type AddrEqualer interface {
+	Equal(other net.Addr) bool
+}

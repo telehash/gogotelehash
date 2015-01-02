@@ -4,128 +4,166 @@ import (
 	"io"
 	"net"
 	"sync"
-	"time"
 
+	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/util/tracer"
 )
 
-// Connection life-cycle
-//
-//   New connections are added to the testing group as we don't know their quality.
-//
-//   Connections in the testing group will be send all handshake packets.
-//   All packets read from the testing group are be accepted.
-//   When a connection in the test group successfully completes a handshake roundtrip
-//   (initiated by the local peer) the connection is promoted to the active group.
-//   When a connection fails to complete a handshake roundtrip it is closed.
-//
-//   Connections in the active group will be send all handshake packets.
-//   All packets read from the active group are be accepted.
-//   The connections are also prioritized based on there remote addr/transport type
-//   The connection with the highest priority will be send all packets and is
-//   considered the active connection.
-//   When a connection fails to complete a handshake roundtrip it is demoted to the
-//   testing group.
-//
-//   A handshake roundtrip is initiated by the local peer and must not take longer than
-//   1 minute.
-//
-
 type pipe struct {
-	mtx         sync.Mutex
-	wg          sync.WaitGroup
-	connections []net.Conn
-	cRead       chan readOp
+	mtx       sync.RWMutex
+	wg        sync.WaitGroup
+	closed    bool
+	delegate  pipeDelegate
+	transport transports.Transport
+	raddr     net.Addr
+	conn      net.Conn
 }
 
-type readOp struct {
-	msg  []byte
-	conn net.Conn
+type message struct {
+	TID         tracer.ID
+	Data        []byte
+	Pipe        *pipe
+	IsHandshake bool
 }
 
-func (p *pipe) AddConnection(conn net.Conn) (ok bool) {
-	if conn == nil || p == nil {
-		return false
+type pipeDelegate interface {
+	received(msg message)
+}
+
+func newMessage(msg []byte, p *pipe) message {
+	isHandshake := false
+	if len(msg) >= 3 && msg[0] == 0 && msg[1] == 1 {
+		isHandshake = true
+	}
+
+	return message{tracer.NewID(), msg, p, isHandshake}
+}
+
+func newPipe(t transports.Transport, conn net.Conn, addr net.Addr, delegate pipeDelegate) *pipe {
+	p := &pipe{transport: t, conn: conn, raddr: addr, delegate: delegate}
+
+	if p.conn == nil && p.raddr == nil {
+		panic("no connection information")
+	}
+
+	if p.raddr == nil {
+		p.raddr = p.conn.RemoteAddr()
+	}
+
+	if p.conn != nil {
+		p.wg.Add(1)
+		go p.reader(p.conn)
+	}
+
+	return p
+}
+
+func (p *pipe) dial() (net.Conn, error) {
+	var (
+		conn   net.Conn
+		closed bool
+		dialed bool
+		err    error
+	)
+
+	p.mtx.RLock()
+	conn = p.conn
+	closed = p.closed
+	p.mtx.RUnlock()
+
+	if closed {
+		return nil, io.EOF
+	}
+	if conn != nil {
+		return conn, err
 	}
 
 	p.mtx.Lock()
-	found := false
-	for _, other := range p.connections {
-		if other == conn {
-			found = true
-			break
+	if p.closed {
+		err = io.EOF
+	} else if p.conn == nil {
+		conn, err = p.transport.Dial(p.raddr)
+		if err == nil {
+			p.conn = conn
+			dialed = true
 		}
 	}
-	if found {
-		p.mtx.Unlock()
-		return false
-	}
-	p.connections = append(p.connections, conn)
+	conn = p.conn
 	p.mtx.Unlock()
 
-	p.wg.Add(1)
-	go p.reader(conn)
+	if err != nil {
+		return nil, err
+	}
 
-	return true
+	if dialed {
+		p.wg.Add(1)
+		go p.reader(p.conn)
+	}
+
+	return conn, nil
 }
 
-func (p *pipe) removeConnection(conn net.Conn) {
-	if conn == nil || p == nil {
-		return
+func (p *pipe) RemoteAddr() net.Addr {
+	return p.raddr
+}
+
+func (p *pipe) Write(b []byte) (int, error) {
+	conn, err := p.dial()
+	if err != nil {
+		return 0, err
 	}
 
-	// ensure conn is closed
-	conn.Close()
+	return conn.Write(b)
+}
+
+func (p *pipe) Close() error {
+	var (
+		conn   net.Conn
+		closed bool
+		err    error
+	)
+
+	p.mtx.RLock()
+	conn, closed = p.conn, p.closed
+	p.mtx.RUnlock()
+
+	if closed {
+		return nil
+	}
 
 	p.mtx.Lock()
-	for idx, other := range p.connections {
-		if other == conn {
-			copy(p.connections[idx:], p.connections[idx+1:])
-			p.connections = p.connections[:len(p.connections)-1]
-			break
-		}
-	}
+	conn, closed = p.conn, p.closed
+	p.conn, p.closed = nil, true
 	p.mtx.Unlock()
+
+	if conn != nil {
+		err = conn.Close()
+	}
+
+	p.wg.Wait()
+	return err
 }
 
 func (p *pipe) reader(conn net.Conn) {
-	defer p.wg.Done()
-	defer p.removeConnection(conn)
+	defer func() {
+		p.mtx.Lock()
+		if p.conn == conn {
+			p.conn = nil
+		}
+		p.mtx.Unlock()
 
-	var (
-		b []byte
-	)
+		p.wg.Done()
+	}()
 
 	for {
-		if b == nil {
-			b = bufpool.GetBuffer()
-		}
+		buf := bufpool.GetBuffer()
 
-		n, err := conn.Read(b)
-
-		if err == nil {
-			p.cRead <- readOp{b[:n], conn}
-			b = nil
-			continue
-		}
-
-		if neterr, ok := err.(net.Error); ok && neterr.Temporary() {
-			time.Sleep(20 * time.Millisecond)
-			continue
-		}
-
+		n, err := conn.Read(buf)
 		if err != nil {
 			return
 		}
-	}
-}
 
-func (p *pipe) Read(b []byte) (n int, conn net.Conn, err error) {
-	op, ok := <-p.cRead
-	if !ok {
-		return 0, nil, io.EOF
+		p.delegate.received(newMessage(buf[:n], p))
 	}
-
-	copy(b, op.msg)
-	return len(op.msg), op.conn, nil
 }

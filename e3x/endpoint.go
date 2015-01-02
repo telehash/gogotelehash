@@ -46,13 +46,6 @@ type Endpoint struct {
 	listeners map[string]*Listener
 }
 
-type opRead struct {
-	msg []byte
-	src net.Addr
-	err error
-	TID tracer.ID
-}
-
 type EndpointOption func(e *Endpoint) error
 
 func Open(options ...EndpointOption) (*Endpoint, error) {
@@ -103,6 +96,10 @@ func (e *Endpoint) getTID() tracer.ID {
 	return e.TID
 }
 
+func (e *Endpoint) getTransport() transports.Transport {
+	return e.transport
+}
+
 func (e *Endpoint) traceError(err error) error {
 	if tracer.Enabled && err != nil {
 		tracer.Emit("endpoint.error", tracer.Info{
@@ -130,37 +127,38 @@ func (e *Endpoint) traceStarted() {
 	}
 }
 
-func (e *Endpoint) traceReceivedPacket(op opRead) {
+func (e *Endpoint) traceReceivedPacket(msg message) {
 	if tracer.Enabled {
 		pkt := tracer.Info{
-			"msg": base64.StdEncoding.EncodeToString(op.msg),
+			"msg": base64.StdEncoding.EncodeToString(msg.Data),
 		}
 
-		if op.src != nil {
-			pkt["src"] = op.src.String()
+		if msg.Pipe != nil {
+			pkt["src"] = msg.Pipe.raddr.String()
 		}
 
 		tracer.Emit("endpoint.rcv.packet", tracer.Info{
 			"endpoint_id": e.TID,
-			"packet_id":   op.TID,
+			"packet_id":   msg.TID,
 			"packet":      pkt,
 		})
 	}
 }
 
-func (e *Endpoint) traceDroppedPacket(op opRead, reason string) {
+func (e *Endpoint) traceDroppedPacket(msg []byte, conn net.Conn, reason string) {
 	if tracer.Enabled {
 		pkt := tracer.Info{
-			"msg": base64.StdEncoding.EncodeToString(op.msg),
+			"msg": base64.StdEncoding.EncodeToString(msg),
 		}
 
-		if op.src != nil {
-			pkt["src"] = op.src.String()
+		if conn != nil {
+			pkt["src"] = conn.RemoteAddr()
+			pkt["dst"] = conn.LocalAddr()
 		}
 
 		tracer.Emit("endpoint.drop.packet", tracer.Info{
 			"endpoint_id": e.TID,
-			"packet_id":   op.TID,
+			"packet_id":   tracer.NewID(),
 			"reason":      reason,
 			"packet":      pkt,
 		})
@@ -384,12 +382,117 @@ func (e *Endpoint) close() error {
 func (e *Endpoint) acceptConnections() {
 	for {
 		conn, err := e.transport.Accept()
+		if err == io.EOF {
+			return
+		}
 		if err != nil {
 			panic(err)
 		}
 
 		e.accept(conn)
 	}
+}
+
+func (e *Endpoint) accept(conn net.Conn) {
+	var (
+		token cipherset.Token
+		buf   [1500]byte
+		msg   []byte
+		err   error
+		n     int
+	)
+	n, err = conn.Read(buf[:])
+	if err != nil {
+		return
+	}
+	msg = buf[:n]
+
+	// msg is either a handshake or a channel packet
+	// when msg is a handshake decrypt it and pass it to the associated exchange
+	// when msg is a channel packet lookup the exchange and pass it the msg
+	// always associate the conn with the exchange
+
+	if len(msg) < 2 {
+		return // to short
+	}
+
+	token = cipherset.ExtractToken(msg)
+	e.mtx.Lock()
+	exchange := e.tokens[token]
+	e.mtx.Unlock()
+
+	if exchange != nil {
+		exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
+		return
+	}
+
+	if len(msg) < 3 || msg[0] != 0 || msg[1] != 1 {
+		return // to short
+	}
+
+	localIdent, err := e.LocalIdentity()
+	if err != nil {
+		e.traceDroppedPacket(msg, conn, err.Error())
+		return // drop
+	}
+
+	// handle handshakes
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	var (
+		csid = msg[2]
+		key  = e.keys[csid]
+	)
+	if key == nil {
+		return // no key for csid
+	}
+
+	handshake, err := cipherset.DecryptHandshake(csid, key, msg[3:])
+	if err != nil {
+		e.traceDroppedPacket(msg, conn, err.Error())
+		return // drop
+	}
+
+	hn, err := hashname.FromKeyAndIntermediates(csid,
+		handshake.PublicKey().Public(), handshake.Parts())
+	if err != nil {
+		e.traceDroppedPacket(msg, conn, err.Error())
+		return // drop
+	}
+
+	exchange = e.hashnames[hn]
+	if exchange != nil {
+		oldLocalToken := exchange.LocalToken()
+		oldRemoteToken := exchange.RemoteToken()
+		exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
+		newLocalToken := exchange.LocalToken()
+		newRemoteToken := exchange.RemoteToken()
+
+		if oldLocalToken != newLocalToken {
+			delete(e.tokens, oldLocalToken)
+			e.tokens[newLocalToken] = exchange
+		}
+
+		if oldRemoteToken != newRemoteToken {
+			delete(e.tokens, oldRemoteToken)
+			e.tokens[newRemoteToken] = exchange
+		}
+
+		return
+	}
+
+	exchange, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
+	if err != nil {
+		e.traceDroppedPacket(msg, conn, err.Error())
+		return // drop
+	}
+
+	e.hashnames[hn] = exchange
+	e.tokens[exchange.LocalToken()] = exchange
+	e.tokens[exchange.RemoteToken()] = exchange
+	exchange.state = ExchangeDialing
+	exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
 }
 
 func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
@@ -400,131 +503,140 @@ func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
 	if x != nil {
 		delete(e.hashnames, x.remoteIdent.Hashname())
 		delete(e.tokens, x.LocalToken())
+		delete(e.tokens, x.RemoteToken())
 	}
 
 }
 
-func (e *Endpoint) received(op opRead) {
-	e.traceReceivedPacket(op)
+// func (e *Endpoint) received(op opRead) {
+// 	e.traceReceivedPacket(op)
 
-	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
-		e.mtx.Lock()
-		defer e.mtx.Unlock()
+// 	if len(op.msg) >= 3 && op.msg[0] == 0 && op.msg[1] == 1 {
+// 		e.mtx.Lock()
+// 		defer e.mtx.Unlock()
 
-		e.receivedHandshake(op)
-		return
-	}
+// 		e.receivedHandshake(op)
+// 		return
+// 	}
 
-	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
-		e.receivedPacket(op)
-		return
-	}
+// 	if len(op.msg) >= 2 && op.msg[0] == 0 && op.msg[1] == 0 {
+// 		e.receivedPacket(op)
+// 		return
+// 	}
 
-	// drop
-	const dropReason = "invalid lob packet"
-	e.traceDroppedPacket(op, dropReason)
-}
+// 	// drop
+// 	const dropReason = "invalid lob packet"
+// 	e.traceDroppedPacket(op, dropReason)
+// }
 
-func (e *Endpoint) receivedHandshake(op opRead) {
-	const (
-		dropInvalidPacket   = "invalid lob packet"
-		dropUnsupportedCSID = "unsupported CSID"
-	)
+// func (e *Endpoint) receivedHandshake(op opRead) {
+// 	const (
+// 		dropInvalidPacket   = "invalid lob packet"
+// 		dropUnsupportedCSID = "unsupported CSID"
+// 	)
 
-	var (
-		x          *Exchange
-		localIdent *Identity
-		csid       uint8
-		localKey   cipherset.Key
-		handshake  cipherset.Handshake
-		token      cipherset.Token
-		hn         hashname.H
-		err        error
-	)
+// 	var (
+// 		x          *Exchange
+// 		localIdent *Identity
+// 		csid       uint8
+// 		localKey   cipherset.Key
+// 		handshake  cipherset.Handshake
+// 		token      cipherset.Token
+// 		hn         hashname.H
+// 		err        error
+// 	)
 
-	token = cipherset.ExtractToken(op.msg)
-	if token == cipherset.ZeroToken {
-		e.traceDroppedPacket(op, dropInvalidPacket)
-		return // drop
-	}
+// 	token = cipherset.ExtractToken(op.msg)
+// 	if token == cipherset.ZeroToken {
+// 		e.traceDroppedPacket(op, dropInvalidPacket)
+// 		return // drop
+// 	}
 
-	localIdent, err = e.LocalIdentity()
-	if err != nil {
-		e.traceDroppedPacket(op, err.Error())
-		return // drop
-	}
+// 	localIdent, err = e.LocalIdentity()
+// 	if err != nil {
+// 		e.traceDroppedPacket(op, err.Error())
+// 		return // drop
+// 	}
 
-	csid = uint8(op.msg[2])
-	localKey = localIdent.keys[csid]
-	if localKey == nil {
-		e.traceDroppedPacket(op, dropUnsupportedCSID)
-		return // drop
-	}
+// 	csid = uint8(op.msg[2])
+// 	localKey = localIdent.keys[csid]
+// 	if localKey == nil {
+// 		e.traceDroppedPacket(op, dropUnsupportedCSID)
+// 		return // drop
+// 	}
 
-	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.msg[3:])
-	if err != nil {
-		e.traceDroppedPacket(op, err.Error())
-		return // drop
-	}
+// 	handshake, err = cipherset.DecryptHandshake(csid, localKey, op.msg[3:])
+// 	if err != nil {
+// 		e.traceDroppedPacket(op, err.Error())
+// 		return // drop
+// 	}
 
-	hn, err = hashname.FromKeyAndIntermediates(csid,
-		handshake.PublicKey().Public(), handshake.Parts())
-	if err != nil {
-		e.traceDroppedPacket(op, err.Error())
-		return // drop
-	}
+// 	hn, err = hashname.FromKeyAndIntermediates(csid,
+// 		handshake.PublicKey().Public(), handshake.Parts())
+// 	if err != nil {
+// 		e.traceDroppedPacket(op, err.Error())
+// 		return // drop
+// 	}
 
-	x = e.hashnames[hn]
-	if x != nil {
-		oldToken := x.LocalToken()
-		x.received(op)
-		newToken := x.LocalToken()
+// 	x = e.hashnames[hn]
+// 	if x != nil {
+// 		oldLocalToken := x.LocalToken()
+// 		oldRemoteToken := x.RemoteToken()
+// 		x.received(op)
+// 		newLocalToken := x.LocalToken()
+// 		newRemoteToken := x.RemoteToken()
 
-		if oldToken != newToken {
-			delete(e.tokens, oldToken)
-			e.tokens[newToken] = x
-		}
+// 		if oldLocalToken != newLocalToken {
+// 			delete(e.tokens, oldLocalToken)
+// 			e.tokens[newLocalToken] = x
+// 		}
 
-		return
-	}
+// 		if oldRemoteToken != newRemoteToken {
+// 			delete(e.tokens, oldRemoteToken)
+// 			e.tokens[newRemoteToken] = x
+// 		}
 
-	x, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
-	if err != nil {
-		e.traceDroppedPacket(op, err.Error())
-		return // drop
-	}
+// 		return
+// 	}
 
-	e.hashnames[hn] = x
-	e.tokens[x.LocalToken()] = x
-	x.state = ExchangeDialing
-	x.received(op)
-}
+// 	x, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
+// 	if err != nil {
+// 		e.traceDroppedPacket(op, err.Error())
+// 		return // drop
+// 	}
 
-func (e *Endpoint) receivedPacket(op opRead) {
-	const (
-		dropInvalidPacket   = "invalid lob packet"
-		dropUnknownExchange = "unknown exchange"
-	)
+// 	e.hashnames[hn] = x
+// 	e.tokens[x.LocalToken()] = x
+// 	e.tokens[x.RemoteToken()] = x
+// 	x.state = ExchangeDialing
+// 	x.received(op)
+// }
 
-	var (
-		token = cipherset.ExtractToken(op.msg)
-	)
+// func (e *Endpoint) receivedPacket(op opRead) {
+// 	const (
+// 		dropInvalidPacket   = "invalid lob packet"
+// 		dropUnknownExchange = "unknown exchange"
+// 	)
 
-	if token == cipherset.ZeroToken {
-		e.traceDroppedPacket(op, dropInvalidPacket)
-		return // drop
-	}
+// 	var (
+// 		token = cipherset.ExtractToken(op.msg)
+// 	)
 
-	e.mtx.Lock()
-	x := e.tokens[token]
-	e.mtx.Unlock()
-	if x == nil {
-		e.traceDroppedPacket(op, dropUnknownExchange)
-		return // drop
-	}
+// 	if token == cipherset.ZeroToken {
+// 		e.traceDroppedPacket(op, dropInvalidPacket)
+// 		return // drop
+// 	}
 
-	x.received(op)
-}
+// 	e.mtx.Lock()
+// 	x := e.tokens[token]
+// 	e.mtx.Unlock()
+// 	if x == nil {
+// 		e.traceDroppedPacket(op, dropUnknownExchange)
+// 		return // drop
+// 	}
+
+// 	x.received(op)
+// }
 
 func (e *Endpoint) Identify(i Identifier) (*Identity, error) {
 	return i.Identify(e)
@@ -601,10 +713,6 @@ func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
 
 func (e *Endpoint) Module(key interface{}) Module {
 	return e.modules[key]
-}
-
-func (e *Endpoint) writeMessage(p []byte, dst net.Addr) error {
-	return e.transport.WriteMessage(p, dst)
 }
 
 func (e *Endpoint) Log() *logs.Logger {

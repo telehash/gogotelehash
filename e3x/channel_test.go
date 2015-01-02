@@ -61,7 +61,7 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 }
 
 func TestBasicUnrealiable(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	var (
@@ -118,7 +118,7 @@ func TestBasicUnrealiable(t *testing.T) {
 }
 
 func TestBasicRealiable(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	var (
@@ -200,7 +200,7 @@ func TestBasicRealiable(t *testing.T) {
 }
 
 func TestPingPong(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
@@ -249,7 +249,7 @@ func TestPingPong(t *testing.T) {
 }
 
 func TestPingPongReliable(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {

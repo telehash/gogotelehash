@@ -26,6 +26,7 @@ const (
 )
 
 type addressBookEntry struct {
+	Pipe                *pipe
 	Address             net.Addr
 	SendHandshakeAt     time.Time
 	ReceivedHandshakeAt time.Time
@@ -42,12 +43,12 @@ func newAddressBook(log *logs.Logger) *addressBook {
 	return &addressBook{log: log.Module("addrbook")}
 }
 
-func (book *addressBook) ActiveAddress() net.Addr {
+func (book *addressBook) ActiveConnection() *pipe {
 	if book.active == nil {
 		return nil
 	}
 
-	return book.active.Address
+	return book.active.Pipe
 }
 
 func (book *addressBook) KnownAddresses() []net.Addr {
@@ -58,13 +59,13 @@ func (book *addressBook) KnownAddresses() []net.Addr {
 	return s
 }
 
-func (book *addressBook) HandshakeAddresses() []net.Addr {
-	s := make([]net.Addr, 0, len(book.known))
+func (book *addressBook) HandshakePipes() []*pipe {
+	s := make([]*pipe, 0, len(book.known))
 	for _, e := range book.known {
 		if !e.IsBackup {
 			continue
 		}
-		s = append(s, e.Address)
+		s = append(s, e.Pipe)
 	}
 	return s
 }
@@ -143,10 +144,18 @@ func (book *addressBook) NextHandshakeEpoch() {
 
 }
 
-func (book *addressBook) AddAddress(addr net.Addr) {
+func (book *addressBook) PipeToAddr(addr net.Addr) *pipe {
+	idx := book.indexOf(addr)
+	if idx >= 0 {
+		return book.known[idx].Pipe
+	}
+	return nil
+}
+
+func (book *addressBook) AddPipe(p *pipe) {
 	var (
 		now = time.Now()
-		idx = book.indexOf(addr)
+		idx = book.indexOfPipe(p)
 		e   *addressBookEntry
 	)
 
@@ -154,7 +163,7 @@ func (book *addressBook) AddAddress(addr net.Addr) {
 		return
 	}
 
-	e = &addressBookEntry{Address: addr}
+	e = &addressBookEntry{Address: p.raddr, Pipe: p}
 	e.Added = now
 	e.ExpireAt = now.Add(2 * time.Minute)
 	e.Reachable = true
@@ -170,9 +179,9 @@ func (book *addressBook) AddAddress(addr net.Addr) {
 	}
 }
 
-func (book *addressBook) SentHandshake(addr net.Addr) {
+func (book *addressBook) SentHandshake(pipe *pipe) {
 	var (
-		idx = book.indexOf(addr)
+		idx = book.indexOfPipe(pipe)
 	)
 
 	if idx < 0 {
@@ -183,14 +192,14 @@ func (book *addressBook) SentHandshake(addr net.Addr) {
 	e.SendHandshakeAt = time.Now()
 }
 
-func (book *addressBook) ReceivedHandshake(addr net.Addr) {
+func (book *addressBook) ReceivedHandshake(p *pipe) {
 	var (
-		idx = book.indexOf(addr)
+		idx = book.indexOfPipe(p)
 		e   *addressBookEntry
 	)
 
 	if idx < 0 {
-		book.AddAddress(addr)
+		book.AddPipe(p)
 		return
 	}
 
@@ -203,6 +212,15 @@ func (book *addressBook) ReceivedHandshake(addr net.Addr) {
 func (book *addressBook) indexOf(addr net.Addr) int {
 	for i, e := range book.known {
 		if transports.EqualAddr(e.Address, addr) {
+			return i
+		}
+	}
+	return -1
+}
+
+func (book *addressBook) indexOfPipe(pipe *pipe) int {
+	for i, e := range book.known {
+		if e.Pipe == pipe {
 			return i
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/util/bufpool"
 	"github.com/telehash/gogotelehash/util/logs"
 	"github.com/telehash/gogotelehash/util/tracer"
@@ -94,9 +95,9 @@ type Exchange struct {
 }
 
 type endpointI interface {
-	writeMessage([]byte, net.Addr) error
 	listener(channelType string) *Listener
 	getTID() tracer.ID
+	getTransport() transports.Transport
 }
 
 func (x *Exchange) State() ExchangeState {
@@ -157,7 +158,7 @@ func newExchange(
 		x.csid = csid
 
 		for _, addr := range remoteIdent.addrs {
-			x.addressBook.AddAddress(addr)
+			x.addressBook.AddPipe(newPipe(x.endpoint.getTransport(), nil, addr, x))
 		}
 	}
 
@@ -228,11 +229,11 @@ func (x *Exchange) traceStopped() {
 	}
 }
 
-func (x *Exchange) traceDroppedHandshake(op opRead, handshake cipherset.Handshake, reason string) {
+func (x *Exchange) traceDroppedHandshake(msg message, handshake cipherset.Handshake, reason string) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"exchange_id": x.TID,
-			"packet_id":   op.TID,
+			"packet_id":   msg.TID,
 			"reason":      reason,
 		}
 
@@ -249,11 +250,11 @@ func (x *Exchange) traceDroppedHandshake(op opRead, handshake cipherset.Handshak
 	}
 }
 
-func (x *Exchange) traceReceivedHandshake(op opRead, handshake cipherset.Handshake) {
+func (x *Exchange) traceReceivedHandshake(msg message, handshake cipherset.Handshake) {
 	if tracer.Enabled {
 		tracer.Emit("exchange.rcv.handshake", tracer.Info{
 			"exchange_id": x.TID,
-			"packet_id":   op.TID,
+			"packet_id":   msg.TID,
 			"handshake": tracer.Info{
 				"csid":       fmt.Sprintf("%x", handshake.CSID()),
 				"parts":      handshake.Parts(),
@@ -264,11 +265,11 @@ func (x *Exchange) traceReceivedHandshake(op opRead, handshake cipherset.Handsha
 	}
 }
 
-func (x *Exchange) traceDroppedPacket(op opRead, pkt *lob.Packet, reason string) {
+func (x *Exchange) traceDroppedPacket(msg message, pkt *lob.Packet, reason string) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"exchange_id": x.TID,
-			"packet_id":   op.TID,
+			"packet_id":   msg.TID,
 			"reason":      reason,
 		}
 
@@ -283,11 +284,11 @@ func (x *Exchange) traceDroppedPacket(op opRead, pkt *lob.Packet, reason string)
 	}
 }
 
-func (x *Exchange) traceReceivedPacket(op opRead, pkt *lob.Packet) {
+func (x *Exchange) traceReceivedPacket(msg message, pkt *lob.Packet) {
 	if tracer.Enabled {
 		tracer.Emit("exchange.rcv.packet", tracer.Info{
 			"exchange_id": x.TID,
-			"packet_id":   op.TID,
+			"packet_id":   msg.TID,
 			"packet": tracer.Info{
 				"header": pkt.Header(),
 				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
@@ -303,7 +304,7 @@ func (x *Exchange) Dial() error {
 
 	if x.state == 0 {
 		x.state = ExchangeDialing
-		x.deliverHandshake(0, nil)
+		x.deliverHandshake()
 		x.rescheduleHandshake()
 	}
 
@@ -337,7 +338,7 @@ func (x *Exchange) RemoteIdentity() *Identity {
 // ActivePath returns the path that is currently used for channel packets.
 func (x *Exchange) ActivePath() net.Addr {
 	x.mtx.Lock()
-	addr := x.addressBook.ActiveAddress()
+	addr := x.addressBook.ActiveConnection().RemoteAddr()
 	x.mtx.Unlock()
 	return addr
 }
@@ -350,14 +351,14 @@ func (x *Exchange) KnownPaths() []net.Addr {
 	return addrs
 }
 
-func (x *Exchange) received(op opRead) {
-	if len(op.msg) >= 3 && op.msg[1] == 1 {
-		x.receivedHandshake(op)
+func (x *Exchange) received(msg message) {
+	if msg.IsHandshake {
+		x.receivedHandshake(msg)
 	} else {
-		x.receivedPacket(op)
+		x.receivedPacket(msg)
 	}
 
-	bufpool.PutBuffer(op.msg)
+	bufpool.PutBuffer(msg.Data)
 }
 
 func (x *Exchange) onDeliverHandshake() {
@@ -365,34 +366,26 @@ func (x *Exchange) onDeliverHandshake() {
 	defer x.mtx.Unlock()
 
 	x.rescheduleHandshake()
-	x.deliverHandshake(0, nil)
+	x.deliverHandshake()
 }
 
-func (x *Exchange) deliverHandshake(seq uint32, addr net.Addr) error {
-	// e.addressBook.id, e, addr == nil, addr)
-
+func (x *Exchange) deliverHandshake() error {
 	var (
 		pktData []byte
-		addrs   []net.Addr
 		err     error
 	)
 
-	if addr != nil {
-		addrs = append(addrs, addr)
-	} else {
-		x.addressBook.NextHandshakeEpoch()
-		addrs = x.addressBook.HandshakeAddresses()
-	}
+	x.addressBook.NextHandshakeEpoch()
 
-	pktData, err = x.generateHandshake(seq)
+	pktData, err = x.generateHandshake(0)
 	if err != nil {
 		return err
 	}
 
-	for _, addr := range addrs {
-		err := x.endpoint.writeMessage(pktData, addr)
+	for _, pipe := range x.addressBook.HandshakePipes() {
+		_, err := pipe.Write(pktData)
 		if err == nil {
-			x.addressBook.SentHandshake(addr)
+			x.addressBook.SentHandshake(pipe)
 		}
 	}
 
@@ -418,7 +411,7 @@ func (x *Exchange) rescheduleHandshake() {
 	x.tDeliverHandshake.Reset(d)
 }
 
-func (x *Exchange) receivedPacket(op opRead) {
+func (x *Exchange) receivedPacket(msg message) {
 	const (
 		dropInvalidPacket         = "invalid lob packet"
 		dropExchangeIsNotOpen     = "exchange is not open"
@@ -433,23 +426,23 @@ func (x *Exchange) receivedPacket(op opRead) {
 		x.mtx.Unlock()
 
 		if !state.IsOpen() {
-			x.traceDroppedPacket(op, nil, dropExchangeIsNotOpen)
+			x.traceDroppedPacket(msg, nil, dropExchangeIsNotOpen)
 			return // drop
 		}
 	}
 
-	pkt, err := lob.Decode(op.msg)
+	pkt, err := lob.Decode(msg.Data)
 	if err != nil {
-		x.traceDroppedPacket(op, nil, dropInvalidPacket)
+		x.traceDroppedPacket(msg, nil, dropInvalidPacket)
 		return // drop
 	}
 
 	pkt, err = x.cipher.DecryptPacket(pkt)
 	if err != nil {
-		x.traceDroppedPacket(op, nil, err.Error())
+		x.traceDroppedPacket(msg, nil, err.Error())
 		return // drop
 	}
-	pkt.TID = op.TID
+	pkt.TID = msg.TID
 	var (
 		hdr          = pkt.Header()
 		cid, hasC    = hdr.C, hdr.HasC
@@ -460,7 +453,7 @@ func (x *Exchange) receivedPacket(op opRead) {
 
 	if !hasC {
 		// drop: missing "c"
-		x.traceDroppedPacket(op, pkt, dropMissingChannelID)
+		x.traceDroppedPacket(msg, pkt, dropMissingChannelID)
 		return
 	}
 
@@ -470,14 +463,14 @@ func (x *Exchange) receivedPacket(op opRead) {
 		if c == nil {
 			if !hasType {
 				x.mtx.Unlock()
-				x.traceDroppedPacket(op, pkt, dropMissingChannelType)
+				x.traceDroppedPacket(msg, pkt, dropMissingChannelType)
 				return // drop (missing typ)
 			}
 
 			listener := x.endpoint.listener(typ)
 			if listener == nil {
 				x.mtx.Unlock()
-				x.traceDroppedPacket(op, pkt, dropMissingChannelHandler)
+				x.traceDroppedPacket(msg, pkt, dropMissingChannelHandler)
 				return // drop (no handler)
 			}
 
@@ -503,11 +496,11 @@ func (x *Exchange) receivedPacket(op opRead) {
 		}
 	}
 
-	x.traceReceivedPacket(op, pkt)
+	x.traceReceivedPacket(msg, pkt)
 	c.receivedPacket(pkt)
 }
 
-func (x *Exchange) deliverPacket(pkt *lob.Packet, addr net.Addr) error {
+func (x *Exchange) deliverPacket(pkt *lob.Packet, p *pipe) error {
 	x.mtx.Lock()
 	for x.state == ExchangeDialing {
 		x.cndState.Wait()
@@ -515,8 +508,8 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, addr net.Addr) error {
 	if !x.state.IsOpen() {
 		return BrokenExchangeError(x.remoteIdent.Hashname())
 	}
-	if addr == nil {
-		addr = x.addressBook.ActiveAddress()
+	if p == nil {
+		p = x.addressBook.ActiveConnection()
 	}
 	x.mtx.Unlock()
 
@@ -530,7 +523,7 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, addr net.Addr) error {
 		return err
 	}
 
-	err = x.endpoint.writeMessage(msg, addr)
+	_, err = p.Write(msg)
 
 	bufpool.PutBuffer(pkt.Body)
 	bufpool.PutBuffer(msg)
@@ -748,7 +741,10 @@ func (x *Exchange) AddPathCandidate(addr net.Addr) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	x.addressBook.AddAddress(addr)
+	if x.addressBook.PipeToAddr(addr) == nil {
+		p := newPipe(x.endpoint.getTransport(), nil, addr, x)
+		x.addressBook.AddPipe(p)
+	}
 }
 
 // GenerateHandshake can be used to generate a new handshake packet.
@@ -795,10 +791,16 @@ func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src net.Addr) (
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
-	return x.applyHandshake(handshake, src)
+	p := x.addressBook.PipeToAddr(src)
+	if p == nil {
+		p = newPipe(x.endpoint.getTransport(), nil, src, x)
+		x.addressBook.AddPipe(p)
+	}
+
+	return x.applyHandshake(handshake, p)
 }
 
-func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src net.Addr) (response []byte, ok bool) {
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *pipe) (response []byte, ok bool) {
 	var (
 		seq uint32
 		err error
@@ -839,10 +841,10 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src net.Addr) (
 
 	if x.isLocalSeq(seq) {
 		x.resetBreak()
-		x.addressBook.ReceivedHandshake(src)
+		x.addressBook.ReceivedHandshake(pipe)
 
 	} else {
-		x.addressBook.AddAddress(src)
+		x.addressBook.AddPipe(pipe)
 
 		response, err = x.generateHandshake(seq)
 		if err != nil {
@@ -864,7 +866,7 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, src net.Addr) (
 	return response, true
 }
 
-func (x *Exchange) receivedHandshake(op opRead) bool {
+func (x *Exchange) receivedHandshake(msg message) bool {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
@@ -875,41 +877,41 @@ func (x *Exchange) receivedHandshake(op opRead) bool {
 		err       error
 	)
 
-	if len(op.msg) < 3 {
-		x.traceDroppedHandshake(op, nil, "invalid packet")
+	if !msg.IsHandshake {
+		x.traceDroppedHandshake(msg, nil, "invalid packet")
 		return false
 	}
 
-	pkt, err = lob.Decode(op.msg)
+	pkt, err = lob.Decode(msg.Data)
 	if err != nil {
-		x.traceDroppedHandshake(op, nil, err.Error())
+		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
 	if len(pkt.Head) != 1 {
-		x.traceDroppedHandshake(op, nil, "invalid header")
+		x.traceDroppedHandshake(msg, nil, "invalid header")
 		return false
 	}
 	csid = uint8(pkt.Head[0])
 
 	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
 	if err != nil {
-		x.traceDroppedHandshake(op, nil, err.Error())
+		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
-	resp, ok := x.applyHandshake(handshake, op.src)
+	resp, ok := x.applyHandshake(handshake, msg.Pipe)
 	if !ok {
-		x.traceDroppedHandshake(op, handshake, "failed to apply")
+		x.traceDroppedHandshake(msg, handshake, "failed to apply")
 		return false
 	}
 
 	x.lastRemoteSeq = handshake.At()
 
 	if resp != nil {
-		x.endpoint.writeMessage(resp, op.src)
+		msg.Pipe.Write(resp)
 	}
 
-	x.traceReceivedHandshake(op, handshake)
+	x.traceReceivedHandshake(msg, handshake)
 	return true
 }

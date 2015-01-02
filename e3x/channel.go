@@ -92,7 +92,7 @@ type Channel struct {
 }
 
 type exchangeI interface {
-	deliverPacket(pkt *lob.Packet, dst net.Addr) error
+	deliverPacket(pkt *lob.Packet, dst *pipe) error
 	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
 	getTID() tracer.ID
@@ -108,7 +108,7 @@ type writeBufferEntry struct {
 	pkt        *lob.Packet
 	end        bool
 	lastResend time.Time
-	dst        net.Addr
+	dst        *pipe
 }
 
 func newChannel(
@@ -168,15 +168,15 @@ func (c *Channel) traceNew() {
 	}
 }
 
-func (c *Channel) traceWriteError(pkt *lob.Packet, path net.Addr, reason error) error {
+func (c *Channel) traceWriteError(pkt *lob.Packet, p *pipe, reason error) error {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
 			"reason":     reason.Error(),
 		}
 
-		if path != nil {
-			info["path"] = path.String()
+		if p != nil {
+			info["path"] = p.RemoteAddr().String()
 		}
 
 		if pkt != nil {
@@ -192,14 +192,14 @@ func (c *Channel) traceWriteError(pkt *lob.Packet, path net.Addr, reason error) 
 	return reason
 }
 
-func (c *Channel) traceWrite(pkt *lob.Packet, path net.Addr) {
+func (c *Channel) traceWrite(pkt *lob.Packet, p *pipe) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
 		}
 
-		if path != nil {
-			info["path"] = path.String()
+		if p != nil {
+			info["path"] = p.RemoteAddr().String()
 		}
 
 		if pkt != nil {
@@ -276,7 +276,7 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	return c.WritePacketTo(pkt, nil)
 }
 
-func (c *Channel) WritePacketTo(pkt *lob.Packet, path net.Addr) error {
+func (c *Channel) WritePacketTo(pkt *lob.Packet, p *pipe) error {
 	if c == nil {
 		return os.ErrInvalid
 	}
@@ -286,7 +286,7 @@ func (c *Channel) WritePacketTo(pkt *lob.Packet, path net.Addr) error {
 		c.cndWrite.Wait()
 	}
 
-	err := c.write(pkt, path)
+	err := c.write(pkt, p)
 
 	if !c.blockWrite() {
 		c.cndWrite.Signal()
@@ -326,7 +326,7 @@ func (c *Channel) blockWrite() bool {
 	return false
 }
 
-func (c *Channel) write(pkt *lob.Packet, path net.Addr) error {
+func (c *Channel) write(pkt *lob.Packet, p *pipe) error {
 	if pkt.TID == 0 {
 		pkt.TID = tracer.NewID()
 	}
@@ -334,21 +334,21 @@ func (c *Channel) write(pkt *lob.Packet, path net.Addr) error {
 	if c.broken {
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			&BrokenChannelError{c.hashname, c.typ, c.id})
 	}
 
 	if c.writeDeadlineReached {
 		// When a channel reached a write deadline then all writes
 		// must return a ErrTimeout.
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			ErrTimeout)
 	}
 
 	if c.deliveredEnd {
 		// When a channel sent a packet with the "end" header set
 		// then all subsequent writes must return io.EOF
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			io.EOF)
 	}
 
@@ -372,13 +372,13 @@ func (c *Channel) write(pkt *lob.Packet, path net.Addr) error {
 		if c.oSeq%30 == 0 || hdr.End {
 			c.applyAckHeaders(pkt)
 		}
-		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
+		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, p}
 		c.needsResend = false
 	}
 
-	err := c.x.deliverPacket(pkt, path)
+	err := c.x.deliverPacket(pkt, p)
 	if err != nil {
-		return c.traceWriteError(pkt, path, err)
+		return c.traceWriteError(pkt, p, err)
 	}
 	statChannelSndPkt.Add(1)
 	if pkt.Header().HasAck {
@@ -389,7 +389,7 @@ func (c *Channel) write(pkt *lob.Packet, path net.Addr) error {
 		c.unsetOpenDeadline()
 	}
 
-	c.traceWrite(pkt, path)
+	c.traceWrite(pkt, p)
 	return nil
 }
 
