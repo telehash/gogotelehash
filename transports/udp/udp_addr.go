@@ -1,6 +1,7 @@
 package udp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"net"
@@ -199,4 +200,18 @@ func (u *udpv4) MakeGlobal(ip net.IP, port int) net.Addr {
 
 func (u *udpv6) MakeGlobal(ip net.IP, port int) net.Addr {
 	return wrapAddr(&net.UDPAddr{IP: ip, Port: port})
+}
+
+func (u *udpv4) Equal(other net.Addr) bool {
+	if b, ok := other.(*udpv4); ok {
+		return bytes.Equal(u.IP.To4(), b.IP.To4()) && u.Port == b.Port
+	}
+	return false
+}
+
+func (u *udpv6) Equal(other net.Addr) bool {
+	if b, ok := other.(*udpv6); ok {
+		return bytes.Equal(u.IP.To16(), b.IP.To16()) && u.Port == b.Port
+	}
+	return false
 }

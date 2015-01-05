@@ -1,13 +1,11 @@
 package bridge
 
 import (
-	"net"
 	"sync"
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/internal/util/logs"
-	"github.com/telehash/gogotelehash/transports"
 )
 
 type Bridge interface {
@@ -52,12 +50,9 @@ func newBridge(e *e3x.Endpoint) *module {
 func (mod *module) Init() error {
 	mod.log = logs.Module("bridge").From(mod.e.LocalHashname())
 
-	e3x.TransportsFromEndpoint(mod.e).Wrap(func(c transports.Config) transports.Config {
-		return transportConfig{mod, c}
-	})
-
 	mod.e.DefaultExchangeHooks().Register(e3x.ExchangeHook{
-		OnClosed: mod.on_exchange_closed,
+		OnClosed:     mod.on_exchange_closed,
+		OnDropPacket: mod.on_dropped_packet,
 	})
 
 	return nil
@@ -111,95 +106,42 @@ func (mod *module) on_exchange_closed(e *e3x.Endpoint, x *e3x.Exchange, reason e
 	return nil
 }
 
-type transportConfig struct {
-	mod *module
-	c   transports.Config
-}
+func (mod *module) on_dropped_packet(e *e3x.Endpoint, x *e3x.Exchange, msg []byte, pipe *e3x.Pipe, reason error) error {
+	var (
+		token          = cipherset.ExtractToken(msg)
+		source, target = mod.lookupToken(token)
+	)
 
-func (c transportConfig) Open() (transports.Transport, error) {
-	t, err := c.c.Open()
-	if err != nil {
-		return nil, err
+	// not a bridged message
+	if source == nil {
+		return nil
 	}
-	return &transport{c.mod, t}, nil
-}
-
-type transport struct {
-	mod *module
-	t   transports.Transport
-}
-
-func (t *transport) Addrs() []net.Addr {
-	return t.t.Addrs()
-}
-
-func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
-	conn, err := t.t.Dial(addr)
-	if err != nil {
-		return nil, err
+	if len(msg) < 2 {
+		return nil
 	}
-	return &connection{t.mod, conn}, nil
-}
 
-func (t *transport) Accept() (net.Conn, error) {
-	conn, err := t.t.Accept()
-	if err != nil {
-		return nil, err
+	// detect message type
+	var (
+		msgtype = "PKT"
+		ex      = source
+	)
+	if msg[0] == 0 && msg[1] == 1 {
+		msgtype = "HDR"
+		ex = target
 	}
-	return &connection{t.mod, conn}, nil
-}
 
-func (t *transport) Close() error {
-	return t.t.Close()
-}
+	// handle bridged message
+	dst := ex.ActivePipe()
+	if dst == pipe {
+		return nil
+	}
 
-type connection struct {
-	mod *module
-	net.Conn
-}
-
-func (c *connection) Read(b []byte) (n int, err error) {
-	for {
-		n, err = c.Conn.Read(b)
-		if err != nil {
-			return n, err
-		}
-
-		buf := b[:n]
-
-		var (
-			token          = cipherset.ExtractToken(buf)
-			source, target = c.mod.lookupToken(token)
-		)
-
-		// not a bridged message
-		if source == nil {
-			return n, err
-		}
-		if n <= 2 {
-			return n, err
-		}
-
-		// detect message type
-		var (
-			msgtype = "PKT"
-			ex      = source
-		)
-		if buf[0] == 0 && buf[1] == 1 {
-			msgtype = "HDR"
-			ex = target
-		}
-
-		// handle bridged message
-		pipe := ex.ActivePipe()
-		_, err = pipe.Write(buf)
-		if err != nil {
-			// TODO handle error
-			c.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s error=%s\x1B[0m", msgtype, token, pipe, err)
-		} else {
-			c.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s\x1B[0m", msgtype, token, pipe)
-		}
-
-		// continue reading messages
+	_, err := dst.Write(msg)
+	if err != nil {
+		mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %s %x %s error=%s\x1B[0m", msgtype, ex, token, dst.RemoteAddr(), err)
+		return nil
+	} else {
+		mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %s %x %s\x1B[0m", msgtype, ex, token, dst.RemoteAddr())
+		return e3x.ErrStopPropagation
 	}
 }

@@ -34,6 +34,7 @@ func TestBridge(t *testing.T) {
 
 	var blacklist []net.Addr
 	blacklistRule := func(src net.Addr) bool {
+		t.Logf("FW(%v, src=%s)", blacklist, src)
 		if len(blacklist) == 0 {
 			return true
 		}
@@ -111,7 +112,15 @@ func TestBridge(t *testing.T) {
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
-	ABex, err := A.Dial(Bident)
+	// blacklist A
+	blacklist = append(blacklist, Aident.Addresses()...)
+	log.Println("\x1B[32mblacklist:\x1B[0m", blacklist)
+
+	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
+
+	ABex, err := A.CreateExchange(Bident)
+	assert.NoError(err)
+	BAex, err := B.CreateExchange(Aident)
 	assert.NoError(err)
 	BRex, err := B.Dial(Rident)
 	assert.NoError(err)
@@ -120,22 +129,33 @@ func TestBridge(t *testing.T) {
 	RAex, err := R.Dial(Aident)
 	assert.NoError(err)
 
-	time.Sleep(10 * time.Second)
-
-	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
-
-	// blacklist A
-	blacklist = append(blacklist, Aident.Addresses()...)
-	log.Println("\x1B[32mblacklist:\x1B[0m", blacklist)
-
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 	log.Printf("ab-local-token  = %x", ABex.LocalToken())
-	log.Printf("ab-remote-token = %x", ABex.RemoteToken())
+	log.Printf("ab-remote-token = %x", BAex.LocalToken())
 
 	bridge := FromEndpoint(R)
 	bridge.RouteToken(ABex.LocalToken(), RAex, RBex)
-	bridge.RouteToken(ABex.RemoteToken(), RBex, RAex)
+	bridge.RouteToken(BAex.LocalToken(), RBex, RAex)
 	ABex.AddPathCandidate(BRex.ActivePath())
+
+	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
+
+	doneC := make(chan bool)
+	go func() {
+		err = ABex.Dial()
+		assert.NoError(err)
+		doneC <- true
+	}()
+
+	go func() {
+		err = BAex.Dial()
+		assert.NoError(err)
+		doneC <- true
+	}()
+
+	time.Sleep(10 * time.Second)
+	<-doneC
+	<-doneC
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 

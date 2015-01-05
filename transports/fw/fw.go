@@ -1,6 +1,7 @@
 package fw
 
 import (
+	"errors"
 	"net"
 
 	"github.com/telehash/gogotelehash/transports"
@@ -43,6 +44,10 @@ func (fw *firewall) Addrs() []net.Addr {
 }
 
 func (fw *firewall) Dial(addr net.Addr) (net.Conn, error) {
+	if fw.rule != nil && !fw.rule.Match(addr) {
+		return nil, &net.OpError{Op: "dial", Net: addr.Network(), Addr: addr, Err: errors.New("unreachable host")}
+	}
+
 	return fw.t.Dial(addr)
 }
 

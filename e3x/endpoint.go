@@ -410,6 +410,7 @@ func (e *Endpoint) accept(conn net.Conn) {
 	)
 	n, err = conn.Read(buf[:])
 	if err != nil {
+		conn.Close()
 		return
 	}
 	msg = buf[:n]
@@ -420,6 +421,9 @@ func (e *Endpoint) accept(conn net.Conn) {
 	// always associate the conn with the exchange
 
 	if len(msg) < 2 {
+		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+			conn.Close()
+		}
 		return // to short
 	}
 
@@ -434,11 +438,17 @@ func (e *Endpoint) accept(conn net.Conn) {
 	}
 
 	if len(msg) < 3 || msg[0] != 0 || msg[1] != 1 {
+		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+			conn.Close()
+		}
 		return // to short
 	}
 
 	localIdent, err := e.LocalIdentity()
 	if err != nil {
+		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+			conn.Close()
+		}
 		e.traceDroppedPacket(msg, conn, err.Error())
 		return // drop
 	}
@@ -452,11 +462,17 @@ func (e *Endpoint) accept(conn net.Conn) {
 		key  = e.keys[csid]
 	)
 	if key == nil {
+		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+			conn.Close()
+		}
 		return // no key for csid
 	}
 
 	handshake, err := cipherset.DecryptHandshake(csid, key, msg[3:])
 	if err != nil {
+		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+			conn.Close()
+		}
 		e.traceDroppedPacket(msg, conn, err.Error())
 		return // drop
 	}
@@ -464,6 +480,9 @@ func (e *Endpoint) accept(conn net.Conn) {
 	hn, err := hashname.FromKeyAndIntermediates(csid,
 		handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
+		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+			conn.Close()
+		}
 		e.traceDroppedPacket(msg, conn, err.Error())
 		return // drop
 	}
@@ -491,6 +510,9 @@ func (e *Endpoint) accept(conn net.Conn) {
 
 	exchange, err = newExchange(localIdent, nil, handshake, e.log, registerEndpoint(e))
 	if err != nil {
+		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+			conn.Close()
+		}
 		e.traceDroppedPacket(msg, conn, err.Error())
 		return // drop
 	}

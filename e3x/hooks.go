@@ -25,11 +25,13 @@ type ChannelHooks struct {
 
 type EndpointHook struct {
 	OnNetChanged func(e *Endpoint, up, down []net.Addr) error
+	OnDropPacket func(e *Endpoint, msg []byte, conn net.Conn, reason error) error
 }
 
 type ExchangeHook struct {
-	OnOpened func(*Endpoint, *Exchange) error
-	OnClosed func(*Endpoint, *Exchange, error) error
+	OnOpened     func(*Endpoint, *Exchange) error
+	OnClosed     func(*Endpoint, *Exchange, error) error
+	OnDropPacket func(e *Endpoint, x *Exchange, msg []byte, pipe *Pipe, reason error) error
 }
 
 type ChannelHook struct {
@@ -97,6 +99,15 @@ func (s *EndpointHooks) NetChanged(up, down []net.Addr) error {
 	})
 }
 
+func (s *EndpointHooks) DropPacket(msg []byte, conn net.Conn, reason error) error {
+	return s.trigger(func(o EndpointHook) error {
+		if o.OnDropPacket == nil {
+			return nil
+		}
+		return o.OnDropPacket(s.endpoint, msg, conn, reason)
+	})
+}
+
 func (s *ExchangeHooks) Opened() error {
 	return s.trigger(func(o ExchangeHook) error {
 		if o.OnOpened == nil {
@@ -112,6 +123,15 @@ func (s *ExchangeHooks) Closed(reason error) error {
 			return nil
 		}
 		return o.OnClosed(s.endpoint, s.exchange, reason)
+	})
+}
+
+func (s *ExchangeHooks) DropPacket(msg []byte, pipe *Pipe, reason error) error {
+	return s.trigger(func(o ExchangeHook) error {
+		if o.OnDropPacket == nil {
+			return nil
+		}
+		return o.OnDropPacket(s.endpoint, s.exchange, msg, pipe, reason)
 	})
 }
 

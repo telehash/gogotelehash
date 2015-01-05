@@ -466,6 +466,7 @@ func (x *Exchange) receivedPacket(msg message) {
 		x.mtx.Unlock()
 
 		if !state.IsOpen() {
+			x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 			x.traceDroppedPacket(msg, nil, dropExchangeIsNotOpen)
 			return // drop
 		}
@@ -473,12 +474,14 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	pkt, err := lob.Decode(msg.Data)
 	if err != nil {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedPacket(msg, nil, dropInvalidPacket)
 		return // drop
 	}
 
 	pkt, err = x.cipher.DecryptPacket(pkt)
 	if err != nil {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedPacket(msg, nil, err.Error())
 		return // drop
 	}
@@ -493,6 +496,7 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	if !hasC {
 		// drop: missing "c"
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedPacket(msg, pkt, dropMissingChannelID)
 		return
 	}
@@ -503,6 +507,7 @@ func (x *Exchange) receivedPacket(msg message) {
 		if c == nil {
 			if !hasType {
 				x.mtx.Unlock()
+				x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 				x.traceDroppedPacket(msg, pkt, dropMissingChannelType)
 				return // drop (missing typ)
 			}
@@ -510,6 +515,7 @@ func (x *Exchange) receivedPacket(msg message) {
 			listener := x.listenerSet.Get(typ)
 			if listener == nil {
 				x.mtx.Unlock()
+				x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 				x.traceDroppedPacket(msg, pkt, dropMissingChannelHandler)
 				return // drop (no handler)
 			}
@@ -916,17 +922,20 @@ func (x *Exchange) receivedHandshake(msg message) bool {
 	)
 
 	if !msg.IsHandshake {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, nil, "invalid packet")
 		return false
 	}
 
 	pkt, err = lob.Decode(msg.Data)
 	if err != nil {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, err)
 		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
 	if len(pkt.Head) != 1 {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, nil, "invalid header")
 		return false
 	}
@@ -934,12 +943,14 @@ func (x *Exchange) receivedHandshake(msg message) bool {
 
 	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
 	if err != nil {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, err)
 		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
 	resp, ok := x.applyHandshake(handshake, msg.Pipe)
 	if !ok {
+		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, handshake, "failed to apply")
 		return false
 	}

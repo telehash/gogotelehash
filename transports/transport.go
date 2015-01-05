@@ -40,7 +40,7 @@ func EqualAddr(a, b net.Addr) bool {
 	if a == nil && b == nil {
 		return true
 	}
-	if a != nil && b != nil {
+	if a == nil || b == nil {
 		return false
 	}
 	if a.Network() != b.Network() {
