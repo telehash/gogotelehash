@@ -4,12 +4,11 @@ package paths
 import (
 	"encoding/json"
 	"io"
+	"net"
 	"time"
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/modules/mesh"
-	"github.com/telehash/gogotelehash/modules/netwatch"
 	"github.com/telehash/gogotelehash/transports"
 )
 
@@ -18,7 +17,6 @@ const moduleKey = "paths"
 type module struct {
 	endpoint *e3x.Endpoint
 	listener *e3x.Listener
-	mesh     mesh.Mesh
 }
 
 func Module() e3x.EndpointOption {
@@ -28,11 +26,13 @@ func Module() e3x.EndpointOption {
 }
 
 func (mod *module) Init() error {
-	observers := e3x.ObserversFromEndpoint(mod.endpoint)
-	observers.Register(mod.onNetChange)
-	observers.Register(mod.onNewLink)
+	mod.endpoint.Hooks().Register(e3x.EndpointHook{
+		OnNetChanged: mod.onNetChange,
+	})
+	mod.endpoint.DefaultExchangeHooks().Register(e3x.ExchangeHook{
+		OnOpened: mod.onNewLink,
+	})
 
-	mod.mesh = mesh.FromEndpoint(mod.endpoint)
 	mod.listener = mod.endpoint.Listen("path", false)
 	return nil
 }
@@ -47,18 +47,21 @@ func (mod *module) Stop() error {
 	return nil
 }
 
-func (mod *module) onNetChange(event *netwatch.ChangeEvent) {
-	if len(event.Up) == 0 {
-		return
+func (mod *module) onNetChange(e *e3x.Endpoint, up, down []net.Addr) error {
+	if len(up) == 0 {
+		return nil
 	}
 
-	for _, x := range mod.mesh.LinkedExchanges() {
+	for _, x := range e.GetExchanges() {
 		go mod.negotiatePaths(x)
 	}
+
+	return nil
 }
 
-func (mod *module) onNewLink(event *mesh.LinkUpEvent) {
-	mod.negotiatePaths(event.Exchange)
+func (mod *module) onNewLink(e *e3x.Endpoint, x *e3x.Exchange) error {
+	go mod.negotiatePaths(x)
+	return nil
 }
 
 func (mod *module) handlePathRequests() {
@@ -133,11 +136,11 @@ func (mod *module) handlePathRequest(c *e3x.Channel) {
 		}
 	}
 
-	var paths = c.Exchange().KnownPaths()
+	var pipes = c.Exchange().KnownPipes()
 
-	for _, path := range paths {
+	for _, pipe := range pipes {
 		pkt := &lob.Packet{}
-		pkt.Header().Set("path", path)
-		c.WritePacketTo(pkt, path)
+		pkt.Header().Set("path", pipe.RemoteAddr())
+		c.WritePacketTo(pkt, pipe)
 	}
 }

@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"runtime"
@@ -10,11 +11,11 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports/inproc"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 func withTwoEndpoints(t testing.TB, f func(a, b *Endpoint)) {
@@ -383,8 +384,10 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 			ident *Identity
 			pkt   *lob.Packet
 			err   error
+			body  = bytes.Repeat([]byte{'x'}, 1300)
 		)
 
+		b.SetBytes(int64(len(body)))
 		b.ResetTimer()
 
 		go func() {
@@ -401,7 +404,7 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				pkt := &lob.Packet{Body: []byte("Hello World!")}
+				pkt := &lob.Packet{Body: body}
 				err = c.WritePacket(pkt)
 				if err != nil {
 					b.Fatal(err)
@@ -454,8 +457,10 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 			ident *Identity
 			pkt   *lob.Packet
 			err   error
+			body  = bytes.Repeat([]byte{'x'}, 1300)
 		)
 
+		b.SetBytes(int64(len(body)))
 		b.ResetTimer()
 
 		go func() {
@@ -472,7 +477,7 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				pkt := &lob.Packet{Body: []byte("Hello World!")}
+				pkt := &lob.Packet{Body: body}
 				err = c.WritePacket(pkt)
 				if err != nil {
 					b.Fatal(err)

@@ -7,7 +7,6 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/transports"
 )
 
@@ -23,7 +22,6 @@ type Peers interface {
 
 type module struct {
 	e      *e3x.Endpoint
-	m      mesh.Mesh
 	config Config
 
 	mtx             sync.Mutex
@@ -74,11 +72,6 @@ func (mod *module) Init() error {
 	e3x.TransportsFromEndpoint(mod.e).Wrap(func(conf transports.Config) transports.Config {
 		return &transportConfig{conf, mod}
 	})
-
-	mod.m = mesh.FromEndpoint(mod.e)
-	if mod.m == nil {
-		panic("the peers module requires the mesh module")
-	}
 
 	return nil
 }

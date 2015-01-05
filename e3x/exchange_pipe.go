@@ -5,9 +5,9 @@ import (
 	"net"
 	"sync"
 
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/bufpool"
-	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 type Pipe struct {

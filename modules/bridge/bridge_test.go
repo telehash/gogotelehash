@@ -8,11 +8,11 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/fw"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 var log = logs.Module("test")

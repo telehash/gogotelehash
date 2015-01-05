@@ -2,6 +2,7 @@ package e3x
 
 import (
 	"errors"
+	"net"
 )
 
 var ErrStopPropagation = errors.New("observer: stop propagation")
@@ -23,6 +24,7 @@ type ChannelHooks struct {
 }
 
 type EndpointHook struct {
+	OnNetChanged func(e *Endpoint, up, down []net.Addr) error
 }
 
 type ExchangeHook struct {
@@ -84,6 +86,15 @@ func (h *ChannelHooks) trigger(f func(ChannelHook) error) error {
 		}
 	}
 	return nil
+}
+
+func (s *EndpointHooks) NetChanged(up, down []net.Addr) error {
+	return s.trigger(func(o EndpointHook) error {
+		if o.OnNetChanged == nil {
+			return nil
+		}
+		return o.OnNetChanged(s.endpoint, up, down)
+	})
 }
 
 func (s *ExchangeHooks) Opened() error {

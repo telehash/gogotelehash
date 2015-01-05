@@ -5,8 +5,8 @@ import (
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/mock"
 
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 type MockExchange struct {
@@ -21,10 +21,6 @@ func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst *Pipe) error {
 	pkt.TID = 0
 	args := m.Called(pkt)
 	return args.Error(0)
-}
-
-func (m *MockExchange) unregisterChannel(channelID uint32) {
-	m.Called(channelID)
 }
 
 func (m *MockExchange) RemoteIdentity() *Identity {

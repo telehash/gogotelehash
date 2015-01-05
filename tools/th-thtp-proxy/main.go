@@ -10,10 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/modules/mesh"
-	"github.com/telehash/gogotelehash/modules/netwatch"
-	"github.com/telehash/gogotelehash/modules/paths"
+	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/modules/thtp"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
@@ -21,7 +18,7 @@ import (
 )
 
 func main() {
-	var peerIdentity *e3x.Identity
+	var peerIdentity *gogotelehash.Identity
 
 	err := json.NewDecoder(os.Stdin).Decode(&peerIdentity)
 	if err != nil {
@@ -33,11 +30,9 @@ func main() {
 		log.Fatalf("error: %s", err)
 	}
 
-	e, err := e3x.Open(
-		mesh.Module(nil),
-		paths.Module(),
-		netwatch.Module(),
-		e3x.Transport(nat.Config{
+	e, err := gogotelehash.Open(
+		gogotelehash.Paths(),
+		gogotelehash.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},

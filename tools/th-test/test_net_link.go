@@ -4,8 +4,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/modules/mesh"
+	"github.com/telehash/gogotelehash"
 )
 
 func init() {
@@ -15,9 +14,7 @@ func init() {
 }
 
 func NetLink_Worker(ctx *Context) error {
-	e, err := e3x.Open(
-		e3x.Log(ctx.Out),
-		mesh.Module(nil))
+	e, err := gogotelehash.Open()
 	if err != nil {
 		return err
 	}
@@ -37,9 +34,7 @@ func NetLink_Worker(ctx *Context) error {
 }
 
 func NetLink_Driver(ctx *Context) error {
-	e, err := e3x.Open(
-		e3x.Log(ctx.Out),
-		mesh.Module(nil))
+	e, err := gogotelehash.Open()
 	if err != nil {
 		return err
 	}
@@ -48,15 +43,12 @@ func NetLink_Driver(ctx *Context) error {
 		var ident = ctx.ReadIdentity("worker")
 		ctx.Ready()
 
-		m := mesh.FromEndpoint(e)
-		tag, err := m.Link(ident, nil)
+		_, err := e.Dial(ident)
 		if err != nil {
 			return err
 		}
 
 		time.Sleep(150 * time.Second)
-
-		tag.Release()
 	}
 
 	ctx.Done()

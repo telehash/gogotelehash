@@ -2,7 +2,7 @@ package lob
 
 import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
-	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"testing"
 )
 

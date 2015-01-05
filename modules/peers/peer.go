@@ -84,7 +84,7 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 	peer := hashname.H(peerStr)
 
 	// MUST have link to either endpoint
-	if !(mod.m.HasLink(ch.RemoteHashname()) || mod.m.HasLink(peer)) {
+	if mod.e.GetExchange(ch.RemoteHashname()) == nil && mod.e.GetExchange(peer) == nil {
 		log.Printf("drop: no link to either peer")
 		return
 	}
@@ -95,10 +95,7 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 		return
 	}
 
-	ex := mod.m.Exchange(peer)
-	if ex == nil {
-		ex, _ = mod.e.Dial(e3x.HashnameIdentifier(peer))
-	}
+	ex := mod.e.GetExchange(peer)
 	if ex == nil {
 		log.Printf("drop: no exchange to target")
 		// resolve?

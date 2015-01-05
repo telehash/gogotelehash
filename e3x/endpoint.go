@@ -10,11 +10,12 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/logs"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/mux"
+	"github.com/telehash/gogotelehash/transports/tcp"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/logs"
-	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 type endpointState uint8
@@ -45,9 +46,9 @@ type Endpoint struct {
 	exchangeHooks ExchangeHooks
 	channelHooks  ChannelHooks
 
-	tokens    map[cipherset.Token]*Exchange
-	hashnames map[hashname.H]*Exchange
-	listeners map[string]*Listener
+	tokens      map[cipherset.Token]*Exchange
+	hashnames   map[hashname.H]*Exchange
+	listenerSet *listenerSet
 }
 
 type EndpointOption func(e *Endpoint) error
@@ -55,10 +56,17 @@ type EndpointOption func(e *Endpoint) error
 func Open(options ...EndpointOption) (*Endpoint, error) {
 	e := &Endpoint{
 		TID:       tracer.NewID(),
-		listeners: make(map[string]*Listener),
 		modules:   make(map[interface{}]Module),
 		tokens:    make(map[cipherset.Token]*Exchange),
 		hashnames: make(map[hashname.H]*Exchange),
+	}
+
+	e.listenerSet = newListenerSet()
+	e.listenerSet.addrFunc = func() net.Addr {
+		return e.LocalHashname()
+	}
+	e.listenerSet.dropChannelFunc = func(c *Channel, reason error) {
+		ForgetterFromEndpoint(e).ForgetChannel(c)
 	}
 
 	e.endpointHooks.endpoint = e
@@ -68,7 +76,8 @@ func Open(options ...EndpointOption) (*Endpoint, error) {
 
 	err := e.setOptions(
 		RegisterModule(modForgetterKey, &modForgetter{e}),
-		RegisterModule(modTransportsKey, &modTransports{e}))
+		RegisterModule(modTransportsKey, &modTransports{e}),
+		RegisterModule(modNetwatchKey, &modNetwatch{endpoint: e}))
 	if err != nil {
 		return nil, e.traceError(err)
 	}
@@ -103,6 +112,18 @@ func (e *Endpoint) getTID() tracer.ID {
 
 func (e *Endpoint) getTransport() transports.Transport {
 	return e.transport
+}
+
+func (e *Endpoint) Hooks() *EndpointHooks {
+	return &e.endpointHooks
+}
+
+func (e *Endpoint) DefaultExchangeHooks() *ExchangeHooks {
+	return &e.exchangeHooks
+}
+
+func (e *Endpoint) DefaultChannelHooks() *ChannelHooks {
+	return &e.channelHooks
 }
 
 func (e *Endpoint) traceError(err error) error {
@@ -272,35 +293,14 @@ func defaultTransport(e *Endpoint) error {
 	return Transport(&mux.Config{
 		udp.Config{Network: "udp4"},
 		udp.Config{Network: "udp6"},
+		tcp.Config{Network: "tcp4"},
+		tcp.Config{Network: "tcp6"},
 	})(e)
 }
 
 // Listen makes a new channel listener.
 func (e *Endpoint) Listen(typ string, reliable bool) *Listener {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
-	if _, f := e.listeners[typ]; f {
-		panic("listener is already registered: " + typ)
-	}
-
-	l := newListener(e, typ, reliable, 0)
-	e.listeners[typ] = l
-	return l
-}
-
-func (e *Endpoint) listener(channelType string) *Listener {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
-	return e.listeners[channelType]
-}
-
-func (e *Endpoint) unregisterListener(channelType string) {
-	e.mtx.Lock()
-	defer e.mtx.Unlock()
-
-	delete(e.listeners, channelType)
+	return e.listenerSet.Listen(typ, reliable)
 }
 
 func (e *Endpoint) LocalHashname() hashname.H {
@@ -356,6 +356,14 @@ func (e *Endpoint) Close() error {
 
 func (e *Endpoint) close() error {
 	e.mtx.Unlock()
+
+	for _, x := range e.hashnames {
+		x.onBreak()
+	}
+	for _, x := range e.tokens {
+		x.onBreak()
+	}
+
 	for _, mod := range e.modules {
 		err := mod.Stop()
 		if err != nil {
@@ -364,14 +372,8 @@ func (e *Endpoint) close() error {
 			return err
 		}
 	}
-	e.mtx.Lock()
 
-	for _, x := range e.hashnames {
-		x.onBreak()
-	}
-	for _, x := range e.tokens {
-		x.onBreak()
-	}
+	e.mtx.Lock()
 
 	e.transport.Close() //TODO handle err
 
@@ -663,7 +665,7 @@ func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
 		return nil, err
 	}
 
-	x, err = e.GetExchange(identity)
+	x, err = e.CreateExchange(identity)
 	if err != nil {
 		return nil, err
 	}
@@ -676,10 +678,29 @@ func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
 	return x, nil
 }
 
-// GetExchange returns the exchange for identity. If the exchange already exists
+func (e *Endpoint) GetExchange(hashname hashname.H) *Exchange {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	return e.hashnames[hashname]
+}
+
+func (e *Endpoint) GetExchanges() []*Exchange {
+	e.mtx.Lock()
+	defer e.mtx.Unlock()
+
+	l := make([]*Exchange, 0, len(e.hashnames))
+	for _, x := range e.hashnames {
+		l = append(l, x)
+	}
+
+	return l
+}
+
+// CreateExchange returns the exchange for identity. If the exchange already exists
 // it is simply returned otherwise a new exchange is created and registered.
-// Not that this GetExchange does not Dial.
-func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
+// Note that CreateExchange does not Dial.
+func (e *Endpoint) CreateExchange(identity *Identity) (*Exchange, error) {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 

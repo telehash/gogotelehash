@@ -33,16 +33,12 @@ type transport struct {
 
 func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
 	if paddr, ok := addr.(*peerAddr); ok {
-		routerIdent, err := t.mod.e.Identify(e3x.HashnameIdentifier(paddr.router))
-		if err != nil {
-			return nil, err
+		routerEx := t.mod.e.GetExchange(paddr.router)
+		if routerEx == nil {
+			return nil, e3x.UnreachableEndpointError(paddr.router)
 		}
 
-		ex, err := t.mod.e.GetExchange(routerIdent)
-		if err != nil {
-			return nil, err
-		}
-
+		panic("must return actual peer connection")
 	}
 
 	return t.Transport.Dial(addr)
@@ -58,14 +54,9 @@ func (t *transport) WriteMessage(p []byte, dst net.Addr) error {
 		return t.t.WriteMessage(p, dst)
 	}
 
-	routerIdent, err := t.mod.e.Identify(e3x.HashnameIdentifier(a.router))
-	if err != nil {
-		return err
-	}
-
-	routerExch, err := t.mod.e.Dial(routerIdent)
-	if err != nil {
-		return err
+	routerExch := t.mod.e.GetExchange(a.router)
+	if routerExch == nil {
+		return e3x.UnreachableEndpointError(a.router)
 	}
 
 	// handshake

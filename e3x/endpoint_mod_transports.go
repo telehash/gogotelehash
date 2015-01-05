@@ -26,9 +26,7 @@ func TransportsFromEndpoint(e *Endpoint) Transports {
 	return mod.(*modTransports)
 }
 
-const modTransportsKey = modTransportsKeyType("transports")
-
-type modTransportsKeyType string
+const modTransportsKey = pivateModKey("transports")
 
 type modTransports struct {
 	e *Endpoint

@@ -9,7 +9,6 @@ import (
 
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/dgram"
-	// "github.com/telehash/gogotelehash/transports/nat"
 	"github.com/telehash/gogotelehash/transports/transportsutil"
 )
 
@@ -44,7 +43,6 @@ type transport struct {
 }
 
 var (
-	// _ nat.NATableAddr      = (*udpAddr)(nil)
 	_ dgram.Transport   = (*transport)(nil)
 	_ transports.Config = Config{}
 )

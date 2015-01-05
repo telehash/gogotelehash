@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 const (
@@ -55,6 +55,14 @@ func (book *addressBook) KnownAddresses() []net.Addr {
 	s := make([]net.Addr, len(book.known))
 	for i, e := range book.known {
 		s[i] = e.Address
+	}
+	return s
+}
+
+func (book *addressBook) KnownPipes() []*Pipe {
+	s := make([]*Pipe, len(book.known))
+	for i, e := range book.known {
+		s[i] = e.Pipe
 	}
 	return s
 }

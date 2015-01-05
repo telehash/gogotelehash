@@ -9,7 +9,7 @@ import (
 	"sort"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/util/base32util"
+	"github.com/telehash/gogotelehash/internal/util/base32util"
 )
 
 // ErrNoIntermediateParts is returned when deriving a Hashname

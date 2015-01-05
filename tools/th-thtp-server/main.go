@@ -10,23 +10,17 @@ import (
 
 	_ "net/http/pprof"
 
-	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/modules/mesh"
-	"github.com/telehash/gogotelehash/modules/netwatch"
-	"github.com/telehash/gogotelehash/modules/paths"
-	"github.com/telehash/gogotelehash/modules/thtp"
+	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/nat"
 	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func main() {
-	e, err := e3x.Open(
-		thtp.Server(http.DefaultServeMux),
-		mesh.Module(nil),
-		netwatch.Module(),
-		paths.Module(),
-		e3x.Transport(nat.Config{
+	e, err := gogotelehash.Open(
+		gogotelehash.THTP(http.DefaultServeMux),
+		gogotelehash.Paths(),
+		gogotelehash.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},

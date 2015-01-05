@@ -6,8 +6,8 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 type Bridge interface {
@@ -56,7 +56,9 @@ func (mod *module) Init() error {
 		return transportConfig{mod, c}
 	})
 
-	e3x.ObserversFromEndpoint(mod.e).Register(mod.on_exchange_closed)
+	mod.e.DefaultExchangeHooks().Register(e3x.ExchangeHook{
+		OnClosed: mod.on_exchange_closed,
+	})
 
 	return nil
 }
@@ -88,23 +90,25 @@ func (mod *module) lookupToken(token cipherset.Token) (source, target *e3x.Excha
 	return
 }
 
-func (mod *module) on_exchange_closed(e *e3x.ExchangeClosedEvent) {
+func (mod *module) on_exchange_closed(e *e3x.Endpoint, x *e3x.Exchange, reason error) error {
 	mod.mtx.Lock()
 	defer mod.mtx.Unlock()
 
-	for token, x := range mod.packetRoutes {
-		if e.Exchange == x {
+	for token, exchange := range mod.packetRoutes {
+		if exchange == x {
 			delete(mod.packetRoutes, token)
 			delete(mod.handshakeRoutes, token)
 		}
 	}
 
-	for token, x := range mod.handshakeRoutes {
-		if e.Exchange == x {
+	for token, exchange := range mod.handshakeRoutes {
+		if exchange == x {
 			delete(mod.packetRoutes, token)
 			delete(mod.handshakeRoutes, token)
 		}
 	}
+
+	return nil
 }
 
 type transportConfig struct {

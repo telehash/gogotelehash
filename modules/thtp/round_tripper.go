@@ -40,24 +40,16 @@ func (rt *RoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	var (
 		hashname = hashname.H(req.URL.Host)
 		c        *e3x.Channel
-		ident    e3x.Identifier
 		resp     *http.Response
 		err      error
 	)
 
-	if rt.Resolver != nil {
-		// Use resolver provided by RoundTripper
-		ident, err = rt.Resolver.Resolve(hashname)
-		if err != nil {
-			return nil, err
-		}
-
-	} else {
-		ident = e3x.HashnameIdentifier(hashname)
-
+	x := rt.Endpoint.GetExchange(hashname)
+	if x == nil {
+		return nil, e3x.UnreachableEndpointError(hashname)
 	}
 
-	c, err = rt.Endpoint.Open(ident, "thtp", true)
+	c, err = x.Open("thtp", true)
 	if err != nil {
 		c.Close()
 		return nil, err

@@ -16,9 +16,7 @@ func ForgetterFromEndpoint(e *Endpoint) Forgetter {
 	return mod.(*modForgetter)
 }
 
-const modForgetterKey = modForgetterKeyType("forgetter")
-
-type modForgetterKeyType string
+const modForgetterKey = pivateModKey("forgetter")
 
 type modForgetter struct {
 	e *Endpoint

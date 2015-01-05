@@ -7,10 +7,9 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/modules/bridge"
-	"github.com/telehash/gogotelehash/modules/mesh"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/logs"
 
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs1a"
 	_ "github.com/telehash/gogotelehash/e3x/cipherset/cs3a"

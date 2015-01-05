@@ -6,8 +6,8 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 var mainLog = logs.Module("peers")
@@ -132,7 +132,7 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		return
 	}
 
-	x, err := mod.e.GetExchange(remoteIdent)
+	x, err := mod.e.CreateExchange(remoteIdent)
 	if err != nil {
 		return
 	}

@@ -11,11 +11,11 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/util/logs"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/bufpool"
-	"github.com/telehash/gogotelehash/util/logs"
-	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
@@ -80,11 +80,12 @@ type Exchange struct {
 	csid          uint8
 	cipher        cipherset.State
 	nextChannelID uint32
-	channels      map[uint32]*Channel
+	channels      *channelSet
 	addressBook   *addressBook
 	err           error
 
 	endpoint      endpointI
+	listenerSet   *listenerSet
 	log           *logs.Logger
 	exchangeHooks ExchangeHooks
 	channelHooks  ChannelHooks
@@ -98,7 +99,6 @@ type Exchange struct {
 type ExchangeOption func(e *Exchange) error
 
 type endpointI interface {
-	listener(channelType string) *Listener
 	getTID() tracer.ID
 	getTransport() transports.Transport
 }
@@ -112,7 +112,7 @@ func newExchange(
 		TID:         tracer.NewID(),
 		localIdent:  localIdent,
 		remoteIdent: remoteIdent,
-		channels:    make(map[uint32]*Channel),
+		channels:    &channelSet{},
 	}
 	x.traceNew()
 
@@ -125,6 +125,7 @@ func newExchange(
 	x.rescheduleHandshake()
 
 	x.setOptions(options...)
+	x.channelHooks.Register(ChannelHook{OnClosed: x.unregisterChannel})
 
 	if localIdent == nil {
 		panic("missing local addr")
@@ -192,6 +193,7 @@ func (x *Exchange) setOptions(options ...ExchangeOption) error {
 func registerEndpoint(e *Endpoint) ExchangeOption {
 	return func(x *Exchange) error {
 		x.endpoint = e
+		x.listenerSet = e.listenerSet.Inherit()
 		x.exchangeHooks = e.exchangeHooks
 		x.channelHooks = e.channelHooks
 		x.exchangeHooks.exchange = x
@@ -381,6 +383,14 @@ func (x *Exchange) KnownPaths() []net.Addr {
 	return addrs
 }
 
+// KnownPipes returns all the know pipes of the remote endpoint.
+func (x *Exchange) KnownPipes() []*Pipe {
+	x.mtx.Lock()
+	pipes := x.addressBook.KnownPipes()
+	x.mtx.Unlock()
+	return pipes
+}
+
 func (x *Exchange) received(msg message) {
 	if msg.IsHandshake {
 		x.receivedHandshake(msg)
@@ -489,7 +499,7 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	{
 		x.mtx.Lock()
-		c = x.channels[cid]
+		c = x.channels.Get(cid)
 		if c == nil {
 			if !hasType {
 				x.mtx.Unlock()
@@ -497,7 +507,7 @@ func (x *Exchange) receivedPacket(msg message) {
 				return // drop (missing typ)
 			}
 
-			listener := x.endpoint.listener(typ)
+			listener := x.listenerSet.Get(typ)
 			if listener == nil {
 				x.mtx.Unlock()
 				x.traceDroppedPacket(msg, pkt, dropMissingChannelHandler)
@@ -513,7 +523,7 @@ func (x *Exchange) receivedPacket(msg message) {
 				registerExchange(x),
 			)
 			c.id = cid
-			x.channels[cid] = c
+			x.channels.Add(cid, c)
 			x.resetExpire()
 
 			x.mtx.Unlock()
@@ -563,7 +573,6 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, p *Pipe) error {
 }
 
 func (x *Exchange) expire(err error) {
-
 	x.mtx.Lock()
 	if x.state == ExchangeExpired || x.state == ExchangeBroken {
 		x.mtx.Unlock()
@@ -586,7 +595,7 @@ func (x *Exchange) expire(err error) {
 
 	x.mtx.Unlock()
 
-	for _, c := range x.channels {
+	for _, c := range x.channels.All() {
 		c.onCloseDeadlineReached()
 	}
 
@@ -649,7 +658,7 @@ func (x *Exchange) onBreak() {
 }
 
 func (x *Exchange) resetExpire() {
-	active := len(x.channels) > 0
+	active := !x.channels.Idle()
 
 	if active {
 		x.tExpire.Stop()
@@ -676,19 +685,16 @@ func (x *Exchange) resetBreak() {
 	x.tBreak.Reset(2 * 60 * time.Second)
 }
 
-func (x *Exchange) unregisterChannel(channelID uint32) {
-	x.mtx.Lock()
-	c := x.channels[channelID]
-	if c != nil {
-		delete(x.channels, channelID)
+func (x *Exchange) unregisterChannel(_ *Endpoint, _ *Exchange, c *Channel) error {
+	if x.channels.Remove(c.id) {
+		x.mtx.Lock()
 		x.resetExpire()
-	}
-	x.mtx.Unlock()
+		x.mtx.Unlock()
 
-	if c != nil {
 		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", c.typ, c.id)
-		c.channelHooks.Closed()
 	}
+
+	return nil
 }
 
 func (x *Exchange) getNextChannelID() uint32 {
@@ -748,7 +754,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	}
 
 	c.id = x.getNextChannelID()
-	x.channels[c.id] = c
+	x.channels.Add(c.id, c)
 	x.resetExpire()
 	x.mtx.Unlock()
 

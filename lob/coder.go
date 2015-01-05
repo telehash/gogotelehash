@@ -12,8 +12,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/telehash/gogotelehash/util/bufpool"
-	"github.com/telehash/gogotelehash/util/tracer"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 )
 
 // ErrInvalidPacket is returned by Decode

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/util/bufpool"
-	"github.com/telehash/gogotelehash/util/tracer"
 )
 
 var (
@@ -96,7 +96,6 @@ type ChannelOption func(*Channel) error
 
 type exchangeI interface {
 	deliverPacket(pkt *lob.Packet, dst *Pipe) error
-	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
 	getTID() tracer.ID
 }
@@ -716,8 +715,9 @@ func (c *Channel) Error(err error) error {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
 	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 	return nil
 }
 
@@ -727,11 +727,11 @@ func (c *Channel) Close() error {
 	}
 
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
+		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -747,6 +747,7 @@ func (c *Channel) Close() error {
 			hdr := pkt.Header()
 			hdr.End, hdr.HasEnd = true, true
 			if err := c.write(pkt, nil); err != nil {
+				c.mtx.Unlock()
 				return err
 			}
 		}
@@ -764,6 +765,7 @@ func (c *Channel) Close() error {
 			break
 		}
 		if err != nil {
+			c.mtx.Unlock()
 			return err
 		}
 	}
@@ -775,6 +777,7 @@ func (c *Channel) Close() error {
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
+		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -784,7 +787,9 @@ func (c *Channel) Close() error {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 	return nil
 }
 
@@ -1005,7 +1010,11 @@ func (c *Channel) setCloseDeadline() {
 
 func (c *Channel) onCloseDeadlineReached() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.closeDeadlineReached = true
@@ -1018,7 +1027,9 @@ func (c *Channel) onCloseDeadlineReached() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
 func (c *Channel) setOpenDeadline() {
@@ -1081,7 +1092,11 @@ func (c *Channel) unsetAcker() {
 
 func (c *Channel) onOpenDeadlineReached() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.openDeadlineReached = true
@@ -1092,12 +1107,18 @@ func (c *Channel) onOpenDeadlineReached() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
 func (c *Channel) forget() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.openDeadlineReached = false
@@ -1108,7 +1129,9 @@ func (c *Channel) forget() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
 // Read implements the net.Conn Read method.

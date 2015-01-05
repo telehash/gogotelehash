@@ -11,7 +11,6 @@ var ErrUnidentifiable = errors.New("unidentifiable identity")
 // Identifier represents an identifing set of information which can be resolved
 // into a full Identity.
 type Identifier interface {
-	Hashname() hashname.H
 	String() string
 
 	Identify(endpoint *Endpoint) (*Identity, error)
@@ -26,10 +25,9 @@ func HashnameIdentifier(hn hashname.H) Identifier {
 	return hashnameIdentifier(hn)
 }
 
-func (i hashnameIdentifier) Hashname() hashname.H { return hashname.H(i) }
-func (i hashnameIdentifier) String() string       { return string(i) }
+func (i hashnameIdentifier) String() string { return string(i) }
 func (i hashnameIdentifier) Identify(endpoint *Endpoint) (*Identity, error) {
-	x := endpoint.hashnames[i.Hashname()]
+	x := endpoint.hashnames[(hashname.H)(i)]
 	if x == nil {
 		return nil, ErrUnidentifiable
 	}
