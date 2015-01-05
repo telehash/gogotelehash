@@ -139,7 +139,7 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 
 	// when the BODY contains a handshake
 	if handshake != nil {
-		routerAddr := &addr{
+		routerAddr := &peerAddr{
 			router: ch.Exchange().RemoteHashname(),
 		}
 
@@ -168,7 +168,7 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 			return
 		}
 
-		x.AddPathCandidate(&addr{
+		x.AddPathCandidate(&peerAddr{
 			router: ch.Exchange().RemoteHashname(),
 		})
 	}

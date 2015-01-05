@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"net"
 	"testing"
 	"time"
 
@@ -31,8 +32,8 @@ func TestBridge(t *testing.T) {
 
 	assert := assert.New(t)
 
-	var blacklist []transports.Addr
-	blacklistRule := func(p []byte, src transports.Addr) bool {
+	var blacklist []net.Addr
+	blacklistRule := func(src net.Addr) bool {
 		if len(blacklist) == 0 {
 			return true
 		}

@@ -1,6 +1,8 @@
 package peers
 
 import (
+	"net"
+
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/transports"
 )
@@ -25,20 +27,33 @@ func (t *transportConfig) Open() (transports.Transport, error) {
 }
 
 type transport struct {
-	t   transports.Transport
+	transports.Transport
 	mod *module
 }
 
-func (t *transport) LocalAddresses() []transports.Addr {
-	return t.t.LocalAddresses()
+func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
+	if paddr, ok := addr.(*peerAddr); ok {
+		routerIdent, err := t.mod.e.Identify(e3x.HashnameIdentifier(paddr.router))
+		if err != nil {
+			return nil, err
+		}
+
+		ex, err := t.mod.e.GetExchange(routerIdent)
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	return t.Transport.Dial(addr)
 }
 
-func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
+func (t *transport) ReadMessage(p []byte) (n int, src net.Addr, err error) {
 	return t.t.ReadMessage(p)
 }
 
-func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-	a, ok := dst.(*addr)
+func (t *transport) WriteMessage(p []byte, dst net.Addr) error {
+	a, ok := dst.(*peerAddr)
 	if a == nil || !ok {
 		return t.t.WriteMessage(p, dst)
 	}
@@ -65,8 +80,4 @@ func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
 	}
 
 	return nil // drop
-}
-
-func (t *transport) Close() error {
-	return t.t.Close()
 }

@@ -41,6 +41,10 @@ type Endpoint struct {
 	transport       transports.Transport
 	modules         map[interface{}]Module
 
+	endpointHooks EndpointHooks
+	exchangeHooks ExchangeHooks
+	channelHooks  ChannelHooks
+
 	tokens    map[cipherset.Token]*Exchange
 	hashnames map[hashname.H]*Exchange
 	listeners map[string]*Listener
@@ -57,11 +61,12 @@ func Open(options ...EndpointOption) (*Endpoint, error) {
 		hashnames: make(map[hashname.H]*Exchange),
 	}
 
-	observers := &modObservers{}
-	observers.Register(e.onExchangeClosed)
+	e.endpointHooks.endpoint = e
+	e.exchangeHooks.endpoint = e
+	e.channelHooks.endpoint = e
+	e.exchangeHooks.Register(ExchangeHook{OnClosed: e.onExchangeClosed})
 
 	err := e.setOptions(
-		RegisterModule(modObserversKey, observers),
 		RegisterModule(modForgetterKey, &modForgetter{e}),
 		RegisterModule(modTransportsKey, &modTransports{e}))
 	if err != nil {
@@ -482,7 +487,7 @@ func (e *Endpoint) accept(conn net.Conn) {
 		return
 	}
 
-	exchange, err = newExchange(localIdent, nil, handshake, e, ObserversFromEndpoint(e), e.log)
+	exchange, err = newExchange(localIdent, nil, handshake, e.log, registerEndpoint(e))
 	if err != nil {
 		e.traceDroppedPacket(msg, conn, err.Error())
 		return // drop
@@ -495,17 +500,15 @@ func (e *Endpoint) accept(conn net.Conn) {
 	exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
 }
 
-func (e *Endpoint) onExchangeClosed(event *ExchangeClosedEvent) {
+func (e *Endpoint) onExchangeClosed(_ *Endpoint, x *Exchange, reason error) error {
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
-	x := e.hashnames[event.Exchange.remoteIdent.Hashname()]
-	if x != nil {
-		delete(e.hashnames, x.remoteIdent.Hashname())
-		delete(e.tokens, x.LocalToken())
-		delete(e.tokens, x.RemoteToken())
-	}
+	delete(e.hashnames, x.remoteIdent.Hashname())
+	delete(e.tokens, x.LocalToken())
+	delete(e.tokens, x.RemoteToken())
 
+	return nil
 }
 
 // func (e *Endpoint) received(op opRead) {
@@ -699,7 +702,7 @@ func (e *Endpoint) GetExchange(identity *Identity) (*Exchange, error) {
 	}
 
 	// Make a new exchange struct
-	x, err = newExchange(localIdent, identity, nil, e, ObserversFromEndpoint(e), e.log)
+	x, err = newExchange(localIdent, identity, nil, e.log, registerEndpoint(e))
 	if err != nil {
 		return nil, err
 	}

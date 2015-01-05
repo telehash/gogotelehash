@@ -26,7 +26,7 @@ const (
 )
 
 type addressBookEntry struct {
-	Pipe                *pipe
+	Pipe                *Pipe
 	Address             net.Addr
 	SendHandshakeAt     time.Time
 	ReceivedHandshakeAt time.Time
@@ -43,7 +43,7 @@ func newAddressBook(log *logs.Logger) *addressBook {
 	return &addressBook{log: log.Module("addrbook")}
 }
 
-func (book *addressBook) ActiveConnection() *pipe {
+func (book *addressBook) ActiveConnection() *Pipe {
 	if book.active == nil {
 		return nil
 	}
@@ -59,8 +59,8 @@ func (book *addressBook) KnownAddresses() []net.Addr {
 	return s
 }
 
-func (book *addressBook) HandshakePipes() []*pipe {
-	s := make([]*pipe, 0, len(book.known))
+func (book *addressBook) HandshakePipes() []*Pipe {
+	s := make([]*Pipe, 0, len(book.known))
 	for _, e := range book.known {
 		if !e.IsBackup {
 			continue
@@ -144,7 +144,7 @@ func (book *addressBook) NextHandshakeEpoch() {
 
 }
 
-func (book *addressBook) PipeToAddr(addr net.Addr) *pipe {
+func (book *addressBook) PipeToAddr(addr net.Addr) *Pipe {
 	idx := book.indexOf(addr)
 	if idx >= 0 {
 		return book.known[idx].Pipe
@@ -152,7 +152,7 @@ func (book *addressBook) PipeToAddr(addr net.Addr) *pipe {
 	return nil
 }
 
-func (book *addressBook) AddPipe(p *pipe) {
+func (book *addressBook) AddPipe(p *Pipe) {
 	var (
 		now = time.Now()
 		idx = book.indexOfPipe(p)
@@ -179,7 +179,7 @@ func (book *addressBook) AddPipe(p *pipe) {
 	}
 }
 
-func (book *addressBook) SentHandshake(pipe *pipe) {
+func (book *addressBook) SentHandshake(pipe *Pipe) {
 	var (
 		idx = book.indexOfPipe(pipe)
 	)
@@ -192,7 +192,7 @@ func (book *addressBook) SentHandshake(pipe *pipe) {
 	e.SendHandshakeAt = time.Now()
 }
 
-func (book *addressBook) ReceivedHandshake(p *pipe) {
+func (book *addressBook) ReceivedHandshake(p *Pipe) {
 	var (
 		idx = book.indexOfPipe(p)
 		e   *addressBookEntry
@@ -218,7 +218,7 @@ func (book *addressBook) indexOf(addr net.Addr) int {
 	return -1
 }
 
-func (book *addressBook) indexOfPipe(pipe *pipe) int {
+func (book *addressBook) indexOfPipe(pipe *Pipe) int {
 	for i, e := range book.known {
 		if e.Pipe == pipe {
 			return i

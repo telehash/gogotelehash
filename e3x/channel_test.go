@@ -61,6 +61,7 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 }
 
 func TestBasicUnrealiable(t *testing.T) {
+	t.Skip("mock")
 	// t.Parallel()
 	logs.ResetLogger()
 
@@ -118,6 +119,7 @@ func TestBasicUnrealiable(t *testing.T) {
 }
 
 func TestBasicRealiable(t *testing.T) {
+	t.Skip("mock")
 	// t.Parallel()
 	logs.ResetLogger()
 
@@ -215,6 +217,8 @@ func TestPingPong(t *testing.T) {
 		go func() {
 			c, err := A.Listen("ping", false).AcceptChannel()
 
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+
 			if assert.NoError(err) && assert.NotNil(c) {
 				defer c.Close()
 
@@ -236,12 +240,13 @@ func TestPingPong(t *testing.T) {
 		if assert.NotNil(c) {
 			defer c.Close()
 
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+
 			err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
 			assert.NoError(err)
 
 			pkt, err = c.ReadPacket()
-			assert.NoError(err)
-			if assert.NotNil(pkt) {
+			if assert.NoError(err) && assert.NotNil(pkt) {
 				assert.Equal("pong", string(pkt.Body))
 			}
 		}

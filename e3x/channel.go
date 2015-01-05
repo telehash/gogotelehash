@@ -55,13 +55,14 @@ type Channel struct {
 	cndWrite *sync.Cond
 	cndClose *sync.Cond
 
-	x          exchangeI
-	serverside bool
-	id         uint32
-	typ        string
-	hashname   hashname.H
-	reliable   bool
-	broken     bool
+	x            exchangeI
+	channelHooks ChannelHooks
+	serverside   bool
+	id           uint32
+	typ          string
+	hashname     hashname.H
+	reliable     bool
+	broken       bool
 
 	oSeq         uint32 // highest seq in write stream
 	iBufferedSeq uint32 // highest buffered seq in read stream
@@ -91,8 +92,10 @@ type Channel struct {
 	tAcker         *time.Timer
 }
 
+type ChannelOption func(*Channel) error
+
 type exchangeI interface {
-	deliverPacket(pkt *lob.Packet, dst *pipe) error
+	deliverPacket(pkt *lob.Packet, dst *Pipe) error
 	unregisterChannel(channelID uint32)
 	RemoteIdentity() *Identity
 	getTID() tracer.ID
@@ -108,13 +111,14 @@ type writeBufferEntry struct {
 	pkt        *lob.Packet
 	end        bool
 	lastResend time.Time
-	dst        *pipe
+	dst        *Pipe
 }
 
 func newChannel(
 	hn hashname.H, typ string,
 	reliable bool, serverside bool,
 	x exchangeI,
+	options ...ChannelOption,
 ) *Channel {
 	c := &Channel{
 		TID:          tracer.NewID(),
@@ -149,9 +153,27 @@ func newChannel(
 		c.tAcker = time.AfterFunc(10*time.Second, c.autoDeliverAck)
 	}
 
+	c.setOptions(options...)
 	c.traceNew()
 
 	return c
+}
+
+func (c *Channel) setOptions(options ...ChannelOption) error {
+	for _, option := range options {
+		if err := option(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerExchange(x *Exchange) ChannelOption {
+	return func(c *Channel) error {
+		c.channelHooks = x.channelHooks
+		c.channelHooks.channel = c
+		return nil
+	}
 }
 
 func (c *Channel) traceNew() {
@@ -168,7 +190,7 @@ func (c *Channel) traceNew() {
 	}
 }
 
-func (c *Channel) traceWriteError(pkt *lob.Packet, p *pipe, reason error) error {
+func (c *Channel) traceWriteError(pkt *lob.Packet, p *Pipe, reason error) error {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
@@ -192,7 +214,7 @@ func (c *Channel) traceWriteError(pkt *lob.Packet, p *pipe, reason error) error 
 	return reason
 }
 
-func (c *Channel) traceWrite(pkt *lob.Packet, p *pipe) {
+func (c *Channel) traceWrite(pkt *lob.Packet, p *Pipe) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
@@ -276,7 +298,7 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	return c.WritePacketTo(pkt, nil)
 }
 
-func (c *Channel) WritePacketTo(pkt *lob.Packet, p *pipe) error {
+func (c *Channel) WritePacketTo(pkt *lob.Packet, p *Pipe) error {
 	if c == nil {
 		return os.ErrInvalid
 	}
@@ -326,7 +348,7 @@ func (c *Channel) blockWrite() bool {
 	return false
 }
 
-func (c *Channel) write(pkt *lob.Packet, p *pipe) error {
+func (c *Channel) write(pkt *lob.Packet, p *Pipe) error {
 	if pkt.TID == 0 {
 		pkt.TID = tracer.NewID()
 	}

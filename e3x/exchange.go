@@ -84,9 +84,10 @@ type Exchange struct {
 	addressBook   *addressBook
 	err           error
 
-	endpoint  endpointI
-	observers Observers
-	log       *logs.Logger
+	endpoint      endpointI
+	log           *logs.Logger
+	exchangeHooks ExchangeHooks
+	channelHooks  ChannelHooks
 
 	nextHandshake     int
 	tExpire           *time.Timer
@@ -94,36 +95,24 @@ type Exchange struct {
 	tDeliverHandshake *time.Timer
 }
 
+type ExchangeOption func(e *Exchange) error
+
 type endpointI interface {
 	listener(channelType string) *Listener
 	getTID() tracer.ID
 	getTransport() transports.Transport
 }
 
-func (x *Exchange) State() ExchangeState {
-	x.mtx.Lock()
-	s := x.state
-	x.mtx.Unlock()
-	return s
-}
-
-func (x *Exchange) String() string {
-	return fmt.Sprintf("<Exchange %s state=%s>", x.remoteIdent.Hashname(), x.State())
-}
-
 func newExchange(
 	localIdent *Identity, remoteIdent *Identity, handshake cipherset.Handshake,
-	endpoint endpointI,
-	observers Observers,
 	log *logs.Logger,
+	options ...ExchangeOption,
 ) (*Exchange, error) {
 	x := &Exchange{
 		TID:         tracer.NewID(),
 		localIdent:  localIdent,
 		remoteIdent: remoteIdent,
 		channels:    make(map[uint32]*Channel),
-		endpoint:    endpoint,
-		observers:   observers,
 	}
 	x.traceNew()
 
@@ -134,6 +123,8 @@ func newExchange(
 	x.tDeliverHandshake = time.AfterFunc(60*time.Second, x.onDeliverHandshake)
 	x.resetExpire()
 	x.rescheduleHandshake()
+
+	x.setOptions(options...)
 
 	if localIdent == nil {
 		panic("missing local addr")
@@ -187,6 +178,37 @@ func newExchange(
 	}
 
 	return x, nil
+}
+
+func (x *Exchange) setOptions(options ...ExchangeOption) error {
+	for _, option := range options {
+		if err := option(x); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerEndpoint(e *Endpoint) ExchangeOption {
+	return func(x *Exchange) error {
+		x.endpoint = e
+		x.exchangeHooks = e.exchangeHooks
+		x.channelHooks = e.channelHooks
+		x.exchangeHooks.exchange = x
+		x.channelHooks.exchange = x
+		return nil
+	}
+}
+
+func (x *Exchange) State() ExchangeState {
+	x.mtx.Lock()
+	s := x.state
+	x.mtx.Unlock()
+	return s
+}
+
+func (x *Exchange) String() string {
+	return fmt.Sprintf("<Exchange %s state=%s>", x.remoteIdent.Hashname(), x.State())
 }
 
 func (x *Exchange) getTID() tracer.ID {
@@ -343,6 +365,14 @@ func (x *Exchange) ActivePath() net.Addr {
 	return addr
 }
 
+// ActivePipe returns the pipe that is currently used for channel packets.
+func (x *Exchange) ActivePipe() *Pipe {
+	x.mtx.Lock()
+	pipe := x.addressBook.ActiveConnection()
+	x.mtx.Unlock()
+	return pipe
+}
+
 // KnownPaths returns all the know addresses of the remote endpoint.
 func (x *Exchange) KnownPaths() []net.Addr {
 	x.mtx.Lock()
@@ -480,6 +510,7 @@ func (x *Exchange) receivedPacket(msg message) {
 				hasSeq,
 				true,
 				x,
+				registerExchange(x),
 			)
 			c.id = cid
 			x.channels[cid] = c
@@ -488,7 +519,7 @@ func (x *Exchange) receivedPacket(msg message) {
 			x.mtx.Unlock()
 
 			x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, cid)
-			x.observers.Trigger(&ChannelOpenedEvent{c})
+			c.channelHooks.Opened()
 
 			listener.handle(c)
 		} else {
@@ -500,7 +531,7 @@ func (x *Exchange) receivedPacket(msg message) {
 	c.receivedPacket(pkt)
 }
 
-func (x *Exchange) deliverPacket(pkt *lob.Packet, p *pipe) error {
+func (x *Exchange) deliverPacket(pkt *lob.Packet, p *Pipe) error {
 	x.mtx.Lock()
 	for x.state == ExchangeDialing {
 		x.cndState.Wait()
@@ -560,7 +591,7 @@ func (x *Exchange) expire(err error) {
 	}
 
 	x.traceStopped()
-	x.observers.Trigger(&ExchangeClosedEvent{x, err})
+	x.exchangeHooks.Closed(err)
 }
 
 func (x *Exchange) getNextSeq() uint32 {
@@ -647,17 +678,17 @@ func (x *Exchange) resetBreak() {
 
 func (x *Exchange) unregisterChannel(channelID uint32) {
 	x.mtx.Lock()
-
 	c := x.channels[channelID]
 	if c != nil {
 		delete(x.channels, channelID)
 		x.resetExpire()
-
-		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", c.typ, c.id)
-		x.observers.Trigger(&ChannelClosedEvent{c})
 	}
-
 	x.mtx.Unlock()
+
+	if c != nil {
+		x.log.Printf("\x1B[31mClosed channel\x1B[0m %q %d", c.typ, c.id)
+		c.channelHooks.Closed()
+	}
 }
 
 func (x *Exchange) getNextChannelID() uint32 {
@@ -704,6 +735,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 		reliable,
 		false,
 		x,
+		registerExchange(x),
 	)
 
 	x.mtx.Lock()
@@ -721,7 +753,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	x.mtx.Unlock()
 
 	x.log.Printf("\x1B[32mOpened channel\x1B[0m %q %d", typ, c.id)
-	x.observers.Trigger(&ChannelOpenedEvent{c})
+	c.channelHooks.Opened()
 	return c, nil
 }
 
@@ -800,7 +832,7 @@ func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, src net.Addr) (
 	return x.applyHandshake(handshake, p)
 }
 
-func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *pipe) (response []byte, ok bool) {
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response []byte, ok bool) {
 	var (
 		seq uint32
 		err error
@@ -860,7 +892,7 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *pipe) (re
 		x.resetExpire()
 		x.cndState.Broadcast()
 
-		x.observers.Trigger(&ExchangeOpenedEvent{x})
+		go x.exchangeHooks.Opened()
 	}
 
 	return response, true

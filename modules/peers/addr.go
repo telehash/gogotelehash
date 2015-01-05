@@ -2,25 +2,29 @@ package peers
 
 import (
 	"encoding/json"
+	"net"
 
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 )
 
 var (
-	_ transports.Addr = (*addr)(nil)
+	_ net.Addr = (*peerAddr)(nil)
 )
 
-type addr struct {
-	target hashname.H
+func init() {
+	transports.RegisterAddr(&peerAddr{})
+}
+
+type peerAddr struct {
 	router hashname.H
 }
 
-func (*addr) Network() string {
+func (*peerAddr) Network() string {
 	return "peer"
 }
 
-func (a *addr) String() string {
+func (a *peerAddr) String() string {
 	data, err := a.MarshalJSON()
 	if err != nil {
 		panic(err)
@@ -28,7 +32,7 @@ func (a *addr) String() string {
 	return string(data)
 }
 
-func (a *addr) MarshalJSON() ([]byte, error) {
+func (a *peerAddr) MarshalJSON() ([]byte, error) {
 	var desc = struct {
 		Type string `json:"type"`
 		Hn   string `json:"hn"`
@@ -39,23 +43,25 @@ func (a *addr) MarshalJSON() ([]byte, error) {
 	return json.Marshal(&desc)
 }
 
-func (a *addr) Equal(x transports.Addr) bool {
-	b := x.(*addr)
+func (a *peerAddr) UnmarshalJSON(p []byte) error {
+	var desc struct {
+		Type string `json:"type"`
+		Hn   string `json:"hn"`
+	}
+	err := json.Unmarshal(p, &desc)
+	if err != nil {
+		return err
+	}
+	a.router = hashname.H(desc.Hn)
+	return nil
+}
+
+func (a *peerAddr) Equal(x net.Addr) bool {
+	b := x.(*peerAddr)
 
 	if a.router != b.router {
 		return false
 	}
 
 	return true
-}
-
-func (a *addr) Associate(hn hashname.H) transports.Addr {
-	b := new(addr)
-	*b = *a
-	b.target = hn
-	return b
-}
-
-func (a *addr) Hashname() hashname.H {
-	return a.target
 }

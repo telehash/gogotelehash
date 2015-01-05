@@ -17,7 +17,7 @@ func (m *MockExchange) getTID() tracer.ID {
 	return tracer.ID(0)
 }
 
-func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst *pipe) error {
+func (m *MockExchange) deliverPacket(pkt *lob.Packet, dst *Pipe) error {
 	pkt.TID = 0
 	args := m.Called(pkt)
 	return args.Error(0)

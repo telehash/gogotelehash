@@ -4,6 +4,7 @@ package netwatch
 
 import (
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/telehash/gogotelehash/e3x"
@@ -27,7 +28,7 @@ type module struct {
 	observers e3x.Observers
 	transport e3x.Transports
 	timer     *time.Timer
-	addresses []transports.Addr
+	addresses []net.Addr
 }
 
 func Module() e3x.EndpointOption {
@@ -37,8 +38,8 @@ func Module() e3x.EndpointOption {
 }
 
 type ChangeEvent struct {
-	Up   []transports.Addr
-	Down []transports.Addr
+	Up   []net.Addr
+	Down []net.Addr
 }
 
 func (event *ChangeEvent) String() string {
@@ -73,16 +74,16 @@ func (mod *module) update() {
 
 	var (
 		addrs    = mod.transport.LocalAddresses()
-		newAddrs []transports.Addr
-		oldAddrs []transports.Addr
-		update   []transports.Addr
+		newAddrs []net.Addr
+		oldAddrs []net.Addr
+		update   []net.Addr
 	)
 
 	// find new addresses
 	for _, x := range addrs {
 		var (
 			found = false
-			y     transports.Addr
+			y     net.Addr
 		)
 
 		for _, y = range mod.addresses {
@@ -104,7 +105,7 @@ func (mod *module) update() {
 	for _, x := range mod.addresses {
 		var (
 			found = false
-			y     transports.Addr
+			y     net.Addr
 		)
 
 		for _, y = range addrs {

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"net"
 	"sync"
 
 	"github.com/telehash/gogotelehash/e3x"
@@ -124,27 +125,55 @@ type transport struct {
 	t   transports.Transport
 }
 
-func (t *transport) LocalAddresses() []transports.Addr {
-	return t.t.LocalAddresses()
+func (t *transport) Addrs() []net.Addr {
+	return t.t.Addrs()
 }
 
-func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
+func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
+	conn, err := t.t.Dial(addr)
+	if err != nil {
+		return nil, err
+	}
+	return &connection{t.mod, conn}, nil
+}
+
+func (t *transport) Accept() (net.Conn, error) {
+	conn, err := t.t.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &connection{t.mod, conn}, nil
+}
+
+func (t *transport) Close() error {
+	return t.t.Close()
+}
+
+type connection struct {
+	mod *module
+	net.Conn
+}
+
+func (c *connection) Read(b []byte) (n int, err error) {
 	for {
-		n, src, err = t.t.ReadMessage(p)
+		n, err = c.Conn.Read(b)
 		if err != nil {
-			return n, src, err
+			return n, err
 		}
 
-		buf := p[:n]
+		buf := b[:n]
 
 		var (
 			token          = cipherset.ExtractToken(buf)
-			source, target = t.mod.lookupToken(token)
+			source, target = c.mod.lookupToken(token)
 		)
 
 		// not a bridged message
 		if source == nil {
-			return n, src, err
+			return n, err
+		}
+		if n <= 2 {
+			return n, err
 		}
 
 		// detect message type
@@ -158,22 +187,15 @@ func (t *transport) ReadMessage(p []byte) (n int, src transports.Addr, err error
 		}
 
 		// handle bridged message
-		err = t.t.WriteMessage(buf, ex.ActivePath())
+		pipe := ex.ActivePipe()
+		_, err = pipe.Write(buf)
 		if err != nil {
 			// TODO handle error
-			t.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s error=%s\x1B[0m", msgtype, token, ex.ActivePath(), err)
+			c.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s error=%s\x1B[0m", msgtype, token, pipe, err)
 		} else {
-			t.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s\x1B[0m", msgtype, token, ex.ActivePath())
+			c.mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %s %x %s\x1B[0m", msgtype, token, pipe)
 		}
 
 		// continue reading messages
 	}
-}
-
-func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-	return t.t.WriteMessage(p, dst)
-}
-
-func (t *transport) Close() error {
-	return t.t.Close()
 }

@@ -10,7 +10,7 @@ import (
 	"github.com/telehash/gogotelehash/util/tracer"
 )
 
-type pipe struct {
+type Pipe struct {
 	mtx       sync.RWMutex
 	wg        sync.WaitGroup
 	closed    bool
@@ -23,7 +23,7 @@ type pipe struct {
 type message struct {
 	TID         tracer.ID
 	Data        []byte
-	Pipe        *pipe
+	Pipe        *Pipe
 	IsHandshake bool
 }
 
@@ -31,7 +31,7 @@ type pipeDelegate interface {
 	received(msg message)
 }
 
-func newMessage(msg []byte, p *pipe) message {
+func newMessage(msg []byte, p *Pipe) message {
 	isHandshake := false
 	if len(msg) >= 3 && msg[0] == 0 && msg[1] == 1 {
 		isHandshake = true
@@ -40,8 +40,8 @@ func newMessage(msg []byte, p *pipe) message {
 	return message{tracer.NewID(), msg, p, isHandshake}
 }
 
-func newPipe(t transports.Transport, conn net.Conn, addr net.Addr, delegate pipeDelegate) *pipe {
-	p := &pipe{transport: t, conn: conn, raddr: addr, delegate: delegate}
+func newPipe(t transports.Transport, conn net.Conn, addr net.Addr, delegate pipeDelegate) *Pipe {
+	p := &Pipe{transport: t, conn: conn, raddr: addr, delegate: delegate}
 
 	if p.conn == nil && p.raddr == nil {
 		panic("no connection information")
@@ -59,7 +59,7 @@ func newPipe(t transports.Transport, conn net.Conn, addr net.Addr, delegate pipe
 	return p
 }
 
-func (p *pipe) dial() (net.Conn, error) {
+func (p *Pipe) dial() (net.Conn, error) {
 	var (
 		conn   net.Conn
 		closed bool
@@ -104,11 +104,11 @@ func (p *pipe) dial() (net.Conn, error) {
 	return conn, nil
 }
 
-func (p *pipe) RemoteAddr() net.Addr {
+func (p *Pipe) RemoteAddr() net.Addr {
 	return p.raddr
 }
 
-func (p *pipe) Write(b []byte) (int, error) {
+func (p *Pipe) Write(b []byte) (int, error) {
 	conn, err := p.dial()
 	if err != nil {
 		return 0, err
@@ -117,7 +117,7 @@ func (p *pipe) Write(b []byte) (int, error) {
 	return conn.Write(b)
 }
 
-func (p *pipe) Close() error {
+func (p *Pipe) Close() error {
 	var (
 		conn   net.Conn
 		closed bool
@@ -145,7 +145,7 @@ func (p *pipe) Close() error {
 	return err
 }
 
-func (p *pipe) reader(conn net.Conn) {
+func (p *Pipe) reader(conn net.Conn) {
 	defer func() {
 		p.mtx.Lock()
 		if p.conn == conn {
