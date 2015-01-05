@@ -1,12 +1,21 @@
 package bridge
 
 import (
+	"io"
 	"sync"
+	"time"
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/internal/util/logs"
 )
+
+type Config struct {
+	DisableRouter bool
+	AllowPeer     func(from, to hashname.H) bool
+	AllowConnect  func(from, via hashname.H) bool
+}
 
 type Bridge interface {
 	RouteToken(token cipherset.Token, source, target *e3x.Exchange)
@@ -16,18 +25,33 @@ type Bridge interface {
 type module struct {
 	mtx             sync.RWMutex
 	e               *e3x.Endpoint
+	config          Config
+	peerListener    *e3x.Listener
+	connectListener *e3x.Listener
+	pending         map[hashname.H]*pendingIntroduction
 	packetRoutes    map[cipherset.Token]*e3x.Exchange
 	handshakeRoutes map[cipherset.Token]*e3x.Exchange
 	log             *logs.Logger
+}
+
+type pendingIntroduction struct {
+	mtx          sync.Mutex
+	cnd          *sync.Cond
+	mod          *module
+	hashname     hashname.H
+	done         bool
+	x            *e3x.Exchange
+	err          error
+	timeoutTimer *time.Timer
 }
 
 type moduleKeyType string
 
 const moduleKey = moduleKeyType("bridge")
 
-func Module() e3x.EndpointOption {
+func Module(config Config) e3x.EndpointOption {
 	return func(e *e3x.Endpoint) error {
-		return e3x.RegisterModule(moduleKey, newBridge(e))(e)
+		return e3x.RegisterModule(moduleKey, newBridge(e, config))(e)
 	}
 }
 
@@ -39,9 +63,11 @@ func FromEndpoint(e *e3x.Endpoint) Bridge {
 	return mod.(*module)
 }
 
-func newBridge(e *e3x.Endpoint) *module {
+func newBridge(e *e3x.Endpoint, config Config) *module {
 	return &module{
 		e:               e,
+		config:          config,
+		pending:         make(map[hashname.H]*pendingIntroduction),
 		packetRoutes:    make(map[cipherset.Token]*e3x.Exchange),
 		handshakeRoutes: make(map[cipherset.Token]*e3x.Exchange),
 	}
@@ -58,8 +84,119 @@ func (mod *module) Init() error {
 	return nil
 }
 
-func (mod *module) Start() error { return nil }
-func (mod *module) Stop() error  { return nil }
+func (mod *module) Start() error {
+	mod.peerListener = mod.e.Listen("peer", false)
+	mod.connectListener = mod.e.Listen("connect", false)
+
+	go mod.acceptPeerChannels()
+	go mod.acceptConnectChannels()
+
+	return nil
+}
+
+func (mod *module) Stop() error {
+	mod.peerListener.Close()
+	mod.connectListener.Close()
+
+	return nil
+}
+
+func (mod *module) registerIntroduction(dst hashname.H) (i *pendingIntroduction, dial bool) {
+	mod.mtx.Lock()
+	i = mod.pending[dst]
+	if i == nil {
+		dial = true
+		i = newPendingIntroduction(mod, dst, 2*time.Minute)
+		mod.pending[dst] = i
+	}
+	mod.mtx.Unlock()
+
+	return i, dial
+}
+
+func (mod *module) getIntroduction(dst hashname.H) *pendingIntroduction {
+	mod.mtx.Lock()
+	i := mod.pending[dst]
+	mod.mtx.Unlock()
+
+	return i
+}
+
+func newPendingIntroduction(mod *module, hn hashname.H, timeout time.Duration) *pendingIntroduction {
+	i := &pendingIntroduction{mod: mod, hashname: hn}
+	i.cnd = sync.NewCond(&i.mtx)
+	i.timeoutTimer = time.AfterFunc(timeout, i.timeout)
+	return i
+}
+
+func (i *pendingIntroduction) wait() (*e3x.Exchange, error) {
+	i.mtx.Lock()
+
+	for !i.done {
+		i.cnd.Wait()
+	}
+
+	i.cnd.Signal()
+	i.mtx.Unlock()
+
+	return i.x, i.err
+}
+
+func (i *pendingIntroduction) timeout() {
+	i.resolve(nil, e3x.ErrTimeout)
+}
+
+func (i *pendingIntroduction) resolve(x *e3x.Exchange, err error) {
+	if i == nil {
+		return
+	}
+
+	i.mod.mtx.Lock()
+	i.mtx.Lock()
+
+	delete(i.mod.pending, i.hashname)
+
+	if !i.done {
+		if i.timeoutTimer != nil {
+			i.timeoutTimer.Stop()
+			i.timeoutTimer = nil
+		}
+
+		i.x, i.err = x, err
+		i.done = true
+
+		i.cnd.Signal()
+	}
+
+	i.mtx.Unlock()
+	i.mod.mtx.Unlock()
+}
+
+func (mod *module) acceptPeerChannels() {
+	for {
+		c, err := mod.peerListener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			continue
+		}
+		go mod.handle_peer(c)
+	}
+}
+
+func (mod *module) acceptConnectChannels() {
+	for {
+		c, err := mod.connectListener.AcceptChannel()
+		if err == io.EOF {
+			return
+		}
+		if err != nil {
+			continue
+		}
+		go mod.handle_connect(c)
+	}
+}
 
 func (mod *module) RouteToken(token cipherset.Token, source, target *e3x.Exchange) {
 	mod.mtx.Lock()

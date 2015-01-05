@@ -1,4 +1,4 @@
-package peers
+package bridge
 
 import (
 	"encoding/hex"
@@ -7,7 +7,6 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/modules/bridge"
 )
 
 func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body []byte) error {
@@ -62,7 +61,7 @@ func (mod *module) introduceVia(router *e3x.Exchange, to hashname.H) error {
 func (mod *module) handle_peer(ch *e3x.Channel) {
 	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
 
-	log := mainLog.From(ch.RemoteHashname()).To(mod.e.LocalHashname())
+	log := mod.log.From(ch.RemoteHashname()).To(mod.e.LocalHashname())
 
 	// MUST allow router role
 	if mod.config.DisableRouter {
@@ -105,7 +104,7 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 	token := cipherset.ExtractToken(pkt.Body)
 	if token != cipherset.ZeroToken {
 		// add bridge back to requester
-		bridge.FromEndpoint(mod.e).RouteToken(token, ch.Exchange(), nil)
+		mod.RouteToken(token, ch.Exchange(), nil)
 	}
 
 	mod.connect(ex, pkt.Body)

@@ -60,7 +60,7 @@ func TestBridge(t *testing.T) {
 	R, err := e3x.Open(
 		e3x.Log(nil),
 		e3x.Transport(udp.Config{}),
-		Module())
+		Module(Config{}))
 	assert.NoError(err)
 
 	done := make(chan bool, 1)

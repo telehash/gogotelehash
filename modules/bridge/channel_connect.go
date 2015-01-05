@@ -1,4 +1,4 @@
-package peers
+package bridge
 
 import (
 	"encoding/hex"
