@@ -14,7 +14,7 @@ func init() {
 }
 
 func NetLink_Worker(ctx *Context) error {
-	e, err := gogotelehash.Open()
+	e, err := telehash.Open()
 	if err != nil {
 		return err
 	}
@@ -34,7 +34,7 @@ func NetLink_Worker(ctx *Context) error {
 }
 
 func NetLink_Driver(ctx *Context) error {
-	e, err := gogotelehash.Open()
+	e, err := telehash.Open()
 	if err != nil {
 		return err
 	}

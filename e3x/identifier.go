@@ -3,7 +3,7 @@ package e3x
 import (
 	"errors"
 
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
 )
 
 var ErrUnidentifiable = errors.New("unidentifiable identity")

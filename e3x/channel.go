@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/tracer"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 var (

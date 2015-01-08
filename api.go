@@ -1,4 +1,4 @@
-package gogotelehash
+package telehash
 
 import (
 	"encoding/json"
@@ -6,12 +6,12 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/transports"
 
-	// "github.com/telehash/gogotelehash/modules/bridge"
-	"github.com/telehash/gogotelehash/modules/paths"
+	"github.com/telehash/gogotelehash/internal/modules/bridge"
+	"github.com/telehash/gogotelehash/internal/modules/paths"
 )
 
 type (
@@ -26,20 +26,16 @@ type (
 	Packet         lob.Packet
 )
 
-// func Bridge() EndpointOption {
-// 	return EndpointOption(bridge.Module())
-// }
-
-func Paths() EndpointOption {
-	return EndpointOption(paths.Module())
-}
-
 func Transport(config transports.Config) EndpointOption {
 	return EndpointOption(e3x.Transport(config))
 }
 
 func Open(options ...EndpointOption) (*Endpoint, error) {
-	innerOptions := make([]e3x.EndpointOption, len(options))
+	innerOptions := make([]e3x.EndpointOption, len(options)+10)
+
+	innerOptions = append(innerOptions, paths.Module())
+	innerOptions = append(innerOptions, bridge.Module(bridge.Config{}))
+
 	for i, option := range options {
 		innerOptions[i] = e3x.EndpointOption(option)
 	}
@@ -195,4 +191,8 @@ func (i *Identity) Identify(e *e3x.Endpoint) (*e3x.Identity, error) {
 
 func (p *Packet) Header() *lob.Header {
 	return (*lob.Packet)(p).Header()
+}
+
+func (p *Packet) Free() {
+	(*lob.Packet)(p).Free()
 }

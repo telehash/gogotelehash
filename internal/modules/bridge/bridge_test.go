@@ -3,13 +3,12 @@ package bridge
 import (
 	"net"
 	"testing"
-	// "time"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
 	"github.com/telehash/gogotelehash/e3x"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/logs"
-	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 	"github.com/telehash/gogotelehash/transports/fw"
 	"github.com/telehash/gogotelehash/transports/udp"

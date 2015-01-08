@@ -16,8 +16,8 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/ecdh"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 var (

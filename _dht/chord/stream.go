@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/lob"
 )
 
 type stream struct {

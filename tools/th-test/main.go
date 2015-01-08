@@ -142,7 +142,7 @@ type Context struct {
 	Out  io.Writer
 }
 
-func (c *Context) WriteIdentity(e *gogotelehash.Endpoint) {
+func (c *Context) WriteIdentity(e *telehash.Endpoint) {
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
 			c.dir = "/shared"
@@ -170,7 +170,7 @@ func (c *Context) WriteIdentity(e *gogotelehash.Endpoint) {
 	}
 }
 
-func (c *Context) ReadIdentity(role string) *gogotelehash.Identity {
+func (c *Context) ReadIdentity(role string) *telehash.Identity {
 
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
@@ -186,7 +186,7 @@ func (c *Context) ReadIdentity(role string) *gogotelehash.Identity {
 		os.Exit(1)
 	}
 
-	var ident *gogotelehash.Identity
+	var ident *telehash.Identity
 	err = json.Unmarshal(data, &ident)
 	if err != nil {
 		fmt.Printf("error: %s\n", err)

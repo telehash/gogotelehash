@@ -18,7 +18,7 @@ import (
 )
 
 func main() {
-	var peerIdentity *gogotelehash.Identity
+	var peerIdentity *telehash.Identity
 
 	err := json.NewDecoder(os.Stdin).Decode(&peerIdentity)
 	if err != nil {
@@ -30,9 +30,8 @@ func main() {
 		log.Fatalf("error: %s", err)
 	}
 
-	e, err := gogotelehash.Open(
-		gogotelehash.Paths(),
-		gogotelehash.Transport(nat.Config{
+	e, err := telehash.Open(
+		telehash.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},

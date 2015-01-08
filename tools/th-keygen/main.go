@@ -10,7 +10,7 @@ import (
 
 	_ "github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
 )
 
 const usage = `Telehash key generation tool.

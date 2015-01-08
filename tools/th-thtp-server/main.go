@@ -17,10 +17,9 @@ import (
 )
 
 func main() {
-	e, err := gogotelehash.Open(
-		gogotelehash.THTP(http.DefaultServeMux),
-		gogotelehash.Paths(),
-		gogotelehash.Transport(nat.Config{
+	e, err := telehash.Open(
+		telehash.THTP(http.DefaultServeMux),
+		telehash.Transport(nat.Config{
 			mux.Config{
 				udp.Config{Network: "udp4"},
 				udp.Config{Network: "udp6"},

@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/lob"
 )
 
 var (

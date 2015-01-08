@@ -5,9 +5,9 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body *bufpool.Buffer) error {

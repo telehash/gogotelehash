@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
 )
 
 var (

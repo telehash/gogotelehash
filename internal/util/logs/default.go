@@ -3,7 +3,7 @@ package logs
 import (
 	"os"
 
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
 )
 
 var defaultLogger = New(os.Stdout)

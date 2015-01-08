@@ -1,14 +1,14 @@
 package bridge
 
 import (
-	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/internal/util/logs"
 )
 

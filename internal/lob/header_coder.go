@@ -218,7 +218,7 @@ func parseUint32(p []byte) (uint32, []byte, bool) {
 
 	for idx, r := range p {
 		if '0' <= r && r <= '9' {
-			n = (n * 10) + (uint32(r) - '0')
+			n = n*10 + (uint32(r) - '0')
 			continue
 		}
 

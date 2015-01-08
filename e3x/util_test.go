@@ -5,8 +5,8 @@ import (
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/mock"
 
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/tracer"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 type MockExchange struct {

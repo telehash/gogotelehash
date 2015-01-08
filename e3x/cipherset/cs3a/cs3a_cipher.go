@@ -13,9 +13,9 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/poly1305"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/base32util"
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
-	"github.com/telehash/gogotelehash/lob"
 )
 
 var (
