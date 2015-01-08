@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"io"
 	"net"
 	"sync"
@@ -61,7 +62,11 @@ func (c *connection) Write(b []byte) (int, error) {
 		return len(b), nil
 	}
 
-	return pipe.Write(b)
+	buf := bufpool.New().Set(b)
+	n, err := pipe.Write(buf)
+	buf.Free()
+
+	return n, err
 }
 
 func (c *connection) sendHandshake(body []byte) error {
@@ -72,8 +77,7 @@ func (c *connection) sendHandshake(body []byte) error {
 
 	// defer e3x.ForgetterFromEndpoint(c.ex.).ForgetChannel(ch)
 
-	pkt := &lob.Packet{}
-	pkt.Body = body
+	pkt := lob.New(body)
 	pkt.Header().SetString("peer", string(c.target))
 	ch.WritePacket(pkt)
 

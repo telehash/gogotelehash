@@ -10,6 +10,7 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/transports"
@@ -155,7 +156,7 @@ func (e *Endpoint) traceStarted() {
 func (e *Endpoint) traceReceivedPacket(msg message) {
 	if tracer.Enabled {
 		pkt := tracer.Info{
-			"msg": base64.StdEncoding.EncodeToString(msg.Data),
+			"msg": base64.StdEncoding.EncodeToString(msg.Data.Get(nil)),
 		}
 
 		if msg.Pipe != nil {
@@ -402,31 +403,32 @@ func (e *Endpoint) acceptConnections() {
 func (e *Endpoint) accept(conn net.Conn) {
 	var (
 		token cipherset.Token
-		buf   [1500]byte
-		msg   []byte
+		msg   = bufpool.New()
 		err   error
 		n     int
 	)
-	n, err = conn.Read(buf[:])
+	n, err = conn.Read(msg.RawBytes()[:1500])
 	if err != nil {
+		msg.Free()
 		conn.Close()
 		return
 	}
-	msg = buf[:n]
+	msg.SetLen(n)
 
 	// msg is either a handshake or a channel packet
 	// when msg is a handshake decrypt it and pass it to the associated exchange
 	// when msg is a channel packet lookup the exchange and pass it the msg
 	// always associate the conn with the exchange
 
-	if len(msg) < 2 {
-		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+	if msg.Len() < 2 {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, nil) != ErrStopPropagation {
 			conn.Close()
 		}
+		msg.Free()
 		return // to short
 	}
 
-	token = cipherset.ExtractToken(msg)
+	token = cipherset.ExtractToken(msg.RawBytes())
 	e.mtx.Lock()
 	exchange := e.tokens[token]
 	e.mtx.Unlock()
@@ -436,19 +438,21 @@ func (e *Endpoint) accept(conn net.Conn) {
 		return
 	}
 
-	if len(msg) < 3 || msg[0] != 0 || msg[1] != 1 {
-		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+	if raw := msg.RawBytes(); len(raw) < 3 || raw[0] != 0 || raw[1] != 1 {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, nil) != ErrStopPropagation {
 			conn.Close()
 		}
+		msg.Free()
 		return // to short
 	}
 
 	localIdent, err := e.LocalIdentity()
 	if err != nil {
-		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, err) != ErrStopPropagation {
 			conn.Close()
 		}
-		e.traceDroppedPacket(msg, conn, err.Error())
+		e.traceDroppedPacket(msg.Get(nil), conn, err.Error())
+		msg.Free()
 		return // drop
 	}
 
@@ -457,32 +461,35 @@ func (e *Endpoint) accept(conn net.Conn) {
 	defer e.mtx.Unlock()
 
 	var (
-		csid = msg[2]
+		csid = msg.RawBytes()[2]
 		key  = e.keys[csid]
 	)
 	if key == nil {
-		if e.endpointHooks.DropPacket(msg, conn, nil) != ErrStopPropagation {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, nil) != ErrStopPropagation {
 			conn.Close()
 		}
+		msg.Free()
 		return // no key for csid
 	}
 
-	handshake, err := cipherset.DecryptHandshake(csid, key, msg[3:])
+	handshake, err := cipherset.DecryptHandshake(csid, key, msg.RawBytes()[3:])
 	if err != nil {
-		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, err) != ErrStopPropagation {
 			conn.Close()
 		}
-		e.traceDroppedPacket(msg, conn, err.Error())
+		e.traceDroppedPacket(msg.Get(nil), conn, err.Error())
+		msg.Free()
 		return // drop
 	}
 
 	hn, err := hashname.FromKeyAndIntermediates(csid,
 		handshake.PublicKey().Public(), handshake.Parts())
 	if err != nil {
-		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, err) != ErrStopPropagation {
 			conn.Close()
 		}
-		e.traceDroppedPacket(msg, conn, err.Error())
+		e.traceDroppedPacket(msg.Get(nil), conn, err.Error())
+		msg.Free()
 		return // drop
 	}
 
@@ -509,10 +516,11 @@ func (e *Endpoint) accept(conn net.Conn) {
 
 	exchange, err = newExchange(localIdent, nil, handshake, e.log, registerEndpoint(e))
 	if err != nil {
-		if e.endpointHooks.DropPacket(msg, conn, err) != ErrStopPropagation {
+		if e.endpointHooks.DropPacket(msg.Get(nil), conn, err) != ErrStopPropagation {
 			conn.Close()
 		}
-		e.traceDroppedPacket(msg, conn, err.Error())
+		e.traceDroppedPacket(msg.Get(nil), conn, err.Error())
+		msg.Free()
 		return // drop
 	}
 
@@ -527,7 +535,10 @@ func (e *Endpoint) onExchangeClosed(_ *Endpoint, x *Exchange, reason error) erro
 	e.mtx.Lock()
 	defer e.mtx.Unlock()
 
-	delete(e.hashnames, x.remoteIdent.Hashname())
+	if x.remoteIdent != nil {
+		delete(e.hashnames, x.remoteIdent.Hashname())
+	}
+
 	delete(e.tokens, x.LocalToken())
 	delete(e.tokens, x.RemoteToken())
 

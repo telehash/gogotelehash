@@ -158,7 +158,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 
 	var (
 		ctLen           = len(p) - (lenKey + lenNonce + lenAuth)
-		out             = make([]byte, ctLen)
+		out             = bufpool.New()
 		handshake       = &handshake{}
 		cs3aLocalKey, _ = localKey.(*key)
 		at              uint32
@@ -186,10 +186,11 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 	box.Precompute(&agreedKey, &remoteLineKey, cs3aLocalKey.prv)
 
 	// decode BODY
-	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
+	outBuf, ok := box.OpenAfterPrecomputation(out.RawBytes(), ciphertext, &nonce, &agreedKey)
 	if !ok {
 		return nil, cipherset.ErrInvalidMessage
 	}
+	out.SetLen(len(outBuf))
 
 	{ // decode inner
 		inner, err := lob.Decode(out)
@@ -209,10 +210,10 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		if len(inner.Body) != lenKey {
+		if inner.BodyLen() != lenKey {
 			return nil, cipherset.ErrInvalidMessage
 		}
-		copy(remoteKey[:], inner.Body)
+		inner.Body(remoteKey[:0])
 
 		handshake.at = at
 		handshake.key = makeKey(nil, &remoteKey)
@@ -443,7 +444,8 @@ func (s *state) CanDecryptPacket() bool {
 
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	var (
-		out       = bufpool.GetBuffer()[:lenKey+lenNonce+len(in)+box.Overhead+lenAuth]
+		out       = bufpool.New().SetLen(lenKey + lenNonce + len(in) + box.Overhead + lenAuth)
+		raw       = out.RawBytes()
 		agreedKey [lenKey]byte
 		ctLen     int
 	)
@@ -453,32 +455,34 @@ func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	}
 
 	// copy public senderLineKey
-	copy(out[:lenKey], (*s.localLineKey.pub)[:])
+	copy(raw[:lenKey], (*s.localLineKey.pub)[:])
 
 	// copy the nonce
-	copy(out[lenKey:lenKey+lenNonce], s.nonce[:lenNonce])
+	copy(raw[lenKey:lenKey+lenNonce], s.nonce[:lenNonce])
 
 	// make the agreedKey
 	box.Precompute(&agreedKey, s.remoteKey.pub, s.localLineKey.prv)
 
 	// encrypt p
-	ctLen = len(box.SealAfterPrecomputation(out[lenKey+lenNonce:lenKey+lenNonce], in, s.nonce, &agreedKey))
+	ctLen = len(box.SealAfterPrecomputation(raw[lenKey+lenNonce:lenKey+lenNonce], in, s.nonce, &agreedKey))
 
 	// Sign message
-	s.sign(out[lenKey+lenNonce+ctLen:], s.nonce[:lenNonce], out[:lenKey+lenNonce+ctLen])
+	s.sign(raw[lenKey+lenNonce+ctLen:], s.nonce[:lenNonce], raw[:lenKey+lenNonce+ctLen])
 
-	return out[:lenKey+lenNonce+ctLen+lenAuth], nil
+	out.SetLen(lenKey + lenNonce + ctLen + lenAuth)
+
+	return out.Get(nil), nil
 }
 
 func (s *state) EncryptHandshake(at uint32, compact cipherset.Parts) ([]byte, error) {
-	pkt := &lob.Packet{Body: s.localKey.Public()}
+	pkt := lob.New(s.localKey.Public())
 	compact.ApplyToHeader(pkt.Header())
 	pkt.Header().SetUint32("at", at)
 	data, err := lob.Encode(pkt)
 	if err != nil {
 		return nil, err
 	}
-	return s.EncryptMessage(data)
+	return s.EncryptMessage(data.Get(nil))
 }
 
 func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
@@ -513,11 +517,13 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	defer s.mtx.RUnlock()
 
 	var (
-		inner []byte
-		body  []byte
-		nonce [lenNonce]byte
-		ctLen int
-		err   error
+		outer   *lob.Packet
+		inner   *bufpool.Buffer
+		body    *bufpool.Buffer
+		bodyRaw []byte
+		nonce   [lenNonce]byte
+		ctLen   int
+		err     error
 	)
 
 	if !s.CanEncryptPacket() {
@@ -539,21 +545,25 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	binary.BigEndian.PutUint64(nonce[16:], nonceSuffix)
 
 	// alloc enough space
-	body = bufpool.GetBuffer()[:lenToken+lenNonce+len(inner)+box.Overhead]
+	body = bufpool.New().SetLen(lenToken + lenNonce + inner.Len() + box.Overhead)
+	bodyRaw = body.RawBytes()
 
 	// copy token
-	copy(body[:lenToken], (*s.remoteToken)[:])
+	copy(bodyRaw[:lenToken], s.remoteToken[:])
 
 	// copy nonce
-	copy(body[lenToken:lenToken+lenNonce], nonce[:])
+	copy(bodyRaw[lenToken:lenToken+lenNonce], nonce[:])
 
 	// encrypt inner packet
-	ctLen = len(box.SealAfterPrecomputation(body[lenToken+lenNonce:lenToken+lenNonce], inner, &nonce, s.lineEncryptionKey))
-	body = body[:lenToken+lenNonce+ctLen]
+	ctLen = len(box.SealAfterPrecomputation(
+		bodyRaw[lenToken+lenNonce:lenToken+lenNonce], inner.RawBytes(), &nonce, s.lineEncryptionKey))
+	body.SetLen(lenToken + lenNonce + ctLen)
 
-	bufpool.PutBuffer(inner)
+	outer = lob.New(body.RawBytes())
+	inner.Free()
+	body.Free()
 
-	return &lob.Packet{Body: body}, nil
+	return outer, nil
 }
 
 func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
@@ -567,31 +577,55 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || !pkt.Header().IsZero() || len(pkt.Body) < lenToken+lenNonce {
+	if !pkt.Header().IsZero() || pkt.BodyLen() < lenToken+lenNonce {
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	var (
-		nonce [lenNonce]byte
-		inner = bufpool.GetBuffer()
-		ok    bool
+		nonce    [lenNonce]byte
+		bodyRaw  []byte
+		innerRaw []byte
+		innerPkt *lob.Packet
+		body     = bufpool.New()
+		inner    = bufpool.New()
+		ok       bool
 	)
 
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+	innerRaw = inner.RawBytes()
+
 	// compare token
-	if !bytes.Equal(pkt.Body[:lenToken], (*s.localToken)[:]) {
+	if !bytes.Equal(bodyRaw[:lenToken], (*s.localToken)[:]) {
+		inner.Free()
+		body.Free()
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	// copy nonce
-	copy(nonce[:], pkt.Body[lenToken:lenToken+lenNonce])
+	copy(nonce[:], bodyRaw[lenToken:lenToken+lenNonce])
 
 	// decrypt inner packet
-	inner, ok = box.OpenAfterPrecomputation(inner[:0], pkt.Body[lenToken+lenNonce:], &nonce, s.lineDecryptionKey)
+	innerRaw, ok = box.OpenAfterPrecomputation(
+		innerRaw[:0], bodyRaw[lenToken+lenNonce:], &nonce, s.lineDecryptionKey)
 	if !ok {
+		inner.Free()
+		body.Free()
 		return nil, cipherset.ErrInvalidPacket
 	}
+	inner.SetLen(len(innerRaw))
 
-	return lob.Decode(inner)
+	innerPkt, err := lob.Decode(inner)
+	if err != nil {
+		inner.Free()
+		body.Free()
+		return nil, err
+	}
+
+	inner.Free()
+	body.Free()
+
+	return innerPkt, nil
 }
 
 type key struct {

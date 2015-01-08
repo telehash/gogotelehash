@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"io"
 	"sync"
 	"time"
@@ -342,7 +343,9 @@ func (mod *module) forwardMessage(e *e3x.Endpoint, x *e3x.Exchange, msg []byte, 
 		return nil
 	}
 
-	_, err := dst.Write(msg)
+	buf := bufpool.New().Set(msg)
+	_, err := dst.Write(buf)
+	buf.Free()
 	if err != nil {
 		mod.log.To(ex.RemoteHashname()).Printf("\x1B[35mFWD %x %s error=%s\x1B[0m", token, dst.RemoteAddr(), err)
 		return nil

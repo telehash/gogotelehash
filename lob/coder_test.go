@@ -10,16 +10,16 @@ func TestCoding(t *testing.T) {
 	assert := assert.New(t)
 
 	var tab = []*Packet{
-		{Head: []byte("h"), Body: []byte("world")},
-		{Head: []byte("hello!")},
-		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
-		{json: Header{HasC: true, C: 123}},
-		{json: Header{HasAck: true, Ack: 123}},
-		{json: Header{HasSeq: true, Seq: 123}},
-		{json: Header{HasType: true, Type: "foo"}},
-		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("h")}),
+		New(nil).SetHeader(Header{Bytes: []byte("hello!")}),
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("hello!")}),
+		New(nil).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New([]byte("world")).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New(nil).SetHeader(Header{HasC: true, C: 123}),
+		New(nil).SetHeader(Header{HasAck: true, Ack: 123}),
+		New(nil).SetHeader(Header{HasSeq: true, Seq: 123}),
+		New(nil).SetHeader(Header{HasType: true, Type: "foo"}),
+		New(nil).SetHeader(Header{HasMiss: true, Miss: []uint32{123, 246}}),
 	}
 
 	for i, e := range tab {
@@ -28,53 +28,54 @@ func TestCoding(t *testing.T) {
 		if assert.NoError(err) && assert.NotEmpty(data) {
 			o, err = Decode(data)
 			if assert.NoError(err) && assert.NotNil(o) {
-				o.raw = nil
 				assert.Equal(e, o)
 			}
 		}
 
 		t.Logf("%d: %v => %v", i, e, o)
 
+		data.Free()
+		o.Free()
 	}
 }
 
 func BenchmarkEncode(b *testing.B) {
 	var tab = []*Packet{
-		{Head: []byte("h"), Body: []byte("world")},
-		{Head: []byte("hello!")},
-		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
-		{json: Header{HasC: true, C: 123}},
-		{json: Header{HasAck: true, Ack: 123}},
-		{json: Header{HasSeq: true, Seq: 123}},
-		{json: Header{HasType: true, Type: "foo"}},
-		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("h")}),
+		New(nil).SetHeader(Header{Bytes: []byte("hello!")}),
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("hello!")}),
+		New(nil).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New([]byte("world")).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New(nil).SetHeader(Header{HasC: true, C: 123}),
+		New(nil).SetHeader(Header{HasAck: true, Ack: 123}),
+		New(nil).SetHeader(Header{HasSeq: true, Seq: 123}),
+		New(nil).SetHeader(Header{HasType: true, Type: "foo"}),
+		New(nil).SetHeader(Header{HasMiss: true, Miss: []uint32{123, 246}}),
 	}
 	var l = len(tab)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		e, _ := Encode(tab[i%l])
-		bufpool.PutBuffer(e)
+		e.Free()
 	}
 }
 
 func BenchmarkDecode(b *testing.B) {
 	var src = []*Packet{
-		{Head: []byte("h"), Body: []byte("world")},
-		{Head: []byte("hello!")},
-		{Head: []byte("hello!"), Body: []byte("world")},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}},
-		{json: Header{Extra: map[string]interface{}{"hello": 5}}, Body: []byte("world")},
-		{json: Header{HasC: true, C: 123}},
-		{json: Header{HasAck: true, Ack: 123}},
-		{json: Header{HasSeq: true, Seq: 123}},
-		{json: Header{HasType: true, Type: "foo"}},
-		{json: Header{HasMiss: true, Miss: []uint32{123, 246}}},
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("h")}),
+		New(nil).SetHeader(Header{Bytes: []byte("hello!")}),
+		New([]byte("world")).SetHeader(Header{Bytes: []byte("hello!")}),
+		New(nil).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New([]byte("world")).SetHeader(Header{Extra: map[string]interface{}{"hello": 5}}),
+		New(nil).SetHeader(Header{HasC: true, C: 123}),
+		New(nil).SetHeader(Header{HasAck: true, Ack: 123}),
+		New(nil).SetHeader(Header{HasSeq: true, Seq: 123}),
+		New(nil).SetHeader(Header{HasType: true, Type: "foo"}),
+		New(nil).SetHeader(Header{HasMiss: true, Miss: []uint32{123, 246}}),
 	}
 	var l = len(src)
-	var tab = make([][]byte, l)
+	var tab = make([]*bufpool.Buffer, l)
 
 	for i, e := range src {
 		tab[i], _ = Encode(e)

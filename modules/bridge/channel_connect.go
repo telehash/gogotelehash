@@ -6,13 +6,14 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/lob"
 )
 
 var mainLog = logs.Module("peers")
 
-func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
+func (mod *module) connect(ex *e3x.Exchange, inner *bufpool.Buffer) error {
 	ch, err := ex.Open("connect", false)
 	if err != nil {
 		return err
@@ -20,8 +21,7 @@ func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
 
 	defer ch.Kill()
 
-	pkt := &lob.Packet{Body: inner}
-	err = ch.WritePacket(pkt)
+	err = ch.WritePacket(lob.New(inner.RawBytes()))
 	if err != nil {
 		return err
 	}
@@ -37,6 +37,7 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		localIdent  *e3x.Identity
 		remoteIdent *e3x.Identity
 		handshake   cipherset.Handshake
+		innerData   = bufpool.New()
 		err         error
 	)
 
@@ -50,22 +51,25 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		return
 	}
 
-	inner, err := lob.Decode(pkt.Body)
+	pkt.Body(innerData.SetLen(pkt.BodyLen()).RawBytes()[:0])
+
+	inner, err := lob.Decode(innerData)
 	if err != nil {
 		return
 	}
 
-	if len(inner.Head) == 1 {
+	innerHdr := inner.Header()
+	if innerHdr.IsBinary() && len(innerHdr.Bytes) == 1 {
 		// handshake
 		var (
-			csid = inner.Head[0]
+			csid = innerHdr.Bytes[0]
 			key  = localIdent.Keys()[csid]
 		)
 		if key == nil {
 			return
 		}
 
-		handshake, err = cipherset.DecryptHandshake(csid, key, inner.Body)
+		handshake, err = cipherset.DecryptHandshake(csid, key, inner.Body(nil))
 		if err != nil {
 			return
 		}
@@ -106,14 +110,14 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 			}
 		}
 
-		hn, err := hashname.FromKeyAndIntermediates(csid, inner.Body, parts)
+		hn, err := hashname.FromKeyAndIntermediates(csid, inner.Body(nil), parts)
 		if err != nil {
 			return
 		}
 
 		from = hn
 
-		pubKey, err := cipherset.DecodeKeyBytes(csid, inner.Body, nil)
+		pubKey, err := cipherset.DecodeKeyBytes(csid, inner.Body(nil), nil)
 		if err != nil {
 			return
 		}

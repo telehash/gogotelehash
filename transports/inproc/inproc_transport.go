@@ -43,7 +43,7 @@ type transport struct {
 
 type packet struct {
 	from *inprocAddr
-	buf  []byte
+	buf  *bufpool.Buffer
 }
 
 var (
@@ -84,9 +84,8 @@ func (t *transport) Read(p []byte) (int, dgram.Addr, error) {
 		return 0, nil, io.EOF
 	}
 
-	n := len(pkt.buf)
-	copy(p, pkt.buf)
-	bufpool.PutBuffer(pkt.buf)
+	n := len(pkt.buf.Get(p[:0]))
+	pkt.buf.Free()
 
 	return n, pkt.from, nil
 }
@@ -105,9 +104,7 @@ func (t *transport) Write(p []byte, dst dgram.Addr) (int, error) {
 		return 0, nil // drop
 	}
 
-	buf := bufpool.GetBuffer()
-	copy(buf, p)
-	buf = buf[:len(p)]
+	buf := bufpool.New().Set(p)
 
 	func() {
 		defer func() { recover() }()

@@ -6,18 +6,18 @@ import (
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/lob"
 )
 
-func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body []byte) error {
+func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body *bufpool.Buffer) error {
 	ch, err := router.Open("peer", false)
 	if err != nil {
 		return err
 	}
 	defer ch.Kill()
 
-	pkt := &lob.Packet{}
-	pkt.Body = body
+	pkt := lob.New(body.RawBytes())
 	pkt.Header().SetString("peer", string(to))
 	ch.WritePacket(pkt)
 
@@ -34,8 +34,7 @@ func (mod *module) introduceVia(router *e3x.Exchange, to hashname.H) error {
 	parts := hashname.PartsFromKeys(keys)
 
 	for csid, key := range keys {
-		inner := &lob.Packet{}
-		inner.Body = key.Public()
+		inner := lob.New(key.Public())
 		for partCSID, part := range parts {
 			if partCSID == csid {
 				inner.Header().SetBool(hex.EncodeToString([]byte{partCSID}), true)
@@ -101,11 +100,11 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 		return
 	}
 
-	token := cipherset.ExtractToken(pkt.Body)
+	token := cipherset.ExtractToken(pkt.Body(nil))
 	if token != cipherset.ZeroToken {
 		// add bridge back to requester
 		mod.RouteToken(token, ch.Exchange())
 	}
 
-	mod.connect(ex, pkt.Body)
+	mod.connect(ex, bufpool.New().Set(pkt.Body(nil)))
 }

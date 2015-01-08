@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/internal/util/tracer"
 	"github.com/telehash/gogotelehash/lob"
 )
@@ -204,7 +203,7 @@ func (c *Channel) traceWriteError(pkt *lob.Packet, p *Pipe, reason error) error 
 			info["packet_id"] = pkt.TID
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -227,7 +226,7 @@ func (c *Channel) traceWrite(pkt *lob.Packet, p *Pipe) {
 			info["packet_id"] = pkt.TID
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -246,7 +245,7 @@ func (c *Channel) traceDroppedPacket(pkt *lob.Packet, reason string) {
 		if pkt != nil {
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -261,7 +260,7 @@ func (c *Channel) traceReceivedPacket(pkt *lob.Packet) {
 			"packet_id":  pkt.TID,
 			"packet": tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			},
 		})
 	}
@@ -510,7 +509,7 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		h.HasEnd = false
 	}
 
-	if len(e.pkt.Body) == 0 && e.pkt.Header().IsZero() && e.end {
+	if e.pkt.BodyLen() == 0 && e.pkt.Header().IsZero() && e.end {
 		// read empty `end` packet
 		c.readPacket()
 		return nil, io.EOF
@@ -1149,12 +1148,11 @@ func (c *Channel) Read(b []byte) (int, error) {
 		return 0, err
 	}
 
-	n := len(pkt.Body)
+	n := len(pkt.Body(b[:0]))
 	if len(b) < n {
 		return 0, io.ErrShortBuffer
 	}
 
-	copy(b, pkt.Body)
 	pkt.Free()
 
 	return n, nil
@@ -1163,8 +1161,7 @@ func (c *Channel) Read(b []byte) (int, error) {
 // Write implements the net.Conn Write method.
 func (c *Channel) Write(b []byte) (int, error) {
 	n := len(b)
-	pkt := &lob.Packet{Body: bufpool.GetBuffer()[:n]}
-	copy(pkt.Body, b)
+	pkt := lob.New(b)
 
 	err := c.WritePacket(pkt)
 	if err != nil {

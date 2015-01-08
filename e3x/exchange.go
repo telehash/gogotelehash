@@ -300,7 +300,7 @@ func (x *Exchange) traceDroppedPacket(msg message, pkt *lob.Packet, reason strin
 		if pkt != nil {
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -315,7 +315,7 @@ func (x *Exchange) traceReceivedPacket(msg message, pkt *lob.Packet) {
 			"packet_id":   msg.TID,
 			"packet": tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			},
 		})
 	}
@@ -388,7 +388,7 @@ func (x *Exchange) received(msg message) {
 		x.receivedPacket(msg)
 	}
 
-	bufpool.PutBuffer(msg.Data)
+	msg.Data.Free()
 }
 
 func (x *Exchange) onDeliverHandshake() {
@@ -401,7 +401,7 @@ func (x *Exchange) onDeliverHandshake() {
 
 func (x *Exchange) deliverHandshake() error {
 	var (
-		pktData []byte
+		pktData *bufpool.Buffer
 		err     error
 	)
 
@@ -456,7 +456,7 @@ func (x *Exchange) receivedPacket(msg message) {
 		x.mtx.Unlock()
 
 		if !state.IsOpen() {
-			x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+			x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 			x.traceDroppedPacket(msg, nil, dropExchangeIsNotOpen)
 			return // drop
 		}
@@ -464,7 +464,7 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	pkt, err := lob.Decode(msg.Data)
 	if err != nil {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedPacket(msg, nil, dropInvalidPacket)
 		return // drop
 	}
@@ -472,7 +472,7 @@ func (x *Exchange) receivedPacket(msg message) {
 	pkt2, err := x.cipher.DecryptPacket(pkt)
 	pkt.Free()
 	if err != nil {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedPacket(msg, nil, err.Error())
 		return // drop
 	}
@@ -487,7 +487,7 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	if !hasC {
 		// drop: missing "c"
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedPacket(msg, pkt2, dropMissingChannelID)
 		return
 	}
@@ -498,7 +498,7 @@ func (x *Exchange) receivedPacket(msg message) {
 		if c == nil {
 			if !hasType {
 				addPromise.Cancel()
-				x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+				x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 				x.traceDroppedPacket(msg, pkt2, dropMissingChannelType)
 				return // drop (missing typ)
 			}
@@ -506,7 +506,7 @@ func (x *Exchange) receivedPacket(msg message) {
 			listener := x.listenerSet.Get(typ)
 			if listener == nil {
 				addPromise.Cancel()
-				x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+				x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 				x.traceDroppedPacket(msg, pkt2, dropMissingChannelHandler)
 				return // drop (no handler)
 			}
@@ -557,13 +557,13 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, p *Pipe) error {
 	}
 
 	msg, err := lob.Encode(pkt2)
-	bufpool.PutBuffer(pkt2.Body)
+	pkt2.Free()
 	if err != nil {
 		return err
 	}
 
 	_, err = p.Write(msg)
-	bufpool.PutBuffer(msg)
+	msg.Free()
 
 	return err
 }
@@ -787,17 +787,17 @@ func (x *Exchange) AddPathCandidate(addr net.Addr) {
 
 // GenerateHandshake can be used to generate a new handshake packet.
 // This is useful when the exchange doesn't know where to send the handshakes yet.
-func (x *Exchange) GenerateHandshake() ([]byte, error) {
+func (x *Exchange) GenerateHandshake() (*bufpool.Buffer, error) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	return x.generateHandshake(0)
 }
 
-func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
+func (x *Exchange) generateHandshake(seq uint32) (*bufpool.Buffer, error) {
 	var (
-		pkt     = &lob.Packet{Head: []byte{x.csid}}
-		pktData []byte
+		pkt     *lob.Packet
+		pktData *bufpool.Buffer
 		err     error
 	)
 
@@ -805,10 +805,12 @@ func (x *Exchange) generateHandshake(seq uint32) ([]byte, error) {
 		seq = x.getNextSeq()
 	}
 
-	pkt.Body, err = x.cipher.EncryptHandshake(seq, x.localIdent.parts)
+	body, err := x.cipher.EncryptHandshake(seq, x.localIdent.parts)
 	if err != nil {
 		return nil, err
 	}
+
+	pkt = lob.New(body).SetHeader(lob.Header{Bytes: []byte{x.csid}})
 
 	pktData, err = lob.Encode(pkt)
 	if err != nil {
@@ -843,14 +845,14 @@ func (x *Exchange) AddPipeConnection(conn net.Conn, addr net.Addr) (p *Pipe, add
 // ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
 // handshake is accepted err is nil. When the handshake is a request-handshake
 // and it is accepted response will contain a response-handshake packet.
-func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response []byte, ok bool) {
+func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response *bufpool.Buffer, ok bool) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	return x.applyHandshake(handshake, pipe)
 }
 
-func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response []byte, ok bool) {
+func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response *bufpool.Buffer, ok bool) {
 	var (
 		seq uint32
 		err error
@@ -923,40 +925,42 @@ func (x *Exchange) receivedHandshake(msg message) bool {
 	var (
 		pkt       *lob.Packet
 		handshake cipherset.Handshake
+		buf       [1500]byte
 		csid      uint8
 		err       error
 	)
 
 	if !msg.IsHandshake {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, nil, "invalid packet")
 		return false
 	}
 
 	pkt, err = lob.Decode(msg.Data)
 	if err != nil {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, err)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, err)
 		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
-	if len(pkt.Head) != 1 {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+	hdr := pkt.Header()
+	if !hdr.IsBinary() && len(hdr.Bytes) != 1 {
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, nil, "invalid header")
 		return false
 	}
-	csid = uint8(pkt.Head[0])
+	csid = uint8(hdr.Bytes[0])
 
-	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body)
+	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body(buf[:0]))
 	if err != nil {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, err)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, err)
 		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
 	resp, ok := x.applyHandshake(handshake, msg.Pipe)
 	if !ok {
-		x.exchangeHooks.DropPacket(msg.Data, msg.Pipe, nil)
+		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
 		x.traceDroppedHandshake(msg, handshake, "failed to apply")
 		return false
 	}

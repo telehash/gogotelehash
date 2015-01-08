@@ -22,7 +22,7 @@ type Pipe struct {
 
 type message struct {
 	TID         tracer.ID
-	Data        []byte
+	Data        *bufpool.Buffer
 	Pipe        *Pipe
 	IsHandshake bool
 }
@@ -36,9 +36,11 @@ type dialerAddr interface {
 	Dial(e *Endpoint, x *Exchange) (net.Conn, error)
 }
 
-func newMessage(msg []byte, p *Pipe) message {
+func newMessage(msg *bufpool.Buffer, p *Pipe) message {
+	raw := msg.RawBytes()
+
 	isHandshake := false
-	if len(msg) >= 3 && msg[0] == 0 && msg[1] == 1 {
+	if len(raw) >= 3 && raw[0] == 0 && raw[1] == 1 {
 		isHandshake = true
 	}
 
@@ -118,13 +120,13 @@ func (p *Pipe) RemoteAddr() net.Addr {
 	return p.raddr
 }
 
-func (p *Pipe) Write(b []byte) (int, error) {
+func (p *Pipe) Write(b *bufpool.Buffer) (int, error) {
 	conn, err := p.dial()
 	if err != nil {
 		return 0, err
 	}
 
-	return conn.Write(b)
+	return conn.Write(b.RawBytes())
 }
 
 func (p *Pipe) Close() error {
@@ -167,13 +169,14 @@ func (p *Pipe) reader(conn net.Conn) {
 	}()
 
 	for {
-		buf := bufpool.GetBuffer()
+		buf := bufpool.New()
 
-		n, err := conn.Read(buf)
+		n, err := conn.Read(buf.RawBytes()[:1500])
 		if err != nil {
+			buf.Free()
 			return
 		}
 
-		p.delegate.received(newMessage(buf[:n], p))
+		p.delegate.received(newMessage(buf.SetLen(n), p))
 	}
 }

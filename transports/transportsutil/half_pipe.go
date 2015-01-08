@@ -15,7 +15,7 @@ type HalfPipe struct {
 	deadlineReached bool
 	deadlineTimer   *time.Timer
 	closed          bool
-	readQueue       [][]byte
+	readQueue       []*bufpool.Buffer
 }
 
 func NewHalfPipe() *HalfPipe {
@@ -32,10 +32,7 @@ func (c *HalfPipe) PushMessage(p []byte) {
 		return
 	}
 
-	buf := bufpool.GetBuffer()
-	buf = buf[:len(p)]
-	copy(buf, p)
-	c.readQueue = append(c.readQueue, buf)
+	c.readQueue = append(c.readQueue, bufpool.New().Set(p))
 
 	c.cndRead.Signal()
 	c.mtx.Unlock()
@@ -57,9 +54,8 @@ func (c *HalfPipe) Read(b []byte) (n int, err error) {
 	}
 
 	buf := c.readQueue[0]
-	copy(b, buf)
-	n = len(buf)
-	bufpool.PutBuffer(buf)
+	n = len(buf.Get(b[:0]))
+	buf.Free()
 
 	copy(c.readQueue, c.readQueue[1:])
 	c.readQueue = c.readQueue[:len(c.readQueue)-1]

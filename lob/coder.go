@@ -20,137 +20,21 @@ import (
 // ErrInvalidPacket is returned by Decode
 var ErrInvalidPacket = errors.New("lob: invalid packet")
 
-var pktPool sync.Pool
+var pktPool = sync.Pool{
+	New: func() interface{} { return new(Packet) },
+}
 
 // Packet represents a packet.
 type Packet struct {
-	raw  []byte
-	json Header
-	Head []byte
-	Body []byte
-	TID  tracer.ID
-}
-
-// Decode a packet
-func Decode(p []byte) (*Packet, error) {
-	var (
-		length int
-		head   []byte
-		dict   Header
-		body   []byte
-	)
-
-	if len(p) < 2 {
-		return nil, ErrInvalidPacket
-	}
-
-	length = int(binary.BigEndian.Uint16(p))
-	if length+2 > len(p) {
-		return nil, ErrInvalidPacket
-	}
-
-	head = p[2 : 2+length]
-	if len(head) == 0 {
-		head = nil
-	}
-
-	body = p[2+length:]
-	if len(body) == 0 {
-		body = nil
-	}
-
-	if len(head) >= 7 {
-		err := parseHeader(&dict, head)
-		if err != nil {
-			return nil, ErrInvalidPacket
-		}
-		head = nil
-	}
-
-	pkt, _ := pktPool.Get().(*Packet)
-	if pkt == nil {
-		pkt = new(Packet)
-	}
-
-	pkt.raw = p
-	pkt.Head = head
-	pkt.json = dict
-	pkt.Body = body
-
-	return pkt, nil
-}
-
-// Encode a packet
-func Encode(pkt *Packet) ([]byte, error) {
-	var (
-		p      []byte
-		hdrLen int
-		err    error
-	)
-
-	if pkt == nil {
-		return []byte{0, 0}, nil
-	}
-
-	p = bufpool.GetBuffer()
-	buf := bytes.NewBuffer(p[:0])
-	buf.WriteByte(0)
-	buf.WriteByte(0)
-
-	if !pkt.json.IsZero() {
-		err = pkt.json.writeTo(buf)
-		if err != nil {
-			return nil, err
-		}
-		hdrLen = buf.Len() - 2
-		if hdrLen < 7 {
-			return nil, ErrInvalidPacket
-		}
-	} else if len(pkt.Head) > 0 {
-		hdrLen = len(pkt.Head)
-		if hdrLen >= 7 {
-			return nil, ErrInvalidPacket
-		}
-		buf.Write(pkt.Head)
-	}
-
-	if len(pkt.Body) > 0 {
-		buf.Write(pkt.Body)
-	}
-
-	p = p[:buf.Len()]
-	binary.BigEndian.PutUint16(p, uint16(hdrLen))
-
-	return p, nil
-}
-
-// Header returns the packet JSON header if present.
-func (p *Packet) Header() *Header {
-	if p.Head != nil {
-		return nil
-	}
-	return &p.json
-}
-
-// Free the packets backing buffer back to the buffer pool.
-func (p *Packet) Free() {
-	if p == nil {
-		return
-	}
-
-	p.raw = nil
-	p.json = Header{}
-	p.Body = nil
-	p.Head = nil
-
-	pktPool.Put(p)
-	if p.raw != nil {
-		bufpool.PutBuffer(p.raw)
-	}
+	body   *bufpool.Buffer
+	header Header
+	TID    tracer.ID
 }
 
 // Header represents a packet header.
 type Header struct {
+	Bytes []byte `json:"-"`
+
 	C       uint32   `json:"c,omitempty"`
 	Type    string   `json:"type,omitempty"`
 	End     bool     `json:"end,omitempty"`
@@ -165,6 +49,157 @@ type Header struct {
 	HasMiss bool     `json:"-"`
 
 	Extra map[string]interface{} `json:"extra,omitempty"`
+}
+
+func New(body []byte) *Packet {
+	pkt := pktPool.Get().(*Packet)
+
+	if len(body) > 0 {
+		pkt.body = bufpool.New().Set(body)
+	}
+
+	return pkt
+}
+
+// Free the packets backing buffer back to the buffer pool.
+func (p *Packet) Free() {
+	if p == nil {
+		return
+	}
+
+	p.body.Free()
+
+	p.header = Header{}
+	p.body = nil
+	pktPool.Put(p)
+}
+
+// Header returns the packet JSON header if present.
+func (p *Packet) Header() *Header {
+	return &p.header
+}
+
+func (p *Packet) Body(buf []byte) []byte {
+	return p.body.Get(buf)
+}
+
+func (p *Packet) BodyLen() int {
+	return p.body.Len()
+}
+
+func (p *Packet) SetHeader(header Header) *Packet {
+	p.header = header
+	return p
+}
+
+func (p *Packet) String() string {
+	return fmt.Sprintf("PKT{Header: %v, Body: %s}", &p.header, p.body)
+}
+
+func (p *Packet) GoString() string {
+	return fmt.Sprintf("PKT{Header: %v, Body: %s}", &p.header, p.body)
+}
+
+// Decode a packet
+func Decode(p *bufpool.Buffer) (*Packet, error) {
+	var (
+		length int
+		head   []byte
+		body   []byte
+		bytes  = p.RawBytes()
+	)
+
+	if len(bytes) < 2 {
+		return nil, ErrInvalidPacket
+	}
+
+	length = int(binary.BigEndian.Uint16(bytes))
+	if length+2 > len(bytes) {
+		return nil, ErrInvalidPacket
+	}
+
+	head = bytes[2 : 2+length]
+	if len(head) == 0 {
+		head = nil
+	}
+
+	pkt := pktPool.Get().(*Packet)
+
+	body = bytes[2+length:]
+	if len(body) > 0 {
+		pkt.body = bufpool.New().Set(body)
+	}
+
+	if len(head) >= 7 {
+		err := parseHeader(pkt.Header(), head)
+		if err != nil {
+			pkt.Free()
+			return nil, ErrInvalidPacket
+		}
+	} else if len(head) > 0 {
+		pkt.Header().Bytes = append(make([]byte, 0, len(head)), head...)
+	}
+
+	return pkt, nil
+}
+
+var byteBufferPool = sync.Pool{
+	New: func() interface{} { return bytes.NewBuffer(make([]byte, 0, 1500)) },
+}
+
+// Encode a packet
+func Encode(pkt *Packet) (*bufpool.Buffer, error) {
+	var (
+		p      *bufpool.Buffer
+		hdrLen int
+		err    error
+	)
+
+	if pkt == nil {
+		return bufpool.New().SetLen(2), nil
+	}
+
+	buf := byteBufferPool.Get().(*bytes.Buffer)
+	buf.WriteByte(0)
+	buf.WriteByte(0)
+
+	if !pkt.header.IsZero() {
+		if !pkt.header.IsBinary() {
+			err = pkt.header.writeTo(buf)
+			if err != nil {
+				buf.Reset()
+				byteBufferPool.Put(buf)
+				return nil, err
+			}
+			hdrLen = buf.Len() - 2
+			if hdrLen < 7 {
+				buf.Reset()
+				byteBufferPool.Put(buf)
+				return nil, ErrInvalidPacket
+			}
+		} else {
+			hdrLen = len(pkt.header.Bytes)
+			if hdrLen >= 7 {
+				buf.Reset()
+				byteBufferPool.Put(buf)
+				return nil, ErrInvalidPacket
+			}
+			buf.Write(pkt.header.Bytes)
+		}
+	}
+
+	if pkt.body.Len() > 0 {
+		pkt.body.WriteTo(buf)
+	}
+
+	p = bufpool.New()
+	p.Set(buf.Bytes())
+	binary.BigEndian.PutUint16(p.RawBytes(), uint16(hdrLen))
+
+	buf.Reset()
+	byteBufferPool.Put(buf)
+
+	return p, nil
 }
 
 func (h *Header) writeTo(buf *bytes.Buffer) error {
@@ -263,7 +298,11 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 
 // IsZero returns true when the header is the zero value or equivalent.
 func (h *Header) IsZero() bool {
-	return !h.HasC && !h.HasEnd && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && len(h.Extra) == 0
+	return !h.HasC && !h.HasEnd && !h.HasType && !h.HasSeq && !h.HasAck && (!h.HasMiss || len(h.Miss) == 0) && len(h.Extra) == 0 && len(h.Bytes) == 0
+}
+
+func (h *Header) IsBinary() bool {
+	return len(h.Bytes) != 0
 }
 
 // Get the value for key k. found is false if k is not present.
