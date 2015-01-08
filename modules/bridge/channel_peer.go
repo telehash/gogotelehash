@@ -14,7 +14,7 @@ func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body []byte) err
 	if err != nil {
 		return err
 	}
-	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
+	defer ch.Kill()
 
 	pkt := &lob.Packet{}
 	pkt.Body = body
@@ -59,7 +59,7 @@ func (mod *module) introduceVia(router *e3x.Exchange, to hashname.H) error {
 }
 
 func (mod *module) handle_peer(ch *e3x.Channel) {
-	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
+	defer ch.Kill()
 
 	log := mod.log.From(ch.RemoteHashname()).To(mod.e.LocalHashname())
 
@@ -104,7 +104,7 @@ func (mod *module) handle_peer(ch *e3x.Channel) {
 	token := cipherset.ExtractToken(pkt.Body)
 	if token != cipherset.ZeroToken {
 		// add bridge back to requester
-		mod.RouteToken(token, ch.Exchange(), nil)
+		mod.RouteToken(token, ch.Exchange())
 	}
 
 	mod.connect(ex, pkt.Body)

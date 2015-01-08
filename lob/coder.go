@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
 	"github.com/telehash/gogotelehash/internal/util/tracer"
@@ -18,6 +19,8 @@ import (
 
 // ErrInvalidPacket is returned by Decode
 var ErrInvalidPacket = errors.New("lob: invalid packet")
+
+var pktPool sync.Pool
 
 // Packet represents a packet.
 type Packet struct {
@@ -64,7 +67,17 @@ func Decode(p []byte) (*Packet, error) {
 		head = nil
 	}
 
-	return &Packet{raw: p, Head: head, json: dict, Body: body}, nil
+	pkt, _ := pktPool.Get().(*Packet)
+	if pkt == nil {
+		pkt = new(Packet)
+	}
+
+	pkt.raw = p
+	pkt.Head = head
+	pkt.json = dict
+	pkt.Body = body
+
+	return pkt, nil
 }
 
 // Encode a packet
@@ -124,6 +137,13 @@ func (p *Packet) Free() {
 	if p == nil {
 		return
 	}
+
+	p.raw = nil
+	p.json = Header{}
+	p.Body = nil
+	p.Head = nil
+
+	pktPool.Put(p)
 	if p.raw != nil {
 		bufpool.PutBuffer(p.raw)
 	}

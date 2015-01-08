@@ -144,7 +144,7 @@ func (t *transport) Addrs() []net.Addr {
 			Zone: addr.Zone,
 			Port: int(port),
 		})
-		if (addr.IsIPv6() && t.net == UDPv6) || (!addr.IsIPv6() && t.net == UDPv4) {
+		if addr.IsIPv6() && t.net == UDPv6 || !addr.IsIPv6() && t.net == UDPv4 {
 			addrs = append(addrs, addr)
 		}
 	}

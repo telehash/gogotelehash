@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/telehash/gogotelehash/transports"
+	"github.com/telehash/gogotelehash/transports/transportsutil"
 )
 
 type Addr interface {
@@ -41,10 +42,9 @@ type connection struct {
 	transport *transport
 	raddr     Addr
 
-	mtx       sync.RWMutex
-	cndRead   *sync.Cond
-	closed    bool
-	readQueue [][]byte
+	mtx      sync.RWMutex
+	closed   bool
+	halfPipe *transportsutil.HalfPipe
 }
 
 var (
@@ -135,7 +135,7 @@ func (t *transport) getConnection(addr Addr) (conn *connection, created bool) {
 		if conn == nil {
 			created = true
 			conn = &connection{transport: t, raddr: addr}
-			conn.cndRead = sync.NewCond(&conn.mtx)
+			conn.halfPipe = transportsutil.NewHalfPipe()
 			t.conns[k] = conn
 		}
 		t.mtx.Unlock()
@@ -203,51 +203,13 @@ func (t *transport) reader() {
 		}
 
 		if conn != nil {
-			conn.pushMessage(b[:n])
+			conn.halfPipe.PushMessage(b[:n])
 		}
 	}
 }
 
-func (c *connection) pushMessage(p []byte) {
-	c.mtx.Lock()
-
-	if c.closed {
-		c.mtx.Unlock()
-		return
-	}
-
-	buf := make([]byte, len(p))
-	copy(buf, p)
-	c.readQueue = append(c.readQueue, buf)
-
-	c.cndRead.Signal()
-	c.mtx.Unlock()
-}
-
 func (c *connection) Read(b []byte) (n int, err error) {
-	c.mtx.Lock()
-
-	for !c.closed && len(c.readQueue) == 0 {
-		c.cndRead.Wait()
-	}
-	if c.closed {
-		c.mtx.Unlock()
-		return 0, io.EOF
-	}
-
-	buf := c.readQueue[0]
-	copy(b, buf)
-	n = len(buf)
-
-	copy(c.readQueue, c.readQueue[1:])
-	c.readQueue = c.readQueue[:len(c.readQueue)-1]
-
-	if len(c.readQueue) > 0 {
-		c.cndRead.Signal()
-	}
-
-	c.mtx.Unlock()
-	return n, nil
+	return c.halfPipe.Read(b)
 }
 
 func (c *connection) Write(b []byte) (n int, err error) {
@@ -273,8 +235,8 @@ func (c *connection) Close() error {
 
 func (c *connection) markAsClosed() {
 	c.mtx.Lock()
+	c.halfPipe.Close()
 	c.closed = true
-	c.cndRead.Signal()
 	c.mtx.Unlock()
 }
 
@@ -291,13 +253,11 @@ func (c *connection) RemoteAddr() net.Addr {
 }
 
 func (c *connection) SetDeadline(t time.Time) error {
-	// noop
-	return nil
+	return c.halfPipe.SetReadDeadline(t)
 }
 
 func (c *connection) SetReadDeadline(t time.Time) error {
-	// noop
-	return nil
+	return c.halfPipe.SetReadDeadline(t)
 }
 
 func (c *connection) SetWriteDeadline(t time.Time) error {

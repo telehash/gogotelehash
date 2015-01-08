@@ -411,6 +411,11 @@ func (c *Channel) write(pkt *lob.Packet, p *Pipe) error {
 	}
 
 	c.traceWrite(pkt, p)
+
+	if !c.reliable {
+		pkt.Free()
+	}
+
 	return nil
 }
 
@@ -596,6 +601,9 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 			}
 
 			for i := oldAck + 1; i <= ack; i++ {
+				if e := c.writeBuffer[i]; e != nil {
+					e.pkt.Free()
+				}
 				delete(c.writeBuffer, i)
 				changed = true
 			}
@@ -1112,7 +1120,7 @@ func (c *Channel) onOpenDeadlineReached() {
 	c.channelHooks.Closed()
 }
 
-func (c *Channel) forget() {
+func (c *Channel) Kill() {
 	c.mtx.Lock()
 
 	if c.broken {

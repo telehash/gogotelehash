@@ -14,6 +14,22 @@ import (
 func init() {
 	transports.RegisterAddr(&udpv4{})
 	transports.RegisterAddr(&udpv6{})
+
+	transports.RegisterResolver("udp4", func(str string) (net.Addr, error) {
+		addr, err := net.ResolveUDPAddr("udp4", str)
+		if err != nil {
+			return nil, err
+		}
+		return wrapAddr(addr), nil
+	})
+
+	transports.RegisterResolver("udp6", func(str string) (net.Addr, error) {
+		addr, err := net.ResolveUDPAddr("udp6", str)
+		if err != nil {
+			return nil, err
+		}
+		return wrapAddr(addr), nil
+	})
 }
 
 type udpAddr interface {
@@ -125,7 +141,7 @@ func (u *udpv4) UnmarshalJSON(data []byte) error {
 		return transports.ErrInvalidAddr
 	}
 
-	*u = *(addr).(*udpv4)
+	*u = *addr.(*udpv4)
 	return nil
 }
 
@@ -150,7 +166,7 @@ func (u *udpv6) UnmarshalJSON(data []byte) error {
 	}
 
 	addr := wrapAddr(&net.UDPAddr{IP: ip, Port: desc.Port})
-	if addr.IsIPv6() {
+	if !addr.IsIPv6() {
 		return transports.ErrInvalidAddr
 	}
 

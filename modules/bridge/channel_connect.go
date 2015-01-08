@@ -18,7 +18,7 @@ func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
 		return err
 	}
 
-	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
+	defer ch.Kill()
 
 	pkt := &lob.Packet{Body: inner}
 	err = ch.WritePacket(pkt)
@@ -30,7 +30,7 @@ func (mod *module) connect(ex *e3x.Exchange, inner []byte) error {
 }
 
 func (mod *module) handle_connect(ch *e3x.Channel) {
-	defer e3x.ForgetterFromEndpoint(mod.e).ForgetChannel(ch)
+	defer ch.Kill()
 
 	var (
 		from        hashname.H
@@ -139,11 +139,21 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 
 	// when the BODY contains a handshake
 	if handshake != nil {
+		routerExchange := ch.Exchange()
 		routerAddr := &peerAddr{
-			router: ch.Exchange().RemoteHashname(),
+			router: routerExchange.RemoteHashname(),
 		}
 
-		resp, ok := x.ApplyHandshake(handshake, routerAddr)
+		conn := newConnection(x.RemoteHashname(), routerAddr, routerExchange, func() {
+			mod.unregisterConnection(routerExchange, x.LocalToken())
+		})
+
+		pipe, added := x.AddPipeConnection(conn, nil)
+		if added {
+			mod.registerConnection(routerExchange, x.LocalToken(), conn)
+		}
+
+		resp, ok := x.ApplyHandshake(handshake, pipe)
 		if !ok {
 			return
 		}
@@ -167,10 +177,6 @@ func (mod *module) handle_connect(ch *e3x.Channel) {
 		if err != nil {
 			return
 		}
-
-		x.AddPathCandidate(&peerAddr{
-			router: ch.Exchange().RemoteHashname(),
-		})
 	}
 
 	// Notify on-exchange callbacks

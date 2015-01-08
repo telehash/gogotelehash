@@ -107,6 +107,19 @@ func (i *Identity) withPaths(paths []net.Addr) *Identity {
 	}
 }
 
+func (i *Identity) AddPathCandiate(addr net.Addr) *Identity {
+	var paths = make([]net.Addr, len(i.addrs), len(i.addrs)+1)
+	copy(paths, i.addrs)
+	paths = append(paths, addr)
+
+	return &Identity{
+		hashname: i.hashname,
+		keys:     i.keys,
+		parts:    i.parts,
+		addrs:    paths,
+	}
+}
+
 func (i *Identity) Keys() cipherset.Keys {
 	return i.keys
 }

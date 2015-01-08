@@ -3,6 +3,7 @@ package e3x
 import (
 	"net"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/telehash/gogotelehash/internal/util/logs"
@@ -15,7 +16,9 @@ const (
 )
 
 type addressBook struct {
-	log         *logs.Logger
+	log *logs.Logger
+
+	mtx         sync.RWMutex
 	active      *addressBookEntry
 	known       []*addressBookEntry
 	unsupported []string
@@ -44,30 +47,45 @@ func newAddressBook(log *logs.Logger) *addressBook {
 }
 
 func (book *addressBook) ActiveConnection() *Pipe {
-	if book.active == nil {
+	book.mtx.RLock()
+	e := book.active
+	book.mtx.RUnlock()
+
+	if e == nil {
 		return nil
 	}
 
-	return book.active.Pipe
+	return e.Pipe
 }
 
 func (book *addressBook) KnownAddresses() []net.Addr {
+	book.mtx.RLock()
+	defer book.mtx.RUnlock()
+
 	s := make([]net.Addr, len(book.known))
 	for i, e := range book.known {
 		s[i] = e.Address
 	}
+
 	return s
 }
 
 func (book *addressBook) KnownPipes() []*Pipe {
+	book.mtx.RLock()
+	defer book.mtx.RUnlock()
+
 	s := make([]*Pipe, len(book.known))
 	for i, e := range book.known {
 		s[i] = e.Pipe
 	}
+
 	return s
 }
 
 func (book *addressBook) HandshakePipes() []*Pipe {
+	book.mtx.RLock()
+	defer book.mtx.RUnlock()
+
 	s := make([]*Pipe, 0, len(book.known))
 	for _, e := range book.known {
 		if !e.IsBackup {
@@ -75,10 +93,14 @@ func (book *addressBook) HandshakePipes() []*Pipe {
 		}
 		s = append(s, e.Pipe)
 	}
+
 	return s
 }
 
 func (book *addressBook) NextHandshakeEpoch() {
+	book.mtx.Lock()
+	defer book.mtx.Unlock()
+
 	var (
 		now = time.Now()
 	)
@@ -153,14 +175,27 @@ func (book *addressBook) NextHandshakeEpoch() {
 }
 
 func (book *addressBook) PipeToAddr(addr net.Addr) *Pipe {
-	idx := book.indexOf(addr)
+	book.mtx.RLock()
+	var (
+		idx = book.indexOf(addr)
+		e   *addressBookEntry
+	)
+
 	if idx >= 0 {
-		return book.known[idx].Pipe
+		e = book.known[idx]
+	}
+	book.mtx.RUnlock()
+
+	if e != nil {
+		return e.Pipe
 	}
 	return nil
 }
 
 func (book *addressBook) AddPipe(p *Pipe) {
+	book.mtx.Lock()
+	defer book.mtx.Unlock()
+
 	var (
 		now = time.Now()
 		idx = book.indexOfPipe(p)
@@ -188,6 +223,9 @@ func (book *addressBook) AddPipe(p *Pipe) {
 }
 
 func (book *addressBook) SentHandshake(pipe *Pipe) {
+	book.mtx.Lock()
+	defer book.mtx.Unlock()
+
 	var (
 		idx = book.indexOfPipe(pipe)
 	)
@@ -201,6 +239,9 @@ func (book *addressBook) SentHandshake(pipe *Pipe) {
 }
 
 func (book *addressBook) ReceivedHandshake(p *Pipe) {
+	book.mtx.Lock()
+	defer book.mtx.Unlock()
+
 	var (
 		idx = book.indexOfPipe(p)
 		e   *addressBookEntry

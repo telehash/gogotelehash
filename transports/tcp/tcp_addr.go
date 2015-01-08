@@ -11,6 +11,22 @@ import (
 func init() {
 	transports.RegisterAddr(&tcpv4{})
 	transports.RegisterAddr(&tcpv6{})
+
+	transports.RegisterResolver("tcp4", func(str string) (net.Addr, error) {
+		addr, err := net.ResolveTCPAddr("tcp4", str)
+		if err != nil {
+			return nil, err
+		}
+		return wrapAddr(addr), nil
+	})
+
+	transports.RegisterResolver("tcp6", func(str string) (net.Addr, error) {
+		addr, err := net.ResolveTCPAddr("tcp6", str)
+		if err != nil {
+			return nil, err
+		}
+		return wrapAddr(addr), nil
+	})
 }
 
 type tcpAddr interface {
@@ -101,7 +117,7 @@ func (u *tcpv4) UnmarshalJSON(data []byte) error {
 		return transports.ErrInvalidAddr
 	}
 
-	*u = *(addr).(*tcpv4)
+	*u = *addr.(*tcpv4)
 	return nil
 }
 
@@ -126,7 +142,7 @@ func (u *tcpv6) UnmarshalJSON(data []byte) error {
 	}
 
 	addr := wrapAddr(&net.TCPAddr{IP: ip, Port: desc.Port})
-	if addr.IsIPv6() {
+	if !addr.IsIPv6() {
 		return transports.ErrInvalidAddr
 	}
 

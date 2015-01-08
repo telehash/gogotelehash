@@ -66,7 +66,7 @@ func Open(options ...EndpointOption) (*Endpoint, error) {
 		return e.LocalHashname()
 	}
 	e.listenerSet.dropChannelFunc = func(c *Channel, reason error) {
-		ForgetterFromEndpoint(e).ForgetChannel(c)
+		c.Kill()
 	}
 
 	e.endpointHooks.endpoint = e
@@ -75,7 +75,6 @@ func Open(options ...EndpointOption) (*Endpoint, error) {
 	e.exchangeHooks.Register(ExchangeHook{OnClosed: e.onExchangeClosed})
 
 	err := e.setOptions(
-		RegisterModule(modForgetterKey, &modForgetter{e}),
 		RegisterModule(modTransportsKey, &modTransports{e}),
 		RegisterModule(modNetwatchKey, &modNetwatch{endpoint: e}))
 	if err != nil {

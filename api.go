@@ -10,7 +10,7 @@ import (
 	"github.com/telehash/gogotelehash/lob"
 	"github.com/telehash/gogotelehash/transports"
 
-	"github.com/telehash/gogotelehash/modules/bridge"
+	// "github.com/telehash/gogotelehash/modules/bridge"
 	"github.com/telehash/gogotelehash/modules/paths"
 )
 
@@ -26,9 +26,9 @@ type (
 	Packet         lob.Packet
 )
 
-func Bridge() EndpointOption {
-	return EndpointOption(bridge.Module())
-}
+// func Bridge() EndpointOption {
+// 	return EndpointOption(bridge.Module())
+// }
 
 func Paths() EndpointOption {
 	return EndpointOption(paths.Module())
@@ -70,7 +70,7 @@ func (e *Endpoint) LocalIdentity() (*Identity, error) {
 }
 
 func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {
-	inner, err := e.inner.Dial((e3x.Identifier)(identifier))
+	inner, err := e.inner.Dial(e3x.Identifier(identifier))
 	if err != nil {
 		return nil, err
 	}

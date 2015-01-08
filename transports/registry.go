@@ -15,7 +15,10 @@ type AddrMarshaler interface {
 	json.Unmarshaler
 }
 
-var addressTypes = map[string]reflect.Type{}
+var (
+	addressTypes = map[string]reflect.Type{}
+	resolvers    = map[string]func(addr string) (net.Addr, error){}
+)
 
 // RegisterAddr registers a marshalable address type.
 // Addr types that are expected to be communicated through telehash must be
@@ -64,4 +67,21 @@ func DecodeAddr(p []byte) (net.Addr, error) {
 
 func EncodeAddr(a net.Addr) ([]byte, error) {
 	return json.Marshal(a)
+}
+
+func RegisterResolver(network string, resolver func(addr string) (net.Addr, error)) {
+	if resolvers[network] != nil {
+		panic("address type is already registered")
+	}
+
+	resolvers[network] = resolver
+}
+
+func ResolveAddr(network, addr string) (net.Addr, error) {
+	resolver := resolvers[network]
+	if resolver == nil {
+		return nil, net.UnknownNetworkError(network)
+	}
+
+	return resolver(addr)
 }

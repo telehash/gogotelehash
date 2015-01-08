@@ -29,6 +29,11 @@ type message struct {
 
 type pipeDelegate interface {
 	received(msg message)
+	dialDialerAddr(dialerAddr) (net.Conn, error)
+}
+
+type dialerAddr interface {
+	Dial(e *Endpoint, x *Exchange) (net.Conn, error)
 }
 
 func newMessage(msg []byte, p *Pipe) message {
@@ -83,7 +88,12 @@ func (p *Pipe) dial() (net.Conn, error) {
 	if p.closed {
 		err = io.EOF
 	} else if p.conn == nil {
-		conn, err = p.transport.Dial(p.raddr)
+		if daddr, ok := p.raddr.(dialerAddr); ok {
+			conn, err = p.delegate.dialDialerAddr(daddr)
+		} else {
+			conn, err = p.transport.Dial(p.raddr)
+		}
+
 		if err == nil {
 			p.conn = conn
 			dialed = true

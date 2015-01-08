@@ -2,8 +2,10 @@ package bridge
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 
+	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
 )
@@ -14,10 +16,38 @@ var (
 
 func init() {
 	transports.RegisterAddr(&peerAddr{})
+
+	transports.RegisterResolver("peer", func(addr string) (net.Addr, error) {
+		hn := hashname.H(addr)
+		if !hn.Valid() {
+			return nil, transports.ErrInvalidAddr
+		}
+		return &peerAddr{hn}, nil
+	})
 }
 
 type peerAddr struct {
 	router hashname.H
+}
+
+func (a *peerAddr) Dial(e *e3x.Endpoint, x *e3x.Exchange) (net.Conn, error) {
+	mod, _ := FromEndpoint(e).(*module)
+	if mod == nil {
+		return nil, net.UnknownNetworkError("unable to bridge")
+	}
+
+	router := e.GetExchange(a.router)
+	if router == nil {
+		return nil, net.UnknownNetworkError("unable to bridge")
+	}
+
+	conn := newConnection(x.RemoteHashname(), a, router, func() {
+		mod.unregisterConnection(router, x.LocalToken())
+	})
+
+	mod.registerConnection(router, x.LocalToken(), conn)
+
+	return conn, nil
 }
 
 func (*peerAddr) Network() string {
@@ -25,11 +55,7 @@ func (*peerAddr) Network() string {
 }
 
 func (a *peerAddr) String() string {
-	data, err := a.MarshalJSON()
-	if err != nil {
-		panic(err)
-	}
-	return string(data)
+	return fmt.Sprintf("Peer{via: %q}", string(a.router[:8]))
 }
 
 func (a *peerAddr) MarshalJSON() ([]byte, error) {

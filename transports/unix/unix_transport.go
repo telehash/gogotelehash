@@ -19,6 +19,14 @@ import (
 
 func init() {
 	transports.RegisterAddr(&unixAddr{})
+
+	transports.RegisterResolver("unix", func(str string) (net.Addr, error) {
+		addr, err := net.ResolveUnixAddr("unix", str)
+		if err != nil {
+			return nil, err
+		}
+		return (*unixAddr)(addr), nil
+	})
 }
 
 // Config for the UDP transport. Typically the zero value is sufficient to get started.

@@ -19,7 +19,7 @@ func ValidString(s string) bool {
 	for _, r := range s {
 		// base32 range:
 		// abcdefghijklmnopqrstuvwxyz 234567
-		if ('a' <= r && r <= 'z') || ('2' <= r && r <= '7') {
+		if 'a' <= r && r <= 'z' || '2' <= r && r <= '7' {
 			continue
 		}
 

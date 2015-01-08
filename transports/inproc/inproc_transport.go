@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
@@ -14,6 +15,15 @@ import (
 
 func init() {
 	transports.RegisterAddr(&inprocAddr{})
+
+	transports.RegisterResolver("inproc", func(str string) (net.Addr, error) {
+		id, err := strconv.ParseUint(str, 10, 32)
+		if err != nil {
+			return nil, transports.ErrInvalidAddr
+		}
+
+		return &inprocAddr{uint32(id)}, nil
+	})
 }
 
 // Config for the inproc transport. There are no configuration options for now.

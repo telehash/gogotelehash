@@ -84,7 +84,7 @@ func (mod *module) negotiatePaths(x *e3x.Exchange) {
 	if err != nil {
 		return
 	}
-	defer e3x.ForgetterFromEndpoint(mod.endpoint).ForgetChannel(c)
+	defer c.Kill()
 
 	c.SetDeadline(time.Now().Add(1 * time.Minute))
 
@@ -106,7 +106,7 @@ func (mod *module) negotiatePaths(x *e3x.Exchange) {
 }
 
 func (mod *module) handlePathRequest(c *e3x.Channel) {
-	defer e3x.ForgetterFromEndpoint(mod.endpoint).ForgetChannel(c)
+	defer c.Kill()
 
 	pkt, err := c.ReadPacket()
 	if err != nil {

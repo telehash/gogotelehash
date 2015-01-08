@@ -27,7 +27,7 @@ func HashnameIdentifier(hn hashname.H) Identifier {
 
 func (i hashnameIdentifier) String() string { return string(i) }
 func (i hashnameIdentifier) Identify(endpoint *Endpoint) (*Identity, error) {
-	x := endpoint.hashnames[(hashname.H)(i)]
+	x := endpoint.hashnames[hashname.H(i)]
 	if x == nil {
 		return nil, ErrUnidentifiable
 	}

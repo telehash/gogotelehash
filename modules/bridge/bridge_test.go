@@ -3,7 +3,7 @@ package bridge
 import (
 	"net"
 	"testing"
-	"time"
+	// "time"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
@@ -50,11 +50,13 @@ func TestBridge(t *testing.T) {
 
 	A, err := e3x.Open(
 		e3x.Log(nil),
-		e3x.Transport(udp.Config{}))
+		e3x.Transport(udp.Config{}),
+		Module(Config{}))
 	assert.NoError(err)
 	B, err := e3x.Open(
 		e3x.Log(nil),
-		e3x.Transport(fw.Config{Config: udp.Config{}, Allow: fw.RuleFunc(blacklistRule)}))
+		e3x.Transport(fw.Config{Config: udp.Config{}, Allow: fw.RuleFunc(blacklistRule)}),
+		Module(Config{}))
 	assert.NoError(err)
 
 	R, err := e3x.Open(
@@ -107,8 +109,12 @@ func TestBridge(t *testing.T) {
 	assert.NoError(err)
 	Bident, err := B.LocalIdentity()
 	assert.NoError(err)
-	Rident, err := R.LocalIdentity()
-	assert.NoError(err)
+
+	{
+		addr, err := transports.ResolveAddr("peer", string(R.LocalHashname()))
+		assert.NoError(err)
+		Bident = Bident.AddPathCandiate(addr)
+	}
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
@@ -118,45 +124,16 @@ func TestBridge(t *testing.T) {
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
-	ABex, err := A.CreateExchange(Bident)
+	_, err = R.Dial(Bident)
 	assert.NoError(err)
-	BAex, err := B.CreateExchange(Aident)
+	_, err = R.Dial(Aident)
 	assert.NoError(err)
-	BRex, err := B.Dial(Rident)
-	assert.NoError(err)
-	RBex, err := R.Dial(Bident)
-	assert.NoError(err)
-	RAex, err := R.Dial(Aident)
+	ABex, err := A.Dial(Bident)
 	assert.NoError(err)
 
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 	log.Printf("ab-local-token  = %x", ABex.LocalToken())
-	log.Printf("ab-remote-token = %x", BAex.LocalToken())
-
-	bridge := FromEndpoint(R)
-	bridge.RouteToken(ABex.LocalToken(), RAex, RBex)
-	bridge.RouteToken(BAex.LocalToken(), RBex, RAex)
-	ABex.AddPathCandidate(BRex.ActivePath())
-
-	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
-
-	doneC := make(chan bool)
-	go func() {
-		err = ABex.Dial()
-		assert.NoError(err)
-		doneC <- true
-	}()
-
-	go func() {
-		err = BAex.Dial()
-		assert.NoError(err)
-		doneC <- true
-	}()
-
-	time.Sleep(10 * time.Second)
-	<-doneC
-	<-doneC
-
+	log.Printf("ab-remote-token = %x", ABex.RemoteToken())
 	log.Println("\x1B[31m------------------------------------------------\x1B[0m")
 
 	{
