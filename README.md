@@ -1,6 +1,6 @@
 # gogotelehash
 
-[![Build Status](https://travis-ci.org/telehash/gogotelehash.svg)](https://travis-ci.org/telehash/gogotelehash) [![GoDoc](https://godoc.org/github.com/telehash/gogotelehash?status.svg)](https://godoc.org/github.com/telehash/gogotelehash) [![status](https://sourcegraph.com/api/repos/github.com/telehash/gogotelehash/.badges/status.png)](https://sourcegraph.com/github.com/telehash/gogotelehash)
+[![Build Status](https://api.travis-ci.org/telehash/gogotelehash.svg?branch=master)](https://travis-ci.org/telehash/gogotelehash) [![GoDoc](https://godoc.org/github.com/telehash/gogotelehash?status.svg)](https://godoc.org/github.com/telehash/gogotelehash) [![status](https://sourcegraph.com/api/repos/github.com/telehash/gogotelehash/.badges/status.png)](https://sourcegraph.com/github.com/telehash/gogotelehash)
 
 ## Project Status
 

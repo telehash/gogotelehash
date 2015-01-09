@@ -104,7 +104,7 @@ type endpointI interface {
 }
 
 func newExchange(
-	localIdent *Identity, remoteIdent *Identity, handshake cipherset.Handshake,
+	localIdent *Identity, remoteIdent *Identity,
 	log *logs.Logger,
 	options ...ExchangeOption,
 ) (*Exchange, error) {
@@ -152,30 +152,6 @@ func newExchange(
 		for _, addr := range remoteIdent.addrs {
 			x.addressBook.AddPipe(newPipe(x.endpoint.getTransport(), nil, addr, x))
 		}
-	}
-
-	if handshake != nil {
-		csid := handshake.CSID()
-		cipher, err := cipherset.NewState(csid, localIdent.keys[csid])
-		if err != nil {
-			return nil, x.traceError(err)
-		}
-
-		ok := cipher.ApplyHandshake(handshake)
-		if !ok {
-			return nil, x.traceError(ErrInvalidHandshake)
-		}
-
-		hn, err := hashname.FromKeyAndIntermediates(csid, handshake.PublicKey().Public(), handshake.Parts())
-		if err != nil {
-			x.traceError(err)
-			hn = "xxxx"
-		}
-
-		x.log = log.To(hn)
-		x.cipher = cipher
-		x.csid = csid
-		x.addressBook = newAddressBook(x.log)
 	}
 
 	return x, nil
@@ -854,8 +830,9 @@ func (x *Exchange) ApplyHandshake(handshake cipherset.Handshake, pipe *Pipe) (re
 
 func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *Pipe) (response *bufpool.Buffer, ok bool) {
 	var (
-		seq uint32
-		err error
+		ident *Identity
+		seq   uint32
+		err   error
 	)
 
 	if handshake == nil {
@@ -873,21 +850,27 @@ func (x *Exchange) applyHandshake(handshake cipherset.Handshake, pipe *Pipe) (re
 		return nil, false
 	}
 
+	ident, err = NewIdentity(
+		cipherset.Keys{handshake.CSID(): handshake.PublicKey()},
+		handshake.Parts(),
+		nil,
+	)
+	if err != nil {
+		// drop; invalid identity
+		return nil, false
+	}
+
+	if x.remoteIdent != nil && x.remoteIdent.Hashname() != ident.Hashname() {
+		// drop; invalid hashname
+		return nil, false
+	}
+
 	if !x.cipher.ApplyHandshake(handshake) {
 		// drop; handshake was rejected by the cipherset
 		return nil, false
 	}
 
 	if x.remoteIdent == nil {
-		ident, err := NewIdentity(
-			cipherset.Keys{handshake.CSID(): handshake.PublicKey()},
-			handshake.Parts(),
-			nil,
-		)
-		if err != nil {
-			// drop; invalid identity
-			return nil, false
-		}
 		x.remoteIdent = ident
 	}
 
