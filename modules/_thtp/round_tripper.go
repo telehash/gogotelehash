@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/telehash/gogotelehash"
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/internal/hashname"
 )
@@ -17,7 +18,7 @@ var (
 )
 
 type RoundTripper struct {
-	Endpoint *e3x.Endpoint
+	Endpoint *telehash.Endpoint
 	Resolver Resolver
 }
 
@@ -25,13 +26,13 @@ type Resolver interface {
 	Resolve(hn hashname.H) (*e3x.Identity, error)
 }
 
-func NewClient(e *e3x.Endpoint) *http.Client {
+func NewClient(e *telehash.Endpoint) *http.Client {
 	return &http.Client{Transport: &RoundTripper{Endpoint: e}}
 }
 
 // RegisterDefaultTransport registers the THTP protocol with http.DefaultTransport
 // and binds it to the provided Endpoint.
-func RegisterDefaultTransport(e *e3x.Endpoint) {
+func RegisterDefaultTransport(e *telehash.Endpoint) {
 	t := http.DefaultTransport.(*http.Transport)
 	t.RegisterProtocol("thtp", &RoundTripper{Endpoint: e})
 }
