@@ -12,8 +12,8 @@ import (
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/docopt/docopt-go"
 
-	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/util/tracer"
+	"github.com/telehash/gogotelehash"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 )
 
 var usage = `Test tool for telehash
@@ -142,7 +142,7 @@ type Context struct {
 	Out  io.Writer
 }
 
-func (c *Context) WriteIdentity(e *e3x.Endpoint) {
+func (c *Context) WriteIdentity(e *telehash.Endpoint) {
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
 			c.dir = "/shared"
@@ -170,7 +170,7 @@ func (c *Context) WriteIdentity(e *e3x.Endpoint) {
 	}
 }
 
-func (c *Context) ReadIdentity(role string) *e3x.Identity {
+func (c *Context) ReadIdentity(role string) *telehash.Identity {
 
 	if c.dir == "" {
 		if _, err := os.Stat("/shared"); err == nil {
@@ -186,7 +186,7 @@ func (c *Context) ReadIdentity(role string) *e3x.Identity {
 		os.Exit(1)
 	}
 
-	var ident *e3x.Identity
+	var ident *telehash.Identity
 	err = json.Unmarshal(data, &ident)
 	if err != nil {
 		fmt.Printf("error: %s\n", err)

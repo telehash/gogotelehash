@@ -9,8 +9,8 @@ import (
 	"github.com/armon/go-chord"
 
 	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/modules/mesh"
 )
 

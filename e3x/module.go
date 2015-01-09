@@ -11,3 +11,5 @@ type Module interface {
 	// Stop is called before closing the endpoint transport.
 	Stop() error
 }
+
+type pivateModKey string

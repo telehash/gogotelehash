@@ -2,24 +2,46 @@ package transports
 
 import (
 	"encoding/json"
+	"errors"
+	"net"
+	"reflect"
 )
 
-var addressDecoders = map[string]AddrDecoder{}
+var ErrInvalidAddr = errors.New("invalid address")
 
-// AddrDecoder takes JSON data and unmarshals it into an Addr.
-// The decoder function must return an error when the JSON object structure is invalid.
-type AddrDecoder func([]byte) (Addr, error)
-
-// RegisterAddrDecoder registers an AddrDecoder
-// Addr types that are expected to be communicated through telehash must be
-// registered here.
-func RegisterAddrDecoder(typ string, d AddrDecoder) {
-	addressDecoders[typ] = d
+type AddrMarshaler interface {
+	net.Addr
+	json.Marshaler
+	json.Unmarshaler
 }
 
-// DecodeAddr will decode an address from JSON using the appropriate AddrDecoder.
+var (
+	addressTypes = map[string]reflect.Type{}
+	resolvers    = map[string]func(addr string) (net.Addr, error){}
+)
+
+// RegisterAddr registers a marshalable address type.
+// Addr types that are expected to be communicated through telehash must be
+// registered here.
+func RegisterAddr(typ AddrMarshaler) {
+	if typ == nil {
+		panic("invalid address type")
+	}
+	if addressTypes[typ.Network()] != nil {
+		panic("address type is already registered")
+	}
+
+	v := reflect.TypeOf(typ)
+	for v.Kind() == reflect.Interface || v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	addressTypes[typ.Network()] = v
+}
+
+// DecodeAddr will decode an address from JSON.
 // ErrInvalidAddr is returned when the address could not be decoded.
-func DecodeAddr(p []byte) (Addr, error) {
+func DecodeAddr(p []byte) (net.Addr, error) {
 	var desc struct {
 		Type string `json:"type"`
 	}
@@ -29,10 +51,37 @@ func DecodeAddr(p []byte) (Addr, error) {
 		return nil, ErrInvalidAddr
 	}
 
-	d := addressDecoders[desc.Type]
-	if d == nil {
+	t := addressTypes[desc.Type]
+	if t == nil {
 		return nil, ErrInvalidAddr
 	}
 
-	return d(p)
+	a := reflect.New(t).Interface().(AddrMarshaler)
+	err = json.Unmarshal(p, &a)
+	if err != nil {
+		return nil, ErrInvalidAddr
+	}
+
+	return a, nil
+}
+
+func EncodeAddr(a net.Addr) ([]byte, error) {
+	return json.Marshal(a)
+}
+
+func RegisterResolver(network string, resolver func(addr string) (net.Addr, error)) {
+	if resolvers[network] != nil {
+		panic("address type is already registered")
+	}
+
+	resolvers[network] = resolver
+}
+
+func ResolveAddr(network, addr string) (net.Addr, error) {
+	resolver := resolvers[network]
+	if resolver == nil {
+		return nil, net.UnknownNetworkError(network)
+	}
+
+	return resolver(addr)
 }

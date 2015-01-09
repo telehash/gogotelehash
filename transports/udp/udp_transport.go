@@ -4,20 +4,13 @@
 package udp
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net"
 
-	"github.com/telehash/gogotelehash/hashname"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/transports/nat"
+	"github.com/telehash/gogotelehash/transports/dgram"
+	"github.com/telehash/gogotelehash/transports/transportsutil"
 )
-
-func init() {
-	transports.RegisterAddrDecoder("udp4", decodeAddress)
-	transports.RegisterAddrDecoder("udp6", decodeAddress)
-}
 
 // Config for the UDP transport. Typically the zero value is sufficient to get started.
 //
@@ -32,51 +25,7 @@ type Config struct {
 	// When port is unspecified ("127.0.0.1") a random port will be chosen.
 	// When ip is unspecified (":3000") the transport will listen on all interfaces.
 	Addr string
-
-	// Can be set to an ip network (in CIDR format).
-	// Setting this value will restrict all outbound traffic on this transport to the
-	// specified network.
-	Dest string
 }
-
-type addr struct {
-	hn  hashname.H
-	net string
-	net.UDPAddr
-}
-
-func NewAddr(ip net.IP, port uint16) (transports.Addr, error) {
-	if ip == nil || port == 0 {
-		return nil, errors.New("udp: invalid address")
-	}
-
-	a := &addr{}
-
-	a.IP = ip
-	a.Port = int(port)
-
-	if ip.To4() == nil {
-		a.net = UDPv6
-	} else {
-		a.net = UDPv4
-	}
-
-	return a, nil
-}
-
-type transport struct {
-	net   string
-	laddr *net.UDPAddr
-	dest  *net.IPNet
-	c     *net.UDPConn
-}
-
-var (
-	_ transports.Addr      = (*addr)(nil)
-	_ nat.NATableAddr      = (*addr)(nil)
-	_ transports.Transport = (*transport)(nil)
-	_ transports.Config    = Config{}
-)
 
 const (
 	// UDPv4 is used for IPv4 UDP networks
@@ -85,12 +34,24 @@ const (
 	UDPv6 = "udp6"
 )
 
+type connKey [18]byte
+
+type transport struct {
+	net   string
+	laddr udpAddr
+	c     *net.UDPConn
+}
+
+var (
+	_ dgram.Transport   = (*transport)(nil)
+	_ transports.Config = Config{}
+)
+
 // Open opens the transport.
 func (c Config) Open() (transports.Transport, error) {
 	var (
-		ipnet *net.IPNet
-		addr  *net.UDPAddr
-		err   error
+		addr *net.UDPAddr
+		err  error
 	)
 
 	if c.Network == "" {
@@ -98,13 +59,6 @@ func (c Config) Open() (transports.Transport, error) {
 	}
 	if c.Addr == "" {
 		c.Addr = ":0"
-	}
-	if c.Dest == "" {
-		if c.Network == UDPv4 {
-			c.Dest = "0.0.0.0/0"
-		} else {
-			c.Dest = "::0/0"
-		}
 	}
 
 	if c.Network != UDPv4 && c.Network != UDPv6 {
@@ -117,27 +71,12 @@ func (c Config) Open() (transports.Transport, error) {
 			return nil, err
 		}
 
-		if c.Network == UDPv4 && addr.IP != nil && addr.IP.To4() == nil {
+		if c.Network == UDPv4 && addr.IP != nil && !ipIs4(addr.IP) {
 			return nil, errors.New("udp: expected a IPv4 address")
 		}
 
-		if c.Network == UDPv6 && addr.IP != nil && addr.IP.To4() != nil {
+		if c.Network == UDPv6 && addr.IP != nil && ipIs4(addr.IP) {
 			return nil, errors.New("udp: expected a IPv6 address")
-		}
-	}
-
-	{ // parse and verify destination network
-		_, ipnet, err = net.ParseCIDR(c.Dest)
-		if err != nil {
-			return nil, err
-		}
-
-		if c.Network == UDPv4 && ipnet.IP != nil && ipnet.IP.To4() == nil {
-			return nil, errors.New("udp: expected a IPv4 network")
-		}
-
-		if c.Network == UDPv6 && ipnet.IP != nil && ipnet.IP.To4() != nil {
-			return nil, errors.New("udp: expected a IPv6 network")
 		}
 	}
 
@@ -148,249 +87,67 @@ func (c Config) Open() (transports.Transport, error) {
 
 	addr = conn.LocalAddr().(*net.UDPAddr)
 
-	return &transport{c.Network, addr, ipnet, conn}, nil
-}
-
-func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
-	const errUseOfClosedNet = "use of closed network connection"
-
-	n, a, err := t.c.ReadFromUDP(p)
-	if err != nil {
-		if err.Error() == errUseOfClosedNet {
-			err = transports.ErrClosed
-		}
-		return 0, nil, err
-	}
-
-	return n, &addr{net: t.net, UDPAddr: *a}, nil
-}
-
-func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-	a, ok := dst.(*addr)
-	if !ok || a == nil {
-		return transports.ErrInvalidAddr
-	}
-
-	if a.net != t.net {
-		return transports.ErrInvalidAddr
-	}
-
-	if !t.dest.Contains(a.IP) {
-		return transports.ErrInvalidAddr
-	}
-
-	n, err := t.c.WriteToUDP(p, &a.UDPAddr)
-	if err != nil {
-		return err
-	}
-
-	if n != len(p) {
-		return io.ErrShortWrite
-	}
-
-	return nil
-}
-
-func (t *transport) LocalAddresses() []transports.Addr {
-	var (
-		port  int
-		addrs []transports.Addr
-	)
-
-	{
-		a := t.laddr
-		port = a.Port
-		if !a.IP.IsUnspecified() {
-			switch t.net {
-
-			case UDPv4:
-				if v4 := a.IP.To4(); v4 != nil {
-					addrs = append(addrs, &addr{
-						net: t.net,
-						UDPAddr: net.UDPAddr{
-							IP:   v4,
-							Port: a.Port,
-							Zone: a.Zone,
-						},
-					})
-				}
-
-			case UDPv6:
-				if v4 := a.IP.To4(); v4 == nil {
-					addrs = append(addrs, &addr{
-						net: t.net,
-						UDPAddr: net.UDPAddr{
-							IP:   a.IP.To16(),
-							Port: a.Port,
-							Zone: a.Zone,
-						},
-					})
-				}
-
-			}
-			return addrs
-		}
-	}
-
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return addrs
-	}
-	for _, iface := range ifaces {
-		iaddrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-
-		for _, iaddr := range iaddrs {
-			var (
-				ip   net.IP
-				zone string
-			)
-
-			switch x := iaddr.(type) {
-			case *net.IPAddr:
-				ip = x.IP
-				zone = x.Zone
-			case *net.IPNet:
-				ip = x.IP
-				zone = ""
-			}
-
-			if ip.IsMulticast() ||
-				ip.IsUnspecified() ||
-				ip.IsInterfaceLocalMulticast() ||
-				ip.IsLinkLocalMulticast() {
-				continue
-			}
-
-			switch t.net {
-
-			case UDPv4:
-				if v4 := ip.To4(); v4 != nil {
-					addrs = append(addrs, &addr{
-						net: t.net,
-						UDPAddr: net.UDPAddr{
-							IP:   ip.To4(),
-							Port: port,
-							Zone: zone,
-						},
-					})
-				}
-
-			case UDPv6:
-				if v4 := ip.To4(); v4 == nil {
-					addrs = append(addrs, &addr{
-						net: t.net,
-						UDPAddr: net.UDPAddr{
-							IP:   ip.To16(),
-							Port: port,
-							Zone: zone,
-						},
-					})
-				}
-
-			}
-		}
-	}
-
-	return addrs
+	t := &transport{net: c.Network, laddr: wrapAddr(addr), c: conn}
+	return dgram.Wrap(t)
 }
 
 func (t *transport) Close() error {
 	return t.c.Close()
 }
 
-func (a *addr) Network() string {
-	return a.net
+func (t *transport) NormalizeAddr(addr net.Addr) (dgram.Addr, error) {
+	if a, ok := addr.(*net.UDPAddr); ok {
+		return t.NormalizeAddr(wrapAddr(a))
+	} else if a, ok := addr.(*udpv4); ok && t.net == UDPv4 {
+		return a, nil
+	} else if a, ok := addr.(*udpv6); ok && t.net == UDPv6 {
+		return a, nil
+	} else {
+		return nil, transports.ErrInvalidAddr
+	}
 }
 
-func decodeAddress(data []byte) (transports.Addr, error) {
-	var desc struct {
-		Type string `json:"type"`
-		IP   string `json:"ip"`
-		Port int    `json:"port"`
-	}
-
-	err := json.Unmarshal(data, &desc)
+func (t *transport) Read(b []byte) (n int, addr dgram.Addr, err error) {
+	n, uaddr, err := t.c.ReadFromUDP(b)
 	if err != nil {
-		return nil, transports.ErrInvalidAddr
+		return 0, nil, err
 	}
-
-	ip := net.ParseIP(desc.IP)
-	if ip == nil || ip.IsUnspecified() {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	if desc.Port <= 0 || desc.Port >= 65535 {
-		return nil, transports.ErrInvalidAddr
-	}
-
-	return &addr{net: desc.Type, UDPAddr: net.UDPAddr{IP: ip, Port: desc.Port}}, nil
+	return n, wrapAddr(uaddr), nil
 }
 
-func (a *addr) MarshalJSON() ([]byte, error) {
-	var desc = struct {
-		Type string `json:"type"`
-		IP   string `json:"ip"`
-		Port int    `json:"port"`
-	}{
-		Type: a.net,
-		IP:   a.IP.String(),
-		Port: a.Port,
-	}
-	return json.Marshal(&desc)
+func (t *transport) Write(b []byte, addr dgram.Addr) (n int, err error) {
+	return t.c.WriteToUDP(b, addr.(udpAddr).ToUDPAddr())
 }
 
-func (a *addr) Equal(x transports.Addr) bool {
-	b := x.(*addr)
+func (t *transport) Addrs() []net.Addr {
+	var (
+		port  uint16
+		addrs []net.Addr
+	)
 
-	if !a.IP.Equal(b.IP) {
-		return false
+	{
+		port = t.laddr.GetPort()
+		if !t.laddr.GetIP().IsUnspecified() {
+			addrs = append(addrs, t.laddr)
+			return addrs
+		}
 	}
 
-	if a.Port != b.Port {
-		return false
-	}
-
-	return true
-}
-
-func (a *addr) String() string {
-	data, err := a.MarshalJSON()
+	ips, err := transportsutil.InterfaceIPs()
 	if err != nil {
-		panic(err)
-	}
-	return string(data)
-}
-
-func (a *addr) Associate(hn hashname.H) transports.Addr {
-	b := new(addr)
-	*b = *a
-	b.hn = hn
-	return b
-}
-
-func (a *addr) Hashname() hashname.H {
-	return a.hn
-}
-
-func (a *addr) InternalAddr() (proto string, ip net.IP, port int) {
-	if a == nil ||
-		a.IP.IsLoopback() ||
-		a.IP.IsMulticast() ||
-		a.IP.IsUnspecified() ||
-		a.IP.IsInterfaceLocalMulticast() ||
-		a.IP.IsLinkLocalMulticast() {
-		return "", nil, -1
-	}
-	return "udp", a.IP, a.Port
-}
-
-func (a *addr) MakeGlobal(ip net.IP, port int) transports.Addr {
-	if a == nil {
-		return nil
+		return addrs
 	}
 
-	return &addr{"", a.net, net.UDPAddr{IP: ip, Port: port}}
+	for _, addr := range ips {
+		addr := wrapAddr(&net.UDPAddr{
+			IP:   addr.IP,
+			Zone: addr.Zone,
+			Port: int(port),
+		})
+		if addr.IsIPv6() && t.net == UDPv6 || !addr.IsIPv6() && t.net == UDPv4 {
+			addrs = append(addrs, addr)
+		}
+	}
+
+	return addrs
 }

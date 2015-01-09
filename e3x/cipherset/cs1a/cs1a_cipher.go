@@ -16,8 +16,8 @@ import (
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/ecdh"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
-	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/util/bufpool"
+	"github.com/telehash/gogotelehash/internal/lob"
+	"github.com/telehash/gogotelehash/internal/util/bufpool"
 )
 
 var (
@@ -144,7 +144,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 
 	var (
 		ctLen             = len(p) - (21 + 4 + 4)
-		out               = make([]byte, ctLen)
+		out               = bufpool.New()
 		cs1aLocalKey, _   = localKey.(*key)
 		remoteKey         *key
 		remoteLineKey     *key
@@ -159,7 +159,7 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 		return nil, cipherset.ErrInvalidState
 	}
 
-	{ // descrypt inner
+	{ // decrypt inner
 		ephemX, ephemY := eccp.Unmarshal(secp160r1.P160(), remoteLineKeyData)
 		if ephemX == nil || ephemY == nil {
 			return nil, cipherset.ErrInvalidMessage
@@ -189,7 +189,8 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		aes.XORKeyStream(out, ciphertext)
+		out.SetLen(ctLen)
+		aes.XORKeyStream(out.RawBytes(), ciphertext)
 		remoteLineKey = &key{}
 		remoteLineKey.pub.x, remoteLineKey.pub.y = ephemX, ephemY
 	}
@@ -212,12 +213,12 @@ func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.H
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		if len(inner.Body) != 21 {
+		if inner.BodyLen() != 21 {
 			return nil, cipherset.ErrInvalidMessage
 		}
 
 		remoteKey = &key{}
-		remoteKey.pub.x, remoteKey.pub.y = eccp.Unmarshal(secp160r1.P160(), inner.Body)
+		remoteKey.pub.x, remoteKey.pub.y = eccp.Unmarshal(secp160r1.P160(), inner.Body(nil))
 		if !remoteKey.CanEncrypt() {
 			return nil, cipherset.ErrInvalidMessage
 		}
@@ -376,17 +377,19 @@ func (s *state) CanDecryptPacket() bool {
 func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 	var (
 		ctLen = len(in)
-		out   = bufpool.GetBuffer()[:21+4+ctLen+4]
+		out   = bufpool.New().SetLen(21 + 4 + ctLen + 4)
+		raw   = out.RawBytes()
 	)
 
 	if !s.CanEncryptMessage() {
+		panic("unable to encrypt message")
 	}
 
 	// copy public senderLineKey
-	copy(out[:21], s.localLineKey.Public())
+	copy(raw[:21], s.localLineKey.Public())
 
 	// copy the nonce
-	_, err := io.ReadFull(rand.Reader, out[21:21+4])
+	_, err := io.ReadFull(rand.Reader, raw[21:21+4])
 	if err != nil {
 		return nil, err
 	}
@@ -412,41 +415,41 @@ func (s *state) EncryptMessage(in []byte) ([]byte, error) {
 		}
 
 		var aesIv [16]byte
-		copy(aesIv[:], out[21:21+4])
+		copy(aesIv[:], raw[21:21+4])
 
 		aes := Cipher.NewCTR(aesBlock, aesIv[:])
 		if aes == nil {
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		aes.XORKeyStream(out[21+4:21+4+ctLen], in)
+		aes.XORKeyStream(raw[21+4:21+4+ctLen], in)
 	}
 
 	{ // compute HMAC
 		macKey := ecdh.ComputeShared(secp160r1.P160(),
 			s.remoteKey.pub.x, s.remoteKey.pub.y, s.localKey.prv.d)
-		macKey = append(macKey, out[21:21+4]...)
+		macKey = append(macKey, raw[21:21+4]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(out[:21+4+ctLen])
+		h.Write(raw[:21+4+ctLen])
 		sum := h.Sum(nil)
-		copy(out[21+4+ctLen:], fold(sum, 4))
+		copy(raw[21+4+ctLen:], fold(sum, 4))
 	}
 
-	out = out[:21+4+ctLen+4]
+	out.SetLen(21 + 4 + ctLen + 4)
 
-	return out, nil
+	return out.Get(nil), nil
 }
 
 func (s *state) EncryptHandshake(at uint32, compact cipherset.Parts) ([]byte, error) {
-	pkt := &lob.Packet{Body: s.localKey.Public()}
+	pkt := lob.New(s.localKey.Public())
 	compact.ApplyToHeader(pkt.Header())
 	pkt.Header().SetUint32("at", at)
 	data, err := lob.Encode(pkt)
 	if err != nil {
 		return nil, err
 	}
-	return s.EncryptMessage(data)
+	return s.EncryptMessage(data.Get(nil))
 }
 
 func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
@@ -481,11 +484,13 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	defer s.mtx.RUnlock()
 
 	var (
-		inner []byte
-		body  []byte
-		nonce [16]byte
-		ctLen int
-		err   error
+		outer   *lob.Packet
+		inner   *bufpool.Buffer
+		body    *bufpool.Buffer
+		bodyRaw []byte
+		nonce   [16]byte
+		ctLen   int
+		err     error
 	)
 
 	if !s.CanEncryptPacket() {
@@ -501,7 +506,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, err
 	}
 
-	ctLen = len(inner)
+	ctLen = inner.Len()
 
 	// make nonce
 	_, err = io.ReadFull(rand.Reader, nonce[:4])
@@ -510,13 +515,14 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	}
 
 	// alloc enough space
-	body = bufpool.GetBuffer()[:16+4+len(inner)+4]
+	body = bufpool.New().SetLen(16 + 4 + ctLen + 4)
+	bodyRaw = body.RawBytes()
 
 	// copy token
-	copy(body[:16], (*s.remoteToken)[:])
+	copy(bodyRaw[:16], (*s.remoteToken)[:])
 
 	// copy nonce
-	copy(body[16:16+4], nonce[:])
+	copy(bodyRaw[16:16+4], nonce[:])
 
 	{ // encrypt inner
 		aesBlock, err := aes.NewCipher(s.lineEncryptionKey)
@@ -529,19 +535,23 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 			return nil, cipherset.ErrInvalidMessage
 		}
 
-		aes.XORKeyStream(body[16+4:16+4+ctLen], inner)
+		aes.XORKeyStream(bodyRaw[16+4:16+4+ctLen], inner.RawBytes())
 	}
 
 	{ // compute HMAC
-		macKey := append(s.lineEncryptionKey, body[16:16+4]...)
+		macKey := append(s.lineEncryptionKey, bodyRaw[16:16+4]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(body[16+4 : 16+4+ctLen])
+		h.Write(bodyRaw[16+4 : 16+4+ctLen])
 		sum := h.Sum(nil)
-		copy(body[16+4+ctLen:], fold(sum, 4))
+		copy(bodyRaw[16+4+ctLen:], fold(sum, 4))
 	}
 
-	return &lob.Packet{Body: body}, nil
+	outer = lob.New(body.RawBytes())
+	inner.Free()
+	body.Free()
+
+	return outer, nil
 }
 
 func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
@@ -555,32 +565,43 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 		return nil, nil
 	}
 
-	if len(pkt.Head) != 0 || !pkt.Header().IsZero() || len(pkt.Body) < 16+4+4 {
+	if !pkt.Header().IsZero() || pkt.BodyLen() < 16+4+4 {
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	var (
 		nonce    [16]byte
-		innerLen = len(pkt.Body) - (16 + 4 + 4)
-		inner    = make([]byte, innerLen)
+		bodyRaw  []byte
+		innerRaw []byte
+		innerLen = pkt.BodyLen() - (16 + 4 + 4)
+		body     = bufpool.New()
+		inner    = bufpool.New().SetLen(innerLen)
 	)
 
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+	innerRaw = inner.RawBytes()
+
 	// compare token
-	if !bytes.Equal(pkt.Body[:16], (*s.localToken)[:]) {
+	if !bytes.Equal(bodyRaw[:16], (*s.localToken)[:]) {
+		inner.Free()
+		body.Free()
 		return nil, cipherset.ErrInvalidPacket
 	}
 
 	// copy nonce
-	copy(nonce[:], pkt.Body[16:16+4])
+	copy(nonce[:], bodyRaw[16:16+4])
 
 	{ // verify hmac
-		mac := pkt.Body[16+4+innerLen:]
+		mac := bodyRaw[16+4+innerLen:]
 
 		macKey := append(s.lineDecryptionKey, nonce[:4]...)
 
 		h := hmac.New(sha256.New, macKey)
-		h.Write(pkt.Body[16+4 : 16+4+innerLen])
+		h.Write(bodyRaw[16+4 : 16+4+innerLen])
 		if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
+			inner.Free()
+			body.Free()
 			return nil, cipherset.ErrInvalidPacket
 		}
 	}
@@ -588,16 +609,30 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	{ // decrypt inner
 		aesBlock, err := aes.NewCipher(s.lineDecryptionKey)
 		if err != nil {
+			inner.Free()
+			body.Free()
 			return nil, err
 		}
 
 		aes := Cipher.NewCTR(aesBlock, nonce[:])
 		if aes == nil {
+			inner.Free()
+			body.Free()
 			return nil, cipherset.ErrInvalidPacket
 		}
 
-		aes.XORKeyStream(inner, pkt.Body[16+4:16+4+innerLen])
+		aes.XORKeyStream(innerRaw, bodyRaw[16+4:16+4+innerLen])
 	}
 
-	return lob.Decode(inner)
+	innerPkt, err := lob.Decode(inner)
+	if err != nil {
+		inner.Free()
+		body.Free()
+		return nil, err
+	}
+
+	inner.Free()
+	body.Free()
+
+	return innerPkt, nil
 }

@@ -22,6 +22,7 @@ func Test_resolveHTTP(t *testing.T) {
 	defer s.Close()
 
 	uri, err := Parse(s.URL[7:])
+	t.Logf("uri=%q parsed=%v", s.URL[7:], uri)
 	if err != nil {
 		panic(err)
 	}

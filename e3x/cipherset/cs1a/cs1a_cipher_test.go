@@ -9,3 +9,11 @@ import (
 func TestCipher(t *testing.T) {
 	tests.Run(t, &cipher{})
 }
+
+func BenchmarkPacketEncryption(b *testing.B) {
+	tests.BenchmarkPacketEncryption(b, &cipher{})
+}
+
+func BenchmarkPacketDecryption(b *testing.B) {
+	tests.BenchmarkPacketDecryption(b, &cipher{})
+}

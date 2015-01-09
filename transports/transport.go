@@ -7,17 +7,8 @@
 package transports
 
 import (
-	"errors"
-
-	"github.com/telehash/gogotelehash/hashname"
+	"net"
 )
-
-// ErrClosed is returned by a transport when it is not open.
-var ErrClosed = errors.New("use of closed network connection")
-
-// ErrInvalidAddr is returned by a transport when the provided address cannot be
-// handled by the transport.
-var ErrInvalidAddr = errors.New("transports: invalid address")
 
 // Config must be implemented by transport packages
 type Config interface {
@@ -28,47 +19,24 @@ type Config interface {
 // This interface is used internally by E3X.
 type Transport interface {
 
-	// LocalAddresses returns all the known addresses this transport is reachable at.
-	LocalAddresses() []Addr
+	// Addrs returns all the known addresses this transport is reachable at.
+	Addrs() []net.Addr
 
-	// ReadMessage is a blocking read on the transport.
-	// When the transport is closed ErrClosed is returned.
-	ReadMessage(p []byte) (n int, src Addr, err error)
+	// Dial will open a new connection to addr.
+	// io.EOF is returned when the transport is closed.
+	// ErrInvalidAddr must be returned when the addr is
+	// not suppoorted by the transport.
+	Dial(addr net.Addr) (net.Conn, error)
 
-	// WriteMessage is a blocking write on the transport.
-	// When the transport is closed ErrClosed is returned.
-	WriteMessage(p []byte, dst Addr) error
+	// Accept will accept the next incomming connection.
+	// io.EOF is returned when the transport is closed.
+	Accept() (c net.Conn, err error)
 
 	// Close closes the transport.
 	Close() error
 }
 
-// Addr represents an address.
-type Addr interface {
-
-	// Network returns the transport id. For example "udp4".
-	Network() string
-
-	// String returns a (somewhat) human readable representation of the address.
-	String() string
-
-	// MarshalJSON returns a JSON representation of the address.
-	MarshalJSON() ([]byte, error)
-
-	// Equal returns true if other is equal to this Addr.
-	// Don't use this method directly instead use EqualAddr(a, b).
-	Equal(other Addr) bool
-
-	// Associate binds an address to a hashname. It must return a new copy of the address.
-	// This allows transports to know which hashname a packet is send to.
-	Associate(hn hashname.H) Addr
-
-	// Hashname must return the associated hashname.
-	Hashname() hashname.H
-}
-
-// EqualAddr returns true if a and b are equal Addr.
-func EqualAddr(a, b Addr) bool {
+func EqualAddr(a, b net.Addr) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -78,8 +46,15 @@ func EqualAddr(a, b Addr) bool {
 	if a.Network() != b.Network() {
 		return false
 	}
-	if a.Hashname() != b.Hashname() {
-		return false
+	if x, ok := a.(AddrEqualer); ok && x.Equal(b) {
+		return true
 	}
-	return a.Equal(b)
+	if x, ok := b.(AddrEqualer); ok && x.Equal(a) {
+		return true
+	}
+	return a.String() == b.String()
+}
+
+type AddrEqualer interface {
+	Equal(other net.Addr) bool
 }

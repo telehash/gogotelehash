@@ -1,12 +1,13 @@
 package tests
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/suite"
 
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/lob"
 )
 
 type cipherTestSuite struct {
@@ -207,35 +208,180 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	ok = sa.ApplyHandshake(ha)
 	assert.True(ok)
 
-	pkt = &lob.Packet{Body: []byte("Hello world!")}
+	pkt = lob.New([]byte("Hello world!"))
 	pkt.Header().SetInt("foo", 0xbeaf)
 	pkt, err = sa.EncryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
-	assert.Nil(pkt.Head)
+	assert.Nil(pkt.Header().Bytes)
 	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sb.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
-	assert.Nil(pkt.Head)
+	assert.Nil(pkt.Header().Bytes)
 	assert.Equal(&lob.Header{Extra: map[string]interface{}{"foo": 0xbeaf}}, pkt.Header())
-	assert.Equal([]byte("Hello world!"), pkt.Body)
+	assert.Equal([]byte("Hello world!"), pkt.Body(nil))
 
-	pkt = &lob.Packet{Body: []byte("Bye world!")}
+	pkt = lob.New([]byte("Bye world!"))
 	pkt.Header().SetInt("bar", 0xdead)
 	pkt, err = sb.EncryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
-	assert.Nil(pkt.Head)
+	assert.Nil(pkt.Header().Bytes)
 	assert.True(pkt.Header().IsZero())
 	assert.NotEmpty(pkt.Body)
 
 	pkt, err = sa.DecryptPacket(pkt)
 	assert.NoError(err)
 	assert.NotNil(pkt)
-	assert.Nil(pkt.Head)
+	assert.Nil(pkt.Header().Bytes)
 	assert.Equal(&lob.Header{Extra: map[string]interface{}{"bar": 0xdead}}, pkt.Header())
-	assert.Equal([]byte("Bye world!"), pkt.Body)
+	assert.Equal([]byte("Bye world!"), pkt.Body(nil))
+}
+
+func BenchmarkPacketEncryption(b *testing.B, c cipherset.Cipher) {
+	pkt := lob.New(bytes.Repeat([]byte{'x'}, 1024))
+
+	lkey, err := c.GenerateKey()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	rkey, err := c.GenerateKey()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	lstate, err := c.NewState(lkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	rstate, err := c.NewState(rkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	err = lstate.SetRemoteKey(rkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hs, err := lstate.EncryptHandshake(1, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hsMsg, err := c.DecryptHandshake(rkey, hs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ok := rstate.ApplyHandshake(hsMsg)
+	if !ok {
+		b.Fatal("handshake failed")
+	}
+
+	hs, err = rstate.EncryptHandshake(1, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hsMsg, err = c.DecryptHandshake(lkey, hs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ok = lstate.ApplyHandshake(hsMsg)
+	if !ok {
+		b.Fatal("handshake failed")
+	}
+
+	b.SetBytes(1024)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		epkt, err := lstate.EncryptPacket(pkt)
+		epkt.Free()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPacketDecryption(b *testing.B, c cipherset.Cipher) {
+	pkt := lob.New(bytes.Repeat([]byte{'x'}, 1024))
+
+	lkey, err := c.GenerateKey()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	rkey, err := c.GenerateKey()
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	lstate, err := c.NewState(lkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	rstate, err := c.NewState(rkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	err = lstate.SetRemoteKey(rkey)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hs, err := lstate.EncryptHandshake(1, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hsMsg, err := c.DecryptHandshake(rkey, hs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ok := rstate.ApplyHandshake(hsMsg)
+	if !ok {
+		b.Fatal("handshake failed")
+	}
+
+	hs, err = rstate.EncryptHandshake(1, nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	hsMsg, err = c.DecryptHandshake(lkey, hs)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	ok = lstate.ApplyHandshake(hsMsg)
+	if !ok {
+		b.Fatal("handshake failed")
+	}
+
+	pkt, err = rstate.EncryptPacket(pkt)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.SetBytes(1024)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		epkt, err := lstate.DecryptPacket(pkt)
+		epkt.Free()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 }

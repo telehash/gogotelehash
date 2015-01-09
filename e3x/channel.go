@@ -11,11 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
-	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/bufpool"
-	"github.com/telehash/gogotelehash/util/tracer"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
+	"github.com/telehash/gogotelehash/internal/util/tracer"
 )
 
 var (
@@ -56,13 +54,14 @@ type Channel struct {
 	cndWrite *sync.Cond
 	cndClose *sync.Cond
 
-	x          exchangeI
-	serverside bool
-	id         uint32
-	typ        string
-	hashname   hashname.H
-	reliable   bool
-	broken     bool
+	x            exchangeI
+	channelHooks ChannelHooks
+	serverside   bool
+	id           uint32
+	typ          string
+	hashname     hashname.H
+	reliable     bool
+	broken       bool
 
 	oSeq         uint32 // highest seq in write stream
 	iBufferedSeq uint32 // highest buffered seq in read stream
@@ -92,9 +91,10 @@ type Channel struct {
 	tAcker         *time.Timer
 }
 
+type ChannelOption func(*Channel) error
+
 type exchangeI interface {
-	deliverPacket(pkt *lob.Packet, dst transports.Addr) error
-	unregisterChannel(channelID uint32)
+	deliverPacket(pkt *lob.Packet, dst *Pipe) error
 	RemoteIdentity() *Identity
 	getTID() tracer.ID
 }
@@ -109,13 +109,14 @@ type writeBufferEntry struct {
 	pkt        *lob.Packet
 	end        bool
 	lastResend time.Time
-	dst        transports.Addr
+	dst        *Pipe
 }
 
 func newChannel(
 	hn hashname.H, typ string,
 	reliable bool, serverside bool,
 	x exchangeI,
+	options ...ChannelOption,
 ) *Channel {
 	c := &Channel{
 		TID:          tracer.NewID(),
@@ -150,9 +151,27 @@ func newChannel(
 		c.tAcker = time.AfterFunc(10*time.Second, c.autoDeliverAck)
 	}
 
+	c.setOptions(options...)
 	c.traceNew()
 
 	return c
+}
+
+func (c *Channel) setOptions(options ...ChannelOption) error {
+	for _, option := range options {
+		if err := option(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func registerExchange(x *Exchange) ChannelOption {
+	return func(c *Channel) error {
+		c.channelHooks = x.channelHooks
+		c.channelHooks.channel = c
+		return nil
+	}
 }
 
 func (c *Channel) traceNew() {
@@ -169,22 +188,22 @@ func (c *Channel) traceNew() {
 	}
 }
 
-func (c *Channel) traceWriteError(pkt *lob.Packet, path transports.Addr, reason error) error {
+func (c *Channel) traceWriteError(pkt *lob.Packet, p *Pipe, reason error) error {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
 			"reason":     reason.Error(),
 		}
 
-		if path != nil {
-			info["path"] = path.String()
+		if p != nil {
+			info["path"] = p.RemoteAddr().String()
 		}
 
 		if pkt != nil {
 			info["packet_id"] = pkt.TID
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -193,21 +212,21 @@ func (c *Channel) traceWriteError(pkt *lob.Packet, path transports.Addr, reason 
 	return reason
 }
 
-func (c *Channel) traceWrite(pkt *lob.Packet, path transports.Addr) {
+func (c *Channel) traceWrite(pkt *lob.Packet, p *Pipe) {
 	if tracer.Enabled {
 		info := tracer.Info{
 			"channel_id": c.TID,
 		}
 
-		if path != nil {
-			info["path"] = path.String()
+		if p != nil {
+			info["path"] = p.RemoteAddr().String()
 		}
 
 		if pkt != nil {
 			info["packet_id"] = pkt.TID
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -226,7 +245,7 @@ func (c *Channel) traceDroppedPacket(pkt *lob.Packet, reason string) {
 		if pkt != nil {
 			info["packet"] = tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			}
 		}
 
@@ -241,7 +260,7 @@ func (c *Channel) traceReceivedPacket(pkt *lob.Packet) {
 			"packet_id":  pkt.TID,
 			"packet": tracer.Info{
 				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body),
+				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
 			},
 		})
 	}
@@ -277,7 +296,7 @@ func (c *Channel) WritePacket(pkt *lob.Packet) error {
 	return c.WritePacketTo(pkt, nil)
 }
 
-func (c *Channel) WritePacketTo(pkt *lob.Packet, path transports.Addr) error {
+func (c *Channel) WritePacketTo(pkt *lob.Packet, p *Pipe) error {
 	if c == nil {
 		return os.ErrInvalid
 	}
@@ -287,7 +306,7 @@ func (c *Channel) WritePacketTo(pkt *lob.Packet, path transports.Addr) error {
 		c.cndWrite.Wait()
 	}
 
-	err := c.write(pkt, path)
+	err := c.write(pkt, p)
 
 	if !c.blockWrite() {
 		c.cndWrite.Signal()
@@ -327,7 +346,7 @@ func (c *Channel) blockWrite() bool {
 	return false
 }
 
-func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
+func (c *Channel) write(pkt *lob.Packet, p *Pipe) error {
 	if pkt.TID == 0 {
 		pkt.TID = tracer.NewID()
 	}
@@ -335,21 +354,21 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 	if c.broken {
 		// When a channel is marked as broken the all writes
 		// must return a BrokenChannelError.
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			&BrokenChannelError{c.hashname, c.typ, c.id})
 	}
 
 	if c.writeDeadlineReached {
 		// When a channel reached a write deadline then all writes
 		// must return a ErrTimeout.
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			ErrTimeout)
 	}
 
 	if c.deliveredEnd {
 		// When a channel sent a packet with the "end" header set
 		// then all subsequent writes must return io.EOF
-		return c.traceWriteError(pkt, path,
+		return c.traceWriteError(pkt, p,
 			io.EOF)
 	}
 
@@ -373,13 +392,13 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 		if c.oSeq%30 == 0 || hdr.End {
 			c.applyAckHeaders(pkt)
 		}
-		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, path}
+		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, p}
 		c.needsResend = false
 	}
 
-	err := c.x.deliverPacket(pkt, path)
+	err := c.x.deliverPacket(pkt, p)
 	if err != nil {
-		return c.traceWriteError(pkt, path, err)
+		return c.traceWriteError(pkt, p, err)
 	}
 	statChannelSndPkt.Add(1)
 	if pkt.Header().HasAck {
@@ -390,7 +409,12 @@ func (c *Channel) write(pkt *lob.Packet, path transports.Addr) error {
 		c.unsetOpenDeadline()
 	}
 
-	c.traceWrite(pkt, path)
+	c.traceWrite(pkt, p)
+
+	if !c.reliable {
+		pkt.Free()
+	}
+
 	return nil
 }
 
@@ -485,7 +509,7 @@ func (c *Channel) peekPacket() (*lob.Packet, error) {
 		h.HasEnd = false
 	}
 
-	if len(e.pkt.Body) == 0 && e.pkt.Header().IsZero() && e.end {
+	if e.pkt.BodyLen() == 0 && e.pkt.Header().IsZero() && e.end {
 		// read empty `end` packet
 		c.readPacket()
 		return nil, io.EOF
@@ -576,6 +600,9 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 			}
 
 			for i := oldAck + 1; i <= ack; i++ {
+				if e := c.writeBuffer[i]; e != nil {
+					e.pkt.Free()
+				}
 				delete(c.writeBuffer, i)
 				changed = true
 			}
@@ -695,8 +722,9 @@ func (c *Channel) Error(err error) error {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
 	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 	return nil
 }
 
@@ -706,11 +734,11 @@ func (c *Channel) Close() error {
 	}
 
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
 
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
+		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -726,6 +754,7 @@ func (c *Channel) Close() error {
 			hdr := pkt.Header()
 			hdr.End, hdr.HasEnd = true, true
 			if err := c.write(pkt, nil); err != nil {
+				c.mtx.Unlock()
 				return err
 			}
 		}
@@ -743,6 +772,7 @@ func (c *Channel) Close() error {
 			break
 		}
 		if err != nil {
+			c.mtx.Unlock()
 			return err
 		}
 	}
@@ -754,6 +784,7 @@ func (c *Channel) Close() error {
 	if c.broken {
 		// When a channel is marked as broken the all closes
 		// must return a BrokenChannelError.
+		c.mtx.Unlock()
 		return &BrokenChannelError{c.hashname, c.typ, c.id}
 	}
 
@@ -763,7 +794,9 @@ func (c *Channel) Close() error {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 	return nil
 }
 
@@ -984,7 +1017,11 @@ func (c *Channel) setCloseDeadline() {
 
 func (c *Channel) onCloseDeadlineReached() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.closeDeadlineReached = true
@@ -997,7 +1034,9 @@ func (c *Channel) onCloseDeadlineReached() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
 func (c *Channel) setOpenDeadline() {
@@ -1060,7 +1099,11 @@ func (c *Channel) unsetAcker() {
 
 func (c *Channel) onOpenDeadlineReached() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.openDeadlineReached = true
@@ -1071,12 +1114,18 @@ func (c *Channel) onOpenDeadlineReached() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
-func (c *Channel) forget() {
+func (c *Channel) Kill() {
 	c.mtx.Lock()
-	defer c.mtx.Unlock()
+
+	if c.broken {
+		c.mtx.Unlock()
+		return
+	}
 
 	c.broken = true
 	c.openDeadlineReached = false
@@ -1087,7 +1136,9 @@ func (c *Channel) forget() {
 	c.cndRead.Broadcast()
 	c.cndClose.Broadcast()
 
-	c.x.unregisterChannel(c.id)
+	c.mtx.Unlock()
+
+	c.channelHooks.Closed()
 }
 
 // Read implements the net.Conn Read method.
@@ -1097,12 +1148,11 @@ func (c *Channel) Read(b []byte) (int, error) {
 		return 0, err
 	}
 
-	n := len(pkt.Body)
+	n := len(pkt.Body(b[:0]))
 	if len(b) < n {
 		return 0, io.ErrShortBuffer
 	}
 
-	copy(b, pkt.Body)
 	pkt.Free()
 
 	return n, nil
@@ -1111,8 +1161,7 @@ func (c *Channel) Read(b []byte) (int, error) {
 // Write implements the net.Conn Write method.
 func (c *Channel) Write(b []byte) (int, error) {
 	n := len(b)
-	pkt := &lob.Packet{Body: bufpool.GetBuffer()[:n]}
-	copy(pkt.Body, b)
+	pkt := lob.New(b)
 
 	err := c.WritePacket(pkt)
 	if err != nil {

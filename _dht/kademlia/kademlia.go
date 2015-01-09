@@ -1,8 +1,8 @@
 package kademlia
 
 import (
-	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/hashname"
+	"github.com/telehash/gogotelehash/internal/lob"
 	"sync"
 	"time"
 

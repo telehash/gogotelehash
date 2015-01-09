@@ -3,8 +3,7 @@ package main
 import (
 	"io"
 
-	"github.com/telehash/gogotelehash/e3x"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash"
 )
 
 func init() {
@@ -14,8 +13,7 @@ func init() {
 }
 
 func ChannelReliable_Worker(ctx *Context) error {
-	e, err := e3x.Open(
-		e3x.Log(ctx.Out))
+	e, err := telehash.Open()
 	if err != nil {
 		return err
 	}
@@ -39,7 +37,7 @@ func ChannelReliable_Worker(ctx *Context) error {
 		}
 
 		if i == 1 {
-			c.WritePacket(&lob.Packet{})
+			c.WritePacket(&telehash.Packet{})
 		}
 
 		token, _ := pkt.Header().GetString("token")
@@ -60,8 +58,7 @@ func ChannelReliable_Worker(ctx *Context) error {
 }
 
 func ChannelReliable_Driver(ctx *Context) error {
-	e, err := e3x.Open(
-		e3x.Log(ctx.Out))
+	e, err := telehash.Open()
 	if err != nil {
 		return err
 	}
@@ -69,7 +66,7 @@ func ChannelReliable_Driver(ctx *Context) error {
 
 	var (
 		ident = ctx.ReadIdentity("worker")
-		pkt   *lob.Packet
+		pkt   *telehash.Packet
 		token string
 	)
 
@@ -80,7 +77,7 @@ func ChannelReliable_Driver(ctx *Context) error {
 
 	token = RandomString(10)
 	ctx.Assert(1, token)
-	pkt = &lob.Packet{}
+	pkt = &telehash.Packet{}
 	pkt.Header().SetString("token", token)
 	err = c.WritePacket(pkt)
 	if err != nil {
@@ -91,7 +88,7 @@ func ChannelReliable_Driver(ctx *Context) error {
 
 	token = RandomString(10)
 	ctx.Assert(2, token)
-	pkt = &lob.Packet{}
+	pkt = &telehash.Packet{}
 	pkt.Header().SetString("token", token)
 	err = c.WritePacket(pkt)
 	if err != nil {
@@ -100,7 +97,7 @@ func ChannelReliable_Driver(ctx *Context) error {
 
 	token = RandomString(10)
 	ctx.Assert(3, token)
-	pkt = &lob.Packet{}
+	pkt = &telehash.Packet{}
 	pkt.Header().SetString("token", token)
 	err = c.WritePacket(pkt)
 	if err != nil {

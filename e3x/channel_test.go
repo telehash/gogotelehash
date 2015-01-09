@@ -1,6 +1,7 @@
 package e3x
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"runtime"
@@ -9,12 +10,11 @@ import (
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
 
-	"github.com/telehash/gogotelehash/hashname"
-	"github.com/telehash/gogotelehash/lob"
+	"github.com/telehash/gogotelehash/internal/lob"
+	"github.com/telehash/gogotelehash/internal/util/logs"
 	"github.com/telehash/gogotelehash/transports/inproc"
 	"github.com/telehash/gogotelehash/transports/mux"
 	"github.com/telehash/gogotelehash/transports/udp"
-	"github.com/telehash/gogotelehash/util/logs"
 )
 
 func withTwoEndpoints(t testing.TB, f func(a, b *Endpoint)) {
@@ -60,147 +60,8 @@ func withEndpoint(t testing.TB, f func(e *Endpoint)) {
 	f(e)
 }
 
-func TestBasicUnrealiable(t *testing.T) {
-	t.Parallel()
-	logs.ResetLogger()
-
-	var (
-		assert = assert.New(t)
-		c      *Channel
-		x      MockExchange
-		pkt    *lob.Packet
-		hdr    *lob.Header
-		err    error
-	)
-
-	{ // mock
-		pkt = &lob.Packet{Body: []byte("ping")}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.Type, hdr.HasType = "ping", true
-		x.On("deliverPacket", pkt).Return(nil)
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.End, hdr.HasEnd = true, true
-		x.On("deliverPacket", pkt).Return(nil)
-
-		x.On("unregisterChannel", uint32(0)).Return().Once()
-	}
-
-	c = newChannel(
-		hashname.H("a-hashname"),
-		"ping", false, false,
-		&x)
-
-	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
-	assert.NoError(err)
-
-	c.receivedPacket(&lob.Packet{Body: []byte("pong")})
-
-	pkt, err = c.ReadPacket()
-	assert.NoError(err)
-	assert.NotNil(pkt)
-	if pkt != nil {
-		assert.Equal("pong", string(pkt.Body))
-	}
-
-	pkt = &lob.Packet{}
-	hdr = pkt.Header()
-	hdr.End, hdr.HasEnd = true, true
-	c.receivedPacket(pkt)
-
-	err = c.Close()
-	assert.NoError(err)
-
-	x.AssertExpectations(t)
-}
-
-func TestBasicRealiable(t *testing.T) {
-	t.Parallel()
-	logs.ResetLogger()
-
-	var (
-		assert = assert.New(t)
-		c      *Channel
-		x      MockExchange
-		pkt    *lob.Packet
-		hdr    *lob.Header
-		err    error
-	)
-
-	{ // mock
-		pkt = &lob.Packet{Body: []byte("ping")}
-		hdr = pkt.Header()
-		hdr.Type, hdr.HasType = "ping", true
-		hdr.C, hdr.HasC = 0, true
-		hdr.Seq, hdr.HasSeq = 1, true
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.Ack, hdr.HasAck = 1, true
-		hdr.Miss, hdr.HasMiss = []uint32{1, 99}, true
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.Ack, hdr.HasAck = 2, true
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.C, hdr.HasC = 0, true
-		hdr.Seq, hdr.HasSeq = 2, true
-		hdr.Ack, hdr.HasAck = 1, true
-		hdr.End, hdr.HasEnd = true, true
-		x.On("deliverPacket", pkt).Return(nil).Once()
-
-		x.On("unregisterChannel", uint32(0)).Return().Once()
-	}
-
-	c = newChannel(
-		hashname.H("a-hashname"),
-		"ping", true, false,
-		&x)
-
-	err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
-	assert.NoError(err)
-
-	pkt = &lob.Packet{Body: []byte("pong")}
-	hdr = pkt.Header()
-	hdr.Seq, hdr.HasSeq = 1, true
-	hdr.Ack, hdr.HasAck = 1, true
-	c.receivedPacket(pkt)
-
-	pkt, err = c.ReadPacket()
-	assert.NoError(err)
-	if assert.NotNil(pkt) {
-		assert.Equal("pong", string(pkt.Body))
-	}
-
-	go func() {
-		time.Sleep(10 * time.Millisecond)
-
-		pkt = &lob.Packet{}
-		hdr = pkt.Header()
-		hdr.Seq, hdr.HasSeq = 2, true
-		hdr.Ack, hdr.HasAck = 2, true
-		hdr.End, hdr.HasEnd = true, true
-		c.receivedPacket(pkt)
-	}()
-
-	err = c.Close()
-	assert.NoError(err)
-
-	x.AssertExpectations(t)
-}
-
 func TestPingPong(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
@@ -215,14 +76,16 @@ func TestPingPong(t *testing.T) {
 		go func() {
 			c, err := A.Listen("ping", false).AcceptChannel()
 
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+
 			if assert.NoError(err) && assert.NotNil(c) {
 				defer c.Close()
 
 				pkt, err = c.ReadPacket()
 				if assert.NoError(err) && assert.NotNil(pkt) {
-					assert.Equal("ping", string(pkt.Body))
+					assert.Equal("ping", string(pkt.Body(nil)))
 
-					err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+					err = c.WritePacket(lob.New([]byte("pong")))
 					assert.NoError(err)
 				}
 			}
@@ -236,20 +99,21 @@ func TestPingPong(t *testing.T) {
 		if assert.NotNil(c) {
 			defer c.Close()
 
-			err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+
+			err = c.WritePacket(lob.New([]byte("ping")))
 			assert.NoError(err)
 
 			pkt, err = c.ReadPacket()
-			assert.NoError(err)
-			if assert.NotNil(pkt) {
-				assert.Equal("pong", string(pkt.Body))
+			if assert.NoError(err) && assert.NotNil(pkt) {
+				assert.Equal("pong", string(pkt.Body(nil)))
 			}
 		}
 	})
 }
 
 func TestPingPongReliable(t *testing.T) {
-	t.Parallel()
+	// t.Parallel()
 	logs.ResetLogger()
 
 	withTwoEndpoints(t, func(A, B *Endpoint) {
@@ -268,9 +132,9 @@ func TestPingPongReliable(t *testing.T) {
 
 				pkt, err = c.ReadPacket()
 				if assert.NoError(err) && assert.NotNil(pkt) {
-					assert.Equal("ping", string(pkt.Body))
+					assert.Equal("ping", string(pkt.Body(nil)))
 
-					err = c.WritePacket(&lob.Packet{Body: []byte("pong")})
+					err = c.WritePacket(lob.New([]byte("pong")))
 					assert.NoError(err)
 				}
 			}
@@ -283,13 +147,13 @@ func TestPingPongReliable(t *testing.T) {
 		assert.NoError(err)
 		if assert.NotNil(c) {
 
-			err = c.WritePacket(&lob.Packet{Body: []byte("ping")})
+			err = c.WritePacket(lob.New([]byte("ping")))
 			assert.NoError(err)
 
 			pkt, err = c.ReadPacket()
 			assert.NoError(err)
 			if assert.NotNil(pkt) {
-				assert.Equal("pong", string(pkt.Body))
+				assert.Equal("pong", string(pkt.Body(nil)))
 			}
 
 			err = c.Close()
@@ -325,7 +189,7 @@ func TestFloodReliable(t *testing.T) {
 				assert.NotNil(pkt)
 
 				for i := 0; i < 100000; i++ {
-					pkt := &lob.Packet{}
+					pkt := lob.New(nil)
 					pkt.Header().SetInt("flood_id", i)
 					err = c.WritePacket(pkt)
 					assert.NoError(err)
@@ -342,7 +206,7 @@ func TestFloodReliable(t *testing.T) {
 
 		defer c.Close()
 
-		err = c.WritePacket(&lob.Packet{})
+		err = c.WritePacket(lob.New(nil))
 		assert.NoError(err)
 
 		lastID := -1
@@ -378,8 +242,10 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 			ident *Identity
 			pkt   *lob.Packet
 			err   error
+			body  = bytes.Repeat([]byte{'x'}, 1300)
 		)
 
+		b.SetBytes(int64(len(body)))
 		b.ResetTimer()
 
 		go func() {
@@ -396,7 +262,7 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				pkt := &lob.Packet{Body: []byte("Hello World!")}
+				pkt := lob.New(body)
 				err = c.WritePacket(pkt)
 				if err != nil {
 					b.Fatal(err)
@@ -416,7 +282,7 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 
 		defer c.Close()
 
-		err = c.WritePacket(&lob.Packet{})
+		err = c.WritePacket(lob.New(nil))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -449,8 +315,10 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 			ident *Identity
 			pkt   *lob.Packet
 			err   error
+			body  = bytes.Repeat([]byte{'x'}, 1300)
 		)
 
+		b.SetBytes(int64(len(body)))
 		b.ResetTimer()
 
 		go func() {
@@ -467,7 +335,7 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 			}
 
 			for i := 0; i < b.N; i++ {
-				pkt := &lob.Packet{Body: []byte("Hello World!")}
+				pkt := lob.New(body)
 				err = c.WritePacket(pkt)
 				if err != nil {
 					b.Fatal(err)
@@ -490,7 +358,7 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 
 		defer c.Close()
 
-		err = c.WritePacket(&lob.Packet{})
+		err = c.WritePacket(lob.New(nil))
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -527,7 +395,7 @@ func BenchmarkChannels(b *testing.B) {
 
 		defer c.Close()
 
-		pkt := &lob.Packet{Body: ping}
+		pkt := lob.New(ping)
 		err = c.WritePacket(pkt)
 		if err != nil {
 			b.Fatal(err)
@@ -549,7 +417,7 @@ func BenchmarkChannels(b *testing.B) {
 		}
 		pkt.Free()
 
-		pkt = &lob.Packet{Body: pong}
+		pkt = lob.New(pong)
 		err = c.WritePacket(pkt)
 		if err != nil {
 			b.Fatal(err)
@@ -621,7 +489,7 @@ func BenchmarkChannelsReliable(b *testing.B) {
 
 		defer c.Close()
 
-		pkt := &lob.Packet{Body: ping}
+		pkt := lob.New(ping)
 		err = c.WritePacket(pkt)
 		if err != nil {
 			b.Fatal(err)
@@ -643,7 +511,7 @@ func BenchmarkChannelsReliable(b *testing.B) {
 		}
 		pkt.Free()
 
-		pkt = &lob.Packet{Body: pong}
+		pkt = lob.New(pong)
 		err = c.WritePacket(pkt)
 		if err != nil {
 			b.Fatal(err)

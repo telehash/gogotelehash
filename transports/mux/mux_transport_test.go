@@ -2,7 +2,7 @@ package mux
 
 import (
 	"bytes"
-	"log"
+	"net"
 	"testing"
 
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/github.com/stretchr/testify/assert"
@@ -39,50 +39,10 @@ func TestManagerWithOneTransport(t *testing.T) {
 
 	tr, err = c.Open()
 	if assert.NoError(err) && assert.NotNil(tr) {
-		t.Logf("addrs=%v", tr.LocalAddresses())
+		t.Logf("addrs=%v", tr.Addrs())
 
 		err = tr.Close()
 		assert.NoError(err)
-	}
-}
-
-func TestManagerDeliverReceive(t *testing.T) {
-	assert := assert.New(t)
-
-	var (
-		ca  = Config{udp.Config{}}
-		cb  = Config{udp.Config{Addr: "127.0.0.1:0"}}
-		ta  transports.Transport
-		tb  transports.Transport
-		err error
-	)
-
-	ta, err = ca.Open()
-	if assert.NoError(err) && assert.NotNil(ta) {
-
-		tb, err = cb.Open()
-		if assert.NoError(err) && assert.NotNil(tb) {
-
-			t.Logf("ta addrs=%v", ta.LocalAddresses())
-			t.Logf("tb addrs=%v", tb.LocalAddresses())
-
-			addr := tb.LocalAddresses()[0]
-			log.Printf("SND %q to %s", "Hello World!", addr)
-			err = ta.WriteMessage([]byte("Hello World!"), addr)
-			assert.NoError(err)
-
-			buf := make([]byte, 128)
-			n, src, err := tb.ReadMessage(buf)
-			if assert.NoError(err) && assert.NotNil(src) {
-				assert.Equal("Hello World!", string(buf[:n]))
-			}
-
-			err = ta.Close()
-			assert.NoError(err)
-
-			err = tb.Close()
-			assert.NoError(err)
-		}
 	}
 }
 
@@ -100,20 +60,55 @@ func Benchmark(b *testing.B) {
 	defer B.Close()
 
 	var (
-		msg = []byte("hello")
-		dst = B.LocalAddresses()[0]
-		out = make([]byte, 100)
+		msg = bytes.Repeat([]byte{'x'}, 1450)
+		dst = B.Addrs()[0]
+		out [1500]byte
+		w   net.Conn
+		r   net.Conn
 	)
 
-	b.ResetTimer()
+	{ // setup
+		w, err = A.Dial(dst)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if w == nil {
+			b.Fatal("w should not be nil")
+		}
 
-	for i := 0; i < b.N; i += 2 {
-		err = A.WriteMessage(msg, dst)
+		_, err = w.Write(msg)
 		if err != nil {
 			b.Fatal(err)
 		}
 
-		n, _, err := B.ReadMessage(out)
+		r, err = B.Accept()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if r == nil {
+			b.Fatal("r should not be nil")
+		}
+
+		n, err := r.Read(out[:])
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		if !bytes.Equal(out[:n], msg) {
+			b.Fatalf("invalid message")
+		}
+	}
+
+	b.SetBytes(int64(len(msg)))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i += 2 {
+		_, err = w.Write(msg)
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		n, err := r.Read(out[:])
 		if err != nil {
 			b.Fatal(err)
 		}

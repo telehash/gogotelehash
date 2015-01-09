@@ -21,9 +21,9 @@ var (
 )
 
 // NATableAddr must be implemented by transports that support NAT port mapping.
-type NATableAddr interface {
+type Addr interface {
 	// Make sure transports.Addr is implemented
-	transports.Addr
+	net.Addr
 
 	// InternalAddr returns basic addressing information.
 	// proto must be either "udp" or "tcp".
@@ -32,7 +32,7 @@ type NATableAddr interface {
 	InternalAddr() (proto string, ip net.IP, port int)
 
 	// MakeGlobal makes a new addr while replacing the ip:port.
-	MakeGlobal(ip net.IP, port int) transports.Addr
+	MakeGlobal(ip net.IP, port int) net.Addr
 }
 
 // Config must be given a sub-transport.
@@ -53,8 +53,8 @@ type transport struct {
 }
 
 type natMapping struct {
-	external transports.Addr
-	internal transports.Addr
+	external net.Addr
+	internal net.Addr
 	stale    bool
 }
 
@@ -76,8 +76,8 @@ func (c Config) Open() (transports.Transport, error) {
 	return nat, nil
 }
 
-func (t *transport) LocalAddresses() []transports.Addr {
-	addrs := t.t.LocalAddresses()
+func (t *transport) Addrs() []net.Addr {
+	addrs := t.t.Addrs()
 
 	t.mtx.RLock()
 	for _, m := range t.mapping {
@@ -88,12 +88,12 @@ func (t *transport) LocalAddresses() []transports.Addr {
 	return addrs
 }
 
-func (t *transport) ReadMessage(p []byte) (int, transports.Addr, error) {
-	return t.t.ReadMessage(p)
+func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
+	return t.t.Dial(addr)
 }
 
-func (t *transport) WriteMessage(p []byte, dst transports.Addr) error {
-	return t.t.WriteMessage(p, dst)
+func (t *transport) Accept() (net.Conn, error) {
+	return t.t.Accept()
 }
 
 func (t *transport) Close() error {
@@ -149,8 +149,8 @@ func (t *transport) runDiscoverMode() bool {
 	}
 }
 
-func asNATableAddr(addr transports.Addr) (string, net.IP, int) {
-	naddr, _ := addr.(NATableAddr)
+func asNATableAddr(addr net.Addr) (string, net.IP, int) {
+	naddr, _ := addr.(Addr)
 	if naddr == nil {
 		return "", nil, 0
 	}
@@ -172,7 +172,7 @@ func (t *transport) updateKnownAddresses(known map[string]bool) bool {
 		known[key] = false
 	}
 
-	for _, addr := range t.t.LocalAddresses() {
+	for _, addr := range t.t.Addrs() {
 		proto, ip, internalPort := asNATableAddr(addr)
 		if proto == "" {
 			continue
@@ -266,8 +266,8 @@ func (t *transport) updateMappings() {
 	}
 
 	// map new addrs
-	for _, addr := range t.t.LocalAddresses() {
-		nataddr, ok := addr.(NATableAddr)
+	for _, addr := range t.t.Addrs() {
+		nataddr, ok := addr.(Addr)
 		if !ok {
 			continue // not a natble address
 		}
@@ -305,7 +305,7 @@ func (t *transport) updateMappings() {
 			continue
 		}
 
-		nataddr, ok := m.internal.(NATableAddr)
+		nataddr, ok := m.internal.(Addr)
 		if !ok {
 			continue
 		}
@@ -370,7 +370,7 @@ func (t *transport) refreshMapping() {
 			continue
 		}
 
-		globaddr := m.internal.(NATableAddr).MakeGlobal(externalIP, externalPort)
+		globaddr := m.internal.(Addr).MakeGlobal(externalIP, externalPort)
 		if globaddr == nil {
 			droplist = append(droplist, key)
 			continue

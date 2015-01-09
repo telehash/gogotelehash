@@ -8,9 +8,8 @@ import (
 
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
-	"github.com/telehash/gogotelehash/hashname"
+	"github.com/telehash/gogotelehash/internal/hashname"
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/transports/udp"
 )
 
 func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
@@ -43,10 +42,11 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 	}
 
 	var (
-		srv  = srvs[0]
-		port = srv.Port
-		hn   hashname.H
-		keys cipherset.Keys
+		srv     = srvs[0]
+		port    = srv.Port
+		portStr = strconv.Itoa(int(port))
+		hn      hashname.H
+		keys    cipherset.Keys
 	)
 
 	{ // detect valid target
@@ -89,17 +89,23 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 	}
 
 	// make addrs
-	addrs := make([]transports.Addr, 0, len(ips))
+	addrs := make([]net.Addr, 0, len(ips))
 	for _, ip := range ips {
 		var (
-			addr transports.Addr
+			addr net.Addr
 		)
 
 		switch proto {
 		case "udp":
-			addr, _ = udp.NewAddr(ip, port)
-			// case "tcp":
-			// 	addr, _ = tcp.NewAddr(ip, port)
+			addr, _ = transports.ResolveAddr("udp4", net.JoinHostPort(ip.String(), portStr))
+			if addr == nil {
+				addr, _ = transports.ResolveAddr("udp6", net.JoinHostPort(ip.String(), portStr))
+			}
+		case "tcp":
+			addr, _ = transports.ResolveAddr("tcp4", net.JoinHostPort(ip.String(), portStr))
+			if addr == nil {
+				addr, _ = transports.ResolveAddr("tcp6", net.JoinHostPort(ip.String(), portStr))
+			}
 			// case "http":
 			// 	addr, _ = http.NewAddr(ip, port)
 		}

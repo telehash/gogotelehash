@@ -6,15 +6,16 @@ package mux
 
 import (
 	"io"
+	"net"
 	"sync"
+	"time"
 
 	"github.com/telehash/gogotelehash/transports"
-	"github.com/telehash/gogotelehash/util/bufpool"
 )
 
 var (
 	_ transports.Config    = Config{}
-	_ transports.Transport = (*muxer)(nil)
+	_ transports.Transport = (*transport)(nil)
 )
 
 // Config is a list of sub-transport configurations.
@@ -27,92 +28,68 @@ var (
 //   }})
 type Config []transports.Config
 
-type muxer struct {
+type transport struct {
 	transports []transports.Transport
-	cRead      chan readOp
+	cAccept    chan net.Conn
 	wg         sync.WaitGroup
-}
-
-type readOp struct {
-	msg []byte
-	src transports.Addr
-	err error
 }
 
 // Open opens the sub-transports.
 func (c Config) Open() (transports.Transport, error) {
-	m := &muxer{}
-	m.cRead = make(chan readOp)
+	t := &transport{}
+	t.cAccept = make(chan net.Conn)
 
 	for _, f := range c {
-		t, err := f.Open()
+		s, err := f.Open()
 		if err != nil {
 			return nil, err
 		}
 
-		m.transports = append(m.transports, t)
+		t.transports = append(t.transports, s)
 	}
 
-	for _, t := range m.transports {
-		m.wg.Add(1)
-		go m.runReader(t)
+	for _, s := range t.transports {
+		t.wg.Add(1)
+		go t.runAccepter(s)
 	}
 
-	return m, nil
+	return t, nil
 }
 
-func (m *muxer) LocalAddresses() []transports.Addr {
-	var addrs []transports.Addr
+func (t *transport) Addrs() []net.Addr {
+	var addrs []net.Addr
 
-	for _, t := range m.transports {
-		addrs = append(addrs, t.LocalAddresses()...)
+	for _, s := range t.transports {
+		addrs = append(addrs, s.Addrs()...)
 	}
 
 	return addrs
 }
 
-func (m *muxer) ReadMessage(p []byte) (n int, src transports.Addr, err error) {
-	op, ok := <-m.cRead
-
-	if !ok {
-		return 0, nil, transports.ErrClosed
-	}
-
-	if len(p) < len(op.msg) {
-		return 0, nil, io.ErrShortBuffer
-	}
-
-	copy(p, op.msg)
-	n = len(op.msg)
-	src = op.src
-	err = op.err
-
-	bufpool.PutBuffer(op.msg)
-
-	return
-}
-
-func (m *muxer) WriteMessage(p []byte, dst transports.Addr) error {
-	for _, t := range m.transports {
-		err := t.WriteMessage(p, dst)
+func (t *transport) Dial(addr net.Addr) (net.Conn, error) {
+	for _, s := range t.transports {
+		conn, err := s.Dial(addr)
 		if err == transports.ErrInvalidAddr {
 			continue
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if err == nil {
-			return nil
-		}
+		return conn, nil
 	}
-
-	return transports.ErrInvalidAddr
+	return nil, transports.ErrInvalidAddr
 }
 
-func (m *muxer) Close() error {
-	var lastErr error
+func (t *transport) Accept() (c net.Conn, err error) {
+	conn, ok := <-t.cAccept
+	if !ok {
+		return nil, io.EOF
+	}
+	return conn, nil
+}
 
-	close(m.cRead)
+func (m *transport) Close() error {
+	var lastErr error
 
 	for _, t := range m.transports {
 		err := t.Close()
@@ -122,23 +99,26 @@ func (m *muxer) Close() error {
 	}
 
 	m.wg.Wait()
+	close(m.cAccept)
 
 	return lastErr
 }
 
-func (m *muxer) runReader(t transports.Transport) {
-	defer m.wg.Done()
+func (t *transport) runAccepter(s transports.Transport) {
+	defer t.wg.Done()
 	for {
-		buf := bufpool.GetBuffer()
-
-		n, src, err := t.ReadMessage(buf)
-		if err == transports.ErrClosed {
+		conn, err := s.Accept()
+		if err == io.EOF {
+			break
+		}
+		if neterr, ok := err.(net.Error); ok && neterr.Temporary() {
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+		if err != nil {
 			return
 		}
 
-		func() {
-			defer func() { recover() }()
-			m.cRead <- readOp{buf[:n], src, err}
-		}()
+		t.cAccept <- conn
 	}
 }
