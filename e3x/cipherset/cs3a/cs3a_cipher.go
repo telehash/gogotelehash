@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"hash"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -12,17 +13,15 @@ import (
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/nacl/box"
 	"github.com/telehash/gogotelehash/Godeps/_workspace/src/golang.org/x/crypto/poly1305"
 
-	"github.com/telehash/gogotelehash/e3x/cipherset"
+	"github.com/telehash/gogotelehash/e3x/cipherset/driver"
 	"github.com/telehash/gogotelehash/internal/lob"
-	"github.com/telehash/gogotelehash/internal/util/base32util"
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
 )
 
 var (
-	_ cipherset.Cipher    = (*cipher)(nil)
-	_ cipherset.State     = (*state)(nil)
-	_ cipherset.Key       = (*key)(nil)
-	_ cipherset.Handshake = (*handshake)(nil)
+	_ driver.Driver  = (*driverImp)(nil)
+	_ driver.Self    = (*selfImp)(nil)
+	_ driver.Session = (*sessionImp)(nil)
 )
 
 const (
@@ -32,502 +31,339 @@ const (
 	lenToken = 16
 )
 
+var csidHeader = []byte{0x3a}
+var sha256Pool = sync.Pool{
+	New: func() interface{} { return sha256.New() },
+}
+
 func init() {
-	cipherset.Register(0x3a, &cipher{})
+	driver.Register(&driverImp{})
 }
 
-type cipher struct{}
-
-type handshake struct {
-	key     *key
-	lineKey *key
-	parts   cipherset.Parts
-	at      uint32
+type driverImp struct {
 }
 
-func (h *handshake) Parts() cipherset.Parts {
-	return h.parts
+type selfImp struct {
+	prv *[lenKey]byte
+	pub *[lenKey]byte
 }
 
-func (h *handshake) PublicKey() cipherset.Key {
-	return h.key
+type sessionImp struct {
+	// computed by NewSession()
+	self            *selfImp
+	localToken      [lenToken]byte
+	remoteKey       [lenKey]byte
+	localLineKeyPrv [lenKey]byte
+	localLineKeyPub [lenKey]byte
+	noncePrefix     [lenNonce - 8]byte
+	nonceSuffix     uint64
+
+	// computed by the first VerifyMessage
+	remoteLineKey     *[lenKey]byte
+	remoteToken       [lenToken]byte
+	lineEncryptionKey [lenKey]byte
+	lineDecryptionKey [lenKey]byte
 }
 
-func (h *handshake) At() uint32 { return h.at }
-func (*handshake) CSID() uint8  { return 0x3a }
-func (*cipher) CSID() uint8     { return 0x3a }
-
-func (c *cipher) DecodeKeyBytes(pub, prv []byte) (cipherset.Key, error) {
-	var (
-		pubKey *[lenKey]byte
-		prvKey *[lenKey]byte
-	)
-
-	if len(pub) != 0 {
-		if len(pub) != lenKey {
-			return nil, cipherset.ErrInvalidKey
-		}
-		pubKey = new([lenKey]byte)
-		copy((*pubKey)[:], pub)
-	}
-
-	if len(prv) != 0 {
-		if len(prv) != lenKey {
-			return nil, cipherset.ErrInvalidKey
-		}
-		prvKey = new([lenKey]byte)
-		copy((*prvKey)[:], prv)
-	}
-
-	return &key{pub: pubKey, prv: prvKey}, nil
+func (d *driverImp) CSID() uint8 {
+	return 0x3a
 }
 
-func (c *cipher) GenerateKey() (cipherset.Key, error) {
-	return generateKey()
-}
-
-func (c *cipher) NewState(localKey cipherset.Key) (cipherset.State, error) {
-	if k, ok := localKey.(*key); ok && k != nil && k.CanEncrypt() && k.CanSign() {
-		s := &state{localKey: k}
-		s.update()
-		return s, nil
-	}
-	return nil, cipherset.ErrInvalidKey
-}
-
-func (c *cipher) DecryptMessage(localKey, remoteKey cipherset.Key, p []byte) ([]byte, error) {
-	if len(p) < lenKey+lenNonce+lenAuth {
-		return nil, cipherset.ErrInvalidMessage
-	}
-
-	var (
-		ctLen            = len(p) - (lenKey + lenNonce + lenAuth)
-		out              = make([]byte, ctLen)
-		cs3aLocalKey, _  = localKey.(*key)
-		cs3aRemoteKey, _ = remoteKey.(*key)
-		mac              [lenAuth]byte
-		nonce            [lenNonce]byte
-		macKey           [lenKey]byte
-		agreedKey        [lenKey]byte
-		remoteLineKey    [lenKey]byte
-		ciphertext       []byte
-		ok               bool
-	)
-
-	if cs3aLocalKey == nil || cs3aRemoteKey == nil {
-		return nil, cipherset.ErrInvalidState
-	}
-
-	copy(remoteLineKey[:], p[:lenKey])
-	copy(nonce[:], p[lenKey:lenKey+lenNonce])
-	copy(mac[:], p[lenKey+lenNonce+ctLen:])
-	ciphertext = p[lenKey+lenNonce : lenKey+lenNonce+ctLen]
-
-	{ // make macKey
-		box.Precompute(&macKey, cs3aRemoteKey.pub, cs3aLocalKey.prv)
-
-		var (
-			sha = sha256.New()
-		)
-
-		sha.Write(p[lenKey : lenKey+lenNonce])
-		sha.Write(macKey[:])
-		sha.Sum(macKey[:0])
-	}
-
-	if !poly1305.Verify(&mac, p[:lenKey+lenNonce+ctLen], &macKey) {
-		return nil, cipherset.ErrInvalidMessage
-	}
-
-	// make agreedKey
-	box.Precompute(&agreedKey, &remoteLineKey, cs3aLocalKey.prv)
-
-	// decode BODY
-	out, ok = box.OpenAfterPrecomputation(out[:0], ciphertext, &nonce, &agreedKey)
-	if !ok {
-		return nil, cipherset.ErrInvalidMessage
-	}
-
-	return out, nil
-}
-
-func (c *cipher) DecryptHandshake(localKey cipherset.Key, p []byte) (cipherset.Handshake, error) {
-	if len(p) < lenKey+lenNonce+lenAuth {
-		return nil, cipherset.ErrInvalidMessage
-	}
-
-	var (
-		ctLen           = len(p) - (lenKey + lenNonce + lenAuth)
-		out             = bufpool.New()
-		handshake       = &handshake{}
-		cs3aLocalKey, _ = localKey.(*key)
-		at              uint32
-		hasAt           bool
-		mac             [lenAuth]byte
-		nonce           [lenNonce]byte
-		macKey          [lenKey]byte
-		agreedKey       [lenKey]byte
-		remoteKey       [lenKey]byte
-		remoteLineKey   [lenKey]byte
-		ciphertext      []byte
-		ok              bool
-	)
-
-	if cs3aLocalKey == nil {
-		return nil, cipherset.ErrInvalidState
-	}
-
-	copy(remoteLineKey[:], p[:lenKey])
-	copy(nonce[:], p[lenKey:lenKey+lenNonce])
-	copy(mac[:], p[lenKey+lenNonce+ctLen:])
-	ciphertext = p[lenKey+lenNonce : lenKey+lenNonce+ctLen]
-
-	// make agreedKey
-	box.Precompute(&agreedKey, &remoteLineKey, cs3aLocalKey.prv)
-
-	// decode BODY
-	outBuf, ok := box.OpenAfterPrecomputation(out.RawBytes(), ciphertext, &nonce, &agreedKey)
-	if !ok {
-		return nil, cipherset.ErrInvalidMessage
-	}
-	out.SetLen(len(outBuf))
-
-	{ // decode inner
-		inner, err := lob.Decode(out)
-		if err != nil {
-			return nil, cipherset.ErrInvalidMessage
-		}
-
-		at, hasAt = inner.Header().GetUint32("at")
-		if !hasAt {
-			return nil, cipherset.ErrInvalidMessage
-		}
-
-		delete(inner.Header().Extra, "at")
-
-		parts, err := cipherset.PartsFromHeader(inner.Header())
-		if err != nil {
-			return nil, cipherset.ErrInvalidMessage
-		}
-
-		if inner.BodyLen() != lenKey {
-			return nil, cipherset.ErrInvalidMessage
-		}
-		inner.Body(remoteKey[:0])
-
-		handshake.at = at
-		handshake.key = makeKey(nil, &remoteKey)
-		handshake.lineKey = makeKey(nil, &remoteLineKey)
-		handshake.parts = parts
-	}
-
-	{ // make macKey
-		box.Precompute(&macKey, &remoteKey, cs3aLocalKey.prv)
-
-		var (
-			sha = sha256.New()
-		)
-
-		sha.Write(p[lenKey : lenKey+lenNonce])
-		sha.Write(macKey[:])
-		sha.Sum(macKey[:0])
-	}
-
-	if !poly1305.Verify(&mac, p[:lenKey+lenNonce+ctLen], &macKey) {
-		return nil, cipherset.ErrInvalidMessage
-	}
-
-	return handshake, nil
-}
-
-type state struct {
-	mtx               sync.RWMutex
-	localKey          *key
-	remoteKey         *key
-	localLineKey      *key
-	remoteLineKey     *key
-	localToken        *cipherset.Token
-	remoteToken       *cipherset.Token
-	macKeyBase        *[lenKey]byte
-	lineEncryptionKey *[lenKey]byte
-	lineDecryptionKey *[lenKey]byte
-	nonce             *[lenNonce]byte
-	pktNoncePrefix    *[16]byte
-	pktNonceSuffix    uint64
-}
-
-func (*state) CSID() uint8 { return 0x3a }
-
-func (s *state) IsHigh() bool {
-	if s.localKey != nil && s.remoteKey != nil {
-		return bytes.Compare((*s.remoteKey.pub)[:], (*s.localKey.pub)[:]) < 0
-	}
-	return false
-}
-
-func (s *state) LocalToken() cipherset.Token {
-	if s.localToken != nil {
-		return *s.localToken
-	}
-	return cipherset.ZeroToken
-}
-
-func (s *state) RemoteToken() cipherset.Token {
-	if s.remoteToken != nil {
-		return *s.remoteToken
-	}
-	return cipherset.ZeroToken
-}
-
-func (s *state) SetRemoteKey(remoteKey cipherset.Key) error {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	if k, ok := remoteKey.(*key); ok && k != nil && k.CanEncrypt() {
-		s.remoteKey = k
-		s.update()
-		return nil
-	}
-
-	return cipherset.ErrInvalidKey
-}
-
-func (s *state) setRemoteLineKey(k *key) {
-	s.mtx.Lock()
-	defer s.mtx.Unlock()
-
-	s.remoteLineKey = k
-	s.update()
-}
-
-func (s *state) update() {
-
-	if s.nonce == nil {
-		s.nonce = new([lenNonce]byte)
-		io.ReadFull(rand.Reader, s.nonce[:])
-	}
-
-	if s.pktNoncePrefix == nil {
-		s.pktNoncePrefix = new([16]byte)
-		io.ReadFull(rand.Reader, s.pktNoncePrefix[:])
-	}
-
-	// generate a local line Key
-	if s.localLineKey == nil {
-		s.localLineKey, _ = generateKey()
-	}
-
-	// generate mac key base
-	if s.macKeyBase == nil && s.localKey.CanSign() && s.remoteKey.CanEncrypt() {
-		s.macKeyBase = new([lenKey]byte)
-		box.Precompute(s.macKeyBase, s.remoteKey.pub, s.localKey.prv)
-	}
-
-	// make local token
-	if s.localToken == nil && s.localLineKey != nil {
-		s.localToken = new(cipherset.Token)
-		sha := sha256.Sum256((*s.localLineKey.pub)[:lenToken])
-		copy((*s.localToken)[:], sha[:lenToken])
-	}
-
-	// make remote token
-	if s.remoteToken == nil && s.remoteLineKey != nil {
-		s.remoteToken = new(cipherset.Token)
-		sha := sha256.Sum256((*s.remoteLineKey.pub)[:lenToken])
-		copy((*s.remoteToken)[:], sha[:lenToken])
-	}
-
-	// generate line keys
-	if s.localToken != nil && s.remoteToken != nil &&
-		(s.lineEncryptionKey == nil || s.lineDecryptionKey == nil) {
-		var sharedKey [lenKey]byte
-		box.Precompute(&sharedKey, s.remoteLineKey.pub, s.localLineKey.prv)
-
-		sha := sha256.New()
-		s.lineEncryptionKey = new([lenKey]byte)
-		sha.Write(sharedKey[:])
-		sha.Write(s.localLineKey.pub[:])
-		sha.Write(s.remoteLineKey.pub[:])
-		sha.Sum((*s.lineEncryptionKey)[:0])
-
-		sha.Reset()
-		s.lineDecryptionKey = new([lenKey]byte)
-		sha.Write(sharedKey[:])
-		sha.Write(s.remoteLineKey.pub[:])
-		sha.Write(s.localLineKey.pub[:])
-		sha.Sum((*s.lineDecryptionKey)[:0])
-	}
-}
-
-func (s *state) macKey(seq []byte) *[32]byte {
-	if len(seq) != lenNonce {
-		return nil
-	}
-
-	if s.macKeyBase == nil {
-		return nil
-	}
-
-	var (
-		macKey = new([lenKey]byte)
-		sha    = sha256.New()
-	)
-	sha.Write(seq)
-	sha.Write((*s.macKeyBase)[:])
-	sha.Sum((*macKey)[:0])
-	return macKey
-}
-
-func (s *state) sign(sig, seq, p []byte) {
-	if len(sig) != lenAuth {
-		panic("invalid sig buffer len(sig) must be 16")
-	}
-
-	var (
-		sum [lenAuth]byte
-		key = s.macKey(seq)
-	)
-
-	if key == nil {
-		panic("unable to generate a signature")
-	}
-
-	poly1305.Sum(&sum, p, key)
-	copy(sig, sum[:])
-}
-
-func (s *state) verify(sig, seq, p []byte) bool {
-	if len(sig) != lenAuth {
-		return false
-	}
-
-	var (
-		sum [lenAuth]byte
-		key = s.macKey(seq)
-	)
-
-	if key == nil {
-		return false
-	}
-
-	copy(sum[:], sig)
-	return poly1305.Verify(&sum, p, key)
-}
-
-func (s *state) NeedsRemoteKey() bool {
-	return s.remoteKey == nil
-}
-
-func (s *state) CanEncryptMessage() bool {
-	return s.localKey != nil && s.remoteKey != nil && s.localLineKey != nil
-}
-
-func (s *state) CanEncryptHandshake() bool {
-	return s.CanEncryptMessage()
-}
-
-func (s *state) CanEncryptPacket() bool {
-	return s.lineEncryptionKey != nil && s.remoteToken != nil
-}
-
-func (s *state) CanDecryptMessage() bool {
-	return s.localKey != nil && s.remoteKey != nil && s.localLineKey != nil
-}
-
-func (s *state) CanDecryptHandshake() bool {
-	return s.localKey != nil && s.localLineKey != nil
-}
-
-func (s *state) CanDecryptPacket() bool {
-	return s.lineDecryptionKey != nil && s.localToken != nil
-}
-
-func (s *state) EncryptMessage(in []byte) ([]byte, error) {
-	var (
-		out       = bufpool.New().SetLen(lenKey + lenNonce + len(in) + box.Overhead + lenAuth)
-		raw       = out.RawBytes()
-		agreedKey [lenKey]byte
-		ctLen     int
-	)
-
-	if !s.CanEncryptMessage() {
-		panic("unable to encrypt message")
-	}
-
-	// copy public senderLineKey
-	copy(raw[:lenKey], (*s.localLineKey.pub)[:])
-
-	// copy the nonce
-	copy(raw[lenKey:lenKey+lenNonce], s.nonce[:lenNonce])
-
-	// make the agreedKey
-	box.Precompute(&agreedKey, s.remoteKey.pub, s.localLineKey.prv)
-
-	// encrypt p
-	ctLen = len(box.SealAfterPrecomputation(raw[lenKey+lenNonce:lenKey+lenNonce], in, s.nonce, &agreedKey))
-
-	// Sign message
-	s.sign(raw[lenKey+lenNonce+ctLen:], s.nonce[:lenNonce], raw[:lenKey+lenNonce+ctLen])
-
-	out.SetLen(lenKey + lenNonce + ctLen + lenAuth)
-
-	return out.Get(nil), nil
-}
-
-func (s *state) EncryptHandshake(at uint32, compact cipherset.Parts) ([]byte, error) {
-	pkt := lob.New(s.localKey.Public())
-	compact.ApplyToHeader(pkt.Header())
-	pkt.Header().SetUint32("at", at)
-	data, err := lob.Encode(pkt)
+func (d *driverImp) GenerateKey() (prv, pub []byte, err error) {
+	pubKey, prvKey, err := box.GenerateKey(rand.Reader)
 	if err != nil {
+		return nil, nil, err
+	}
+
+	prv = make([]byte, lenKey)
+	pub = make([]byte, lenKey)
+	copy(prv, prvKey[:])
+	copy(pub, pubKey[:])
+
+	return prv, pub, nil
+}
+
+func (d *driverImp) NewSelf(prv, pub []byte) (driver.Self, error) {
+	if len(prv) != lenKey || len(pub) != lenKey {
+		return nil, driver.ErrInvalidKey
+	}
+
+	prvKey := new([lenKey]byte)
+	pubKey := new([lenKey]byte)
+	copy(prvKey[:], prv)
+	copy(pubKey[:], pub)
+
+	return &selfImp{prv: prvKey, pub: pubKey}, nil
+}
+
+func (s *selfImp) DecryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
+	if pkt.BodyLen() < lenKey+lenNonce+lenAuth {
+		return nil, driver.ErrInvalidMessage
+	}
+
+	var (
+		ctLen         = pkt.BodyLen() - (lenKey + lenNonce + lenAuth)
+		body          = bufpool.New()
+		inner         = bufpool.New().SetLen(ctLen)
+		innerPkt      *lob.Packet
+		innerRaw      []byte
+		bodyRaw       []byte
+		nonce         [lenNonce]byte
+		agreedKey     [lenKey]byte
+		remoteLineKey [lenKey]byte
+		ciphertext    []byte
+		ok            bool
+		err           error
+	)
+
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+
+	copy(remoteLineKey[:], bodyRaw[:lenKey])
+	copy(nonce[:], bodyRaw[lenKey:lenKey+lenNonce])
+	ciphertext = bodyRaw[lenKey+lenNonce : lenKey+lenNonce+ctLen]
+
+	// make agreedKey
+	box.Precompute(&agreedKey, &remoteLineKey, s.prv)
+
+	// decode BODY
+	innerRaw, ok = box.OpenAfterPrecomputation(
+		inner.RawBytes()[:0], ciphertext, &nonce, &agreedKey)
+	if !ok {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	inner.SetLen(len(innerRaw))
+	innerPkt, err = lob.Decode(inner)
+	if err != nil {
+		body.Free()
+		inner.Free()
 		return nil, err
 	}
-	return s.EncryptMessage(data.Get(nil))
+
+	body.Free()
+	inner.Free()
+	return innerPkt, nil
 }
 
-func (s *state) ApplyHandshake(h cipherset.Handshake) bool {
-	var (
-		hs, _ = h.(*handshake)
-	)
+func (s *selfImp) NewSession(key []byte) (driver.Session, error) {
+	session := &sessionImp{}
+	session.self = s
 
-	if hs == nil {
-		return false
+	{ // copy the remote key
+		if len(key) != lenKey {
+			return nil, driver.ErrInvalidKey
+		}
+		copy(session.remoteKey[:], key)
 	}
 
-	if s.remoteKey != nil && *s.remoteKey.pub != *hs.key.pub {
-		return false
+	{ // make a random nonce prefix
+		_, err := io.ReadFull(rand.Reader, session.noncePrefix[:])
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	if s.remoteLineKey != nil && *s.remoteLineKey.pub != *hs.lineKey.pub {
-		s.remoteLineKey = nil
-		s.remoteToken = nil
-		s.lineDecryptionKey = nil
-		s.lineEncryptionKey = nil
+	{ // make local line keys
+		pubKey, prvKey, err := box.GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		session.localLineKeyPrv = *prvKey
+		session.localLineKeyPub = *pubKey
 	}
 
-	s.setRemoteLineKey(hs.lineKey)
-	if s.remoteKey == nil {
-		s.SetRemoteKey(hs.key)
+	{ // make the local token
+		sha := sha256.Sum256(session.localLineKeyPub[:lenToken])
+		copy(session.localToken[:], sha[:lenToken])
 	}
-	return true
+
+	return session, nil
 }
 
-func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
+func (s *sessionImp) LocalToken() [16]byte {
+	return s.localToken
+}
+
+func (s *sessionImp) RemoteToken() [16]byte {
+	return s.remoteToken
+}
+
+func (s *sessionImp) NegotiatedEphemeralKeys() bool {
+	return s.remoteLineKey != nil
+}
+
+func (s *sessionImp) VerifyMessage(pkt *lob.Packet) error {
+	if pkt.BodyLen() < lenKey+lenNonce+lenAuth {
+		return driver.ErrInvalidMessage
+	}
 
 	var (
-		outer   *lob.Packet
-		inner   *bufpool.Buffer
-		body    *bufpool.Buffer
-		bodyRaw []byte
-		nonce   [lenNonce]byte
-		ctLen   int
-		err     error
+		ctLen         = pkt.BodyLen() - (lenKey + lenNonce + lenAuth)
+		body          = bufpool.New()
+		bodyRaw       []byte
+		remoteLineKey [lenKey]byte
+		mac           [lenAuth]byte
+		macKey        [lenKey]byte
 	)
 
-	if !s.CanEncryptPacket() {
-		return nil, cipherset.ErrInvalidState
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+
+	copy(mac[:], bodyRaw[lenKey+lenNonce+ctLen:])
+	copy(remoteLineKey[:], bodyRaw[:lenKey])
+
+	{ // make macKey
+		box.Precompute(&macKey, &s.remoteKey, s.self.prv)
+
+		var (
+			sha = sha256Pool.Get().(hash.Hash)
+		)
+
+		sha.Write(bodyRaw[lenKey : lenKey+lenNonce])
+		sha.Write(macKey[:])
+		sha.Sum(macKey[:0])
+
+		sha.Reset()
+		sha256Pool.Put(sha)
+	}
+
+	// validate mac
+	if !poly1305.Verify(&mac, bodyRaw[:lenKey+lenNonce+ctLen], &macKey) {
+		body.Free()
+		return driver.ErrInvalidMessage
+	}
+
+	// verify remote line key
+	if s.remoteLineKey != nil && !bytes.Equal(s.remoteLineKey[:], remoteLineKey[:]) {
+		body.Free()
+		return driver.ErrSessionReset
+	}
+
+	// Message is valid:
+	// - now set the lineKey and token
+	// - make the encryption keys
+	if s.remoteLineKey == nil {
+		// copy remote token
+		s.remoteLineKey = new([lenKey]byte)
+		copy(s.remoteLineKey[:], remoteLineKey[:])
+
+		// make remote token
+		sha := sha256.Sum256(remoteLineKey[:lenToken])
+		copy(s.remoteToken[:], sha[:lenToken])
+
+		{ // make line encryption/decryption keys
+			var sharedKey [lenKey]byte
+			box.Precompute(&sharedKey, &remoteLineKey, &s.localLineKeyPrv)
+
+			sha := sha256Pool.Get().(hash.Hash)
+			sha.Write(sharedKey[:])
+			sha.Write(s.localLineKeyPub[:])
+			sha.Write(s.remoteLineKey[:])
+			sha.Sum(s.lineEncryptionKey[:0])
+
+			sha.Reset()
+			sha.Write(sharedKey[:])
+			sha.Write(s.remoteLineKey[:])
+			sha.Write(s.localLineKeyPub[:])
+			sha.Sum(s.lineDecryptionKey[:0])
+
+			sha.Reset()
+			sha256Pool.Put(sha)
+		}
+	}
+
+	body.Free()
+	return nil
+}
+
+func (s *sessionImp) EncryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
+	var (
+		inner       *bufpool.Buffer
+		outer       *lob.Packet
+		body        = bufpool.New()
+		bodyRaw     []byte
+		nonce       [lenNonce]byte
+		agreedKey   [lenKey]byte
+		macKey      [lenKey]byte
+		mac         [lenAuth]byte
+		nonceSuffix uint64
+		ctLen       int
+	)
+
+	inner, err := lob.Encode(pkt)
+	if err != nil {
+		body.Free()
+		return nil, err
+	}
+
+	body.SetLen(lenKey + lenNonce + inner.Len() + box.Overhead + lenAuth)
+	bodyRaw = body.RawBytes()
+
+	// make new nonce
+	copy(nonce[:], s.noncePrefix[:])
+	nonceSuffix = atomic.AddUint64(&s.nonceSuffix, 1)
+	binary.BigEndian.PutUint64(nonce[lenNonce-8:], nonceSuffix)
+
+	// copy public line key
+	copy(bodyRaw[:lenKey], s.localLineKeyPub[:])
+
+	// copy nonce
+	copy(bodyRaw[lenKey:lenKey+lenNonce], nonce[:])
+
+	// make the agreedKey
+	// this can be prcomputed during NewSession()
+	box.Precompute(&agreedKey, &s.remoteKey, &s.localLineKeyPrv)
+
+	// encrypt p
+	ctLen = len(box.SealAfterPrecomputation(
+		bodyRaw[lenKey+lenNonce:lenKey+lenNonce], inner.RawBytes(), &nonce, &agreedKey))
+
+	{ // make macKey
+		box.Precompute(&macKey, &s.remoteKey, s.self.prv)
+
+		var (
+			sha = sha256Pool.Get().(hash.Hash)
+		)
+
+		sha.Write(nonce[:])
+		sha.Write(macKey[:])
+		sha.Sum(macKey[:0])
+
+		sha.Reset()
+		sha256Pool.Put(sha)
+	}
+
+	// sign the message
+	poly1305.Sum(&mac, bodyRaw[:lenKey+lenNonce+ctLen], &macKey)
+	copy(bodyRaw[lenKey+lenNonce+ctLen:], mac[:])
+
+	body.SetLen(lenKey + lenNonce + ctLen + lenAuth)
+
+	outer = lob.New(body.RawBytes())
+	outer.Header().Bytes = csidHeader
+
+	inner.Free()
+	body.Free()
+	return outer, nil
+}
+
+func (s *sessionImp) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	var (
+		outer       *lob.Packet
+		inner       *bufpool.Buffer
+		body        *bufpool.Buffer
+		bodyRaw     []byte
+		nonce       [lenNonce]byte
+		nonceSuffix uint64
+		ctLen       int
+		err         error
+	)
+
+	if s.remoteLineKey == nil {
+		return nil, driver.ErrInvalidState
 	}
 	if pkt == nil {
 		return nil, nil
@@ -540,9 +376,9 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	}
 
 	// make nonce
-	copy(nonce[:], s.pktNoncePrefix[:])
-	nonceSuffix := atomic.AddUint64(&s.pktNonceSuffix, 1)
-	binary.BigEndian.PutUint64(nonce[16:], nonceSuffix)
+	copy(nonce[:], s.noncePrefix[:])
+	nonceSuffix = atomic.AddUint64(&s.nonceSuffix, 1)
+	binary.BigEndian.PutUint64(nonce[lenNonce-8:], nonceSuffix)
 
 	// alloc enough space
 	body = bufpool.New().SetLen(lenToken + lenNonce + inner.Len() + box.Overhead)
@@ -556,7 +392,7 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 
 	// encrypt inner packet
 	ctLen = len(box.SealAfterPrecomputation(
-		bodyRaw[lenToken+lenNonce:lenToken+lenNonce], inner.RawBytes(), &nonce, s.lineEncryptionKey))
+		bodyRaw[lenToken+lenNonce:lenToken+lenNonce], inner.RawBytes(), &nonce, &s.lineEncryptionKey))
 	body.SetLen(lenToken + lenNonce + ctLen)
 
 	outer = lob.New(body.RawBytes())
@@ -566,19 +402,16 @@ func (s *state) EncryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	return outer, nil
 }
 
-func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
-	s.mtx.RLock()
-	defer s.mtx.RUnlock()
-
-	if !s.CanDecryptPacket() {
-		return nil, cipherset.ErrInvalidState
+func (s *sessionImp) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
+	if s.remoteLineKey == nil {
+		return nil, driver.ErrInvalidState
 	}
 	if pkt == nil {
 		return nil, nil
 	}
 
 	if !pkt.Header().IsZero() || pkt.BodyLen() < lenToken+lenNonce {
-		return nil, cipherset.ErrInvalidPacket
+		return nil, driver.ErrInvalidPacket
 	}
 
 	var (
@@ -596,10 +429,10 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 	innerRaw = inner.RawBytes()
 
 	// compare token
-	if !bytes.Equal(bodyRaw[:lenToken], (*s.localToken)[:]) {
+	if !bytes.Equal(bodyRaw[:lenToken], s.localToken[:]) {
 		inner.Free()
 		body.Free()
-		return nil, cipherset.ErrInvalidPacket
+		return nil, driver.ErrInvalidPacket
 	}
 
 	// copy nonce
@@ -607,11 +440,11 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 
 	// decrypt inner packet
 	innerRaw, ok = box.OpenAfterPrecomputation(
-		innerRaw[:0], bodyRaw[lenToken+lenNonce:], &nonce, s.lineDecryptionKey)
+		innerRaw[:0], bodyRaw[lenToken+lenNonce:], &nonce, &s.lineDecryptionKey)
 	if !ok {
 		inner.Free()
 		body.Free()
-		return nil, cipherset.ErrInvalidPacket
+		return nil, driver.ErrInvalidPacket
 	}
 	inner.SetLen(len(innerRaw))
 
@@ -624,70 +457,5 @@ func (s *state) DecryptPacket(pkt *lob.Packet) (*lob.Packet, error) {
 
 	inner.Free()
 	body.Free()
-
 	return innerPkt, nil
-}
-
-type key struct {
-	pub *[32]byte
-	prv *[32]byte
-}
-
-func makeKey(prv, pub *[lenKey]byte) *key {
-	if prv != nil {
-		prvCopy := new([lenKey]byte)
-		copy((*prvCopy)[:], (*prv)[:])
-		prv = prvCopy
-	}
-
-	if pub != nil {
-		pubCopy := new([lenKey]byte)
-		copy((*pubCopy)[:], (*pub)[:])
-		pub = pubCopy
-	}
-
-	return &key{pub: pub, prv: prv}
-}
-
-func generateKey() (*key, error) {
-	pub, prv, err := box.GenerateKey(rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-
-	return makeKey(prv, pub), nil
-}
-
-func (k *key) CSID() uint8 { return 0x3a }
-
-func (k *key) Public() []byte {
-	if k == nil || k.pub == nil {
-		return nil
-	}
-
-	buf := make([]byte, lenKey)
-	copy(buf, (*k.pub)[:])
-	return buf
-}
-
-func (k *key) Private() []byte {
-	if k == nil || k.prv == nil {
-		return nil
-	}
-
-	buf := make([]byte, lenKey)
-	copy(buf, (*k.prv)[:])
-	return buf
-}
-
-func (k *key) String() string {
-	return base32util.EncodeToString((*k.pub)[:])
-}
-
-func (k *key) CanSign() bool {
-	return k != nil && k.prv != nil
-}
-
-func (k *key) CanEncrypt() bool {
-	return k != nil && k.pub != nil
 }

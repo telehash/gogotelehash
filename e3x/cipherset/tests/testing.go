@@ -12,298 +12,242 @@ import (
 
 type cipherTestSuite struct {
 	suite.Suite
-	cipher cipherset.Cipher
+	csid uint8
 }
 
-func Run(t *testing.T, c cipherset.Cipher) {
-	suite.Run(t, &cipherTestSuite{cipher: c})
+func Run(t *testing.T, csid uint8) {
+	suite.Run(t, &cipherTestSuite{csid: csid})
 }
 
 func (s *cipherTestSuite) TestMessage() {
 	var (
 		assert = s.Assertions
-		c      = s.cipher
 	)
 
 	var (
-		ka  cipherset.Key
-		kb  cipherset.Key
-		sa  cipherset.State
-		box []byte
-		msg []byte
-		err error
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt0  *lob.Packet
+		pkt1  *lob.Packet
+		pkt2  *lob.Packet
+		err   error
 	)
 
-	ka, err = c.GenerateKey()
+	keyA, err = cipherset.GenerateKey(s.csid)
 	assert.NoError(err)
-	assert.NotNil(ka)
+	assert.NotNil(keyA)
 
-	sa, err = c.NewState(ka)
+	keyB, err = cipherset.GenerateKey(s.csid)
 	assert.NoError(err)
-	assert.NotNil(sa)
-	assert.False(sa.CanEncryptMessage())
-	assert.False(sa.CanEncryptHandshake())
-	assert.False(sa.CanDecryptMessage())
-	assert.True(sa.CanDecryptHandshake())
-	assert.True(sa.NeedsRemoteKey())
+	assert.NotNil(keyB)
 
-	kb, err = c.GenerateKey()
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyA})
 	assert.NoError(err)
-	assert.NotNil(kb)
+	assert.NotNil(selfA)
 
-	err = sa.SetRemoteKey(kb)
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyB})
 	assert.NoError(err)
-	assert.True(sa.CanEncryptMessage())
-	assert.True(sa.CanEncryptHandshake())
-	assert.True(sa.CanDecryptMessage())
-	assert.True(sa.CanDecryptHandshake())
-	assert.False(sa.NeedsRemoteKey())
+	assert.NotNil(selfB)
 
-	box, err = sa.EncryptMessage([]byte("Hello World!"))
+	sessA, err = selfA.NewSession(map[uint8][]byte{s.csid: keyB.Public})
 	assert.NoError(err)
-	assert.NotNil(box)
+	assert.NotNil(sessA)
+	assert.False(sessA.NegotiatedEphemeralKeys())
 
-	msg, err = c.DecryptMessage(kb, ka, box)
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessA.EncryptMessage(pkt0)
 	assert.NoError(err)
-	assert.NotNil(msg)
-	assert.Equal([]byte("Hello World!"), msg)
-}
+	assert.NotNil(pkt1)
 
-func (s *cipherTestSuite) TestHandshake() {
-	var (
-		assert = s.Assertions
-		c      = s.cipher
-	)
-
-	var (
-		ka  cipherset.Key
-		kb  cipherset.Key
-		sa  cipherset.State
-		sb  cipherset.State
-		ha  cipherset.Handshake
-		hb  cipherset.Handshake
-		box []byte
-		err error
-		ok  bool
-	)
-
-	ka, err = c.GenerateKey()
+	pkt2, err = selfB.DecryptMessage(pkt1)
 	assert.NoError(err)
-	assert.NotNil(ka)
+	assert.NotNil(pkt2)
+	assert.Equal(pkt0, pkt2)
 
-	sa, err = c.NewState(ka)
+	sessB, err = selfB.NewSession(map[uint8][]byte{s.csid: keyA.Public})
 	assert.NoError(err)
-	assert.NotNil(sa)
-	assert.False(sa.CanEncryptMessage())
-	assert.False(sa.CanEncryptHandshake())
-	assert.False(sa.CanDecryptMessage())
-	assert.True(sa.CanDecryptHandshake())
-	assert.True(sa.NeedsRemoteKey())
+	assert.NotNil(sessB)
+	assert.False(sessB.NegotiatedEphemeralKeys())
 
-	kb, err = c.GenerateKey()
+	err = sessB.VerifyMessage(pkt1)
 	assert.NoError(err)
-	assert.NotNil(kb)
-
-	err = sa.SetRemoteKey(kb)
-	assert.NoError(err)
-	assert.True(sa.CanEncryptMessage())
-	assert.True(sa.CanEncryptHandshake())
-	assert.True(sa.CanDecryptMessage())
-	assert.True(sa.CanDecryptHandshake())
-	assert.False(sa.NeedsRemoteKey())
-
-	box, err = sa.EncryptHandshake(1, cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"})
-	assert.NoError(err)
-	assert.NotNil(box)
-
-	hb, err = c.DecryptHandshake(kb, box)
-	assert.NoError(err)
-	if assert.NotNil(hb) {
-		assert.Equal(ka.Public(), hb.PublicKey().Public())
-		assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, hb.Parts())
-		assert.Equal(uint32(1), hb.At())
-	}
-
-	sb, err = c.NewState(kb)
-	assert.NoError(err)
-	if assert.NotNil(sb) {
-		assert.False(sb.CanEncryptMessage())
-		assert.False(sb.CanEncryptHandshake())
-		assert.False(sb.CanDecryptMessage())
-		assert.True(sb.CanDecryptHandshake())
-		assert.True(sb.NeedsRemoteKey())
-	}
-
-	if sb != nil && hb != nil {
-		ok = sb.ApplyHandshake(hb)
-		assert.True(ok)
-		assert.True(sb.CanEncryptMessage())
-		assert.True(sb.CanEncryptHandshake())
-		assert.True(sb.CanDecryptMessage())
-		assert.True(sb.CanDecryptHandshake())
-		assert.False(sb.NeedsRemoteKey())
-	}
-
-	box, err = sb.EncryptHandshake(1, cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"})
-	assert.NoError(err)
-	assert.NotNil(box)
-
-	ha, err = c.DecryptHandshake(ka, box)
-	assert.NoError(err)
-	assert.NotNil(ha)
-	assert.Equal(kb.Public(), ha.PublicKey().Public())
-	assert.Equal(cipherset.Parts{0x01: "foobarzzzzfoobarzzzzfoobarzzzzfoobarzzzzfoobarzzzz34"}, ha.Parts())
-	assert.Equal(uint32(1), ha.At())
-
-	ok = sa.ApplyHandshake(ha)
-	assert.True(ok)
-	assert.True(sa.CanEncryptMessage())
-	assert.True(sa.CanEncryptHandshake())
-	assert.True(sa.CanDecryptMessage())
-	assert.True(sa.CanDecryptHandshake())
-	assert.False(sa.NeedsRemoteKey())
+	assert.True(sessB.NegotiatedEphemeralKeys())
 }
 
 func (s *cipherTestSuite) TestPacketEncryption() {
 	var (
 		assert = s.Assertions
-		c      = s.cipher
 	)
 
 	var (
-		ka  cipherset.Key
-		kb  cipherset.Key
-		sa  cipherset.State
-		sb  cipherset.State
-		ha  cipherset.Handshake
-		hb  cipherset.Handshake
-		pkt *lob.Packet
-		box []byte
-		err error
-		ok  bool
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt0  *lob.Packet
+		pkt1  *lob.Packet
+		pkt2  *lob.Packet
+		err   error
 	)
 
-	ka, err = c.GenerateKey()
+	keyA, err = cipherset.GenerateKey(s.csid)
 	assert.NoError(err)
-	kb, err = c.GenerateKey()
-	assert.NoError(err)
+	assert.NotNil(keyA)
 
-	sa, err = c.NewState(ka)
+	keyB, err = cipherset.GenerateKey(s.csid)
 	assert.NoError(err)
-	sb, err = c.NewState(kb)
-	assert.NoError(err)
+	assert.NotNil(keyB)
 
-	err = sa.SetRemoteKey(kb)
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyA})
 	assert.NoError(err)
-	box, err = sa.EncryptHandshake(1, nil)
-	assert.NoError(err)
-	hb, err = c.DecryptHandshake(kb, box)
-	assert.NoError(err)
-	ok = sb.ApplyHandshake(hb)
-	assert.True(ok)
-	box, err = sb.EncryptHandshake(1, nil)
-	assert.NoError(err)
-	ha, err = c.DecryptHandshake(ka, box)
-	assert.NoError(err)
-	ok = sa.ApplyHandshake(ha)
-	assert.True(ok)
+	assert.NotNil(selfA)
 
-	pkt = lob.New([]byte("Hello world!"))
-	pkt.Header().SetInt("foo", 0xbeaf)
-	pkt, err = sa.EncryptPacket(pkt)
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyB})
 	assert.NoError(err)
-	assert.NotNil(pkt)
-	assert.Nil(pkt.Header().Bytes)
-	assert.True(pkt.Header().IsZero())
-	assert.NotEmpty(pkt.Body)
+	assert.NotNil(selfB)
 
-	pkt, err = sb.DecryptPacket(pkt)
+	sessA, err = selfA.NewSession(map[uint8][]byte{s.csid: keyB.Public})
 	assert.NoError(err)
-	assert.NotNil(pkt)
-	assert.Nil(pkt.Header().Bytes)
-	assert.Equal(&lob.Header{Extra: map[string]interface{}{"foo": 0xbeaf}}, pkt.Header())
-	assert.Equal([]byte("Hello world!"), pkt.Body(nil))
+	assert.NotNil(sessA)
+	assert.False(sessA.NegotiatedEphemeralKeys())
 
-	pkt = lob.New([]byte("Bye world!"))
-	pkt.Header().SetInt("bar", 0xdead)
-	pkt, err = sb.EncryptPacket(pkt)
+	sessB, err = selfB.NewSession(map[uint8][]byte{s.csid: keyA.Public})
 	assert.NoError(err)
-	assert.NotNil(pkt)
-	assert.Nil(pkt.Header().Bytes)
-	assert.True(pkt.Header().IsZero())
-	assert.NotEmpty(pkt.Body)
+	assert.NotNil(sessB)
+	assert.False(sessB.NegotiatedEphemeralKeys())
 
-	pkt, err = sa.DecryptPacket(pkt)
+	// Message: A => B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessA.EncryptMessage(pkt0)
 	assert.NoError(err)
-	assert.NotNil(pkt)
-	assert.Nil(pkt.Header().Bytes)
-	assert.Equal(&lob.Header{Extra: map[string]interface{}{"bar": 0xdead}}, pkt.Header())
-	assert.Equal([]byte("Bye world!"), pkt.Body(nil))
+	assert.NotNil(pkt1)
+
+	pkt2, err = selfB.DecryptMessage(pkt1)
+	assert.NoError(err)
+	assert.NotNil(pkt2)
+	assert.Equal(pkt0, pkt2)
+
+	err = sessB.VerifyMessage(pkt1)
+	assert.NoError(err)
+	assert.True(sessB.NegotiatedEphemeralKeys())
+
+	// Message: A <= B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessB.EncryptMessage(pkt0)
+	assert.NoError(err)
+	assert.NotNil(pkt1)
+
+	pkt2, err = selfA.DecryptMessage(pkt1)
+	assert.NoError(err)
+	assert.NotNil(pkt2)
+	assert.Equal(pkt0, pkt2)
+
+	err = sessA.VerifyMessage(pkt1)
+	assert.NoError(err)
+	assert.True(sessA.NegotiatedEphemeralKeys())
+
+	// Packet: A => B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessA.EncryptPacket(pkt0)
+	assert.NoError(err)
+	assert.NotNil(pkt1)
+
+	pkt2, err = sessB.DecryptPacket(pkt1)
+	assert.NoError(err)
+	assert.NotNil(pkt2)
+	assert.Equal(pkt0, pkt2)
+
+	// Packet: A <= B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessB.EncryptPacket(pkt0)
+	assert.NoError(err)
+	assert.NotNil(pkt1)
+
+	pkt2, err = sessA.DecryptPacket(pkt1)
+	assert.NoError(err)
+	assert.NotNil(pkt2)
+	assert.Equal(pkt0, pkt2)
 }
 
-func BenchmarkPacketEncryption(b *testing.B, c cipherset.Cipher) {
-	pkt := lob.New(bytes.Repeat([]byte{'x'}, 1024))
+func BenchmarkPacketEncryption(b *testing.B, csid uint8) {
+	var (
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt0  *lob.Packet
+		pkt1  *lob.Packet
+		pkt   = lob.New(bytes.Repeat([]byte{'x'}, 1024))
+		err   error
+	)
 
-	lkey, err := c.GenerateKey()
+	keyA, err = cipherset.GenerateKey(csid)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	rkey, err := c.GenerateKey()
+	keyB, err = cipherset.GenerateKey(csid)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	lstate, err := c.NewState(lkey)
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	rstate, err := c.NewState(rkey)
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	err = lstate.SetRemoteKey(rkey)
+	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hs, err := lstate.EncryptHandshake(1, nil)
+	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hsMsg, err := c.DecryptHandshake(rkey, hs)
+	// Message: A => B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessA.EncryptMessage(pkt0)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	ok := rstate.ApplyHandshake(hsMsg)
-	if !ok {
-		b.Fatal("handshake failed")
-	}
-
-	hs, err = rstate.EncryptHandshake(1, nil)
+	err = sessB.VerifyMessage(pkt1)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hsMsg, err = c.DecryptHandshake(lkey, hs)
+	// Message: A <= B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessB.EncryptMessage(pkt0)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	ok = lstate.ApplyHandshake(hsMsg)
-	if !ok {
-		b.Fatal("handshake failed")
+	err = sessA.VerifyMessage(pkt1)
+	if err != nil {
+		panic(err)
 	}
 
 	b.SetBytes(1024)
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		epkt, err := lstate.EncryptPacket(pkt)
+		epkt, err := sessA.EncryptPacket(pkt)
 		epkt.Free()
 		if err != nil {
 			b.Fatal(err)
@@ -311,65 +255,75 @@ func BenchmarkPacketEncryption(b *testing.B, c cipherset.Cipher) {
 	}
 }
 
-func BenchmarkPacketDecryption(b *testing.B, c cipherset.Cipher) {
-	pkt := lob.New(bytes.Repeat([]byte{'x'}, 1024))
+func BenchmarkPacketDecryption(b *testing.B, csid uint8) {
+	var (
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt0  *lob.Packet
+		pkt1  *lob.Packet
+		pkt   = lob.New(bytes.Repeat([]byte{'x'}, 1024))
+		err   error
+	)
 
-	lkey, err := c.GenerateKey()
+	keyA, err = cipherset.GenerateKey(csid)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	rkey, err := c.GenerateKey()
+	keyB, err = cipherset.GenerateKey(csid)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	lstate, err := c.NewState(lkey)
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	rstate, err := c.NewState(rkey)
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	err = lstate.SetRemoteKey(rkey)
+	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hs, err := lstate.EncryptHandshake(1, nil)
+	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hsMsg, err := c.DecryptHandshake(rkey, hs)
+	// Message: A => B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessA.EncryptMessage(pkt0)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	ok := rstate.ApplyHandshake(hsMsg)
-	if !ok {
-		b.Fatal("handshake failed")
-	}
-
-	hs, err = rstate.EncryptHandshake(1, nil)
+	err = sessB.VerifyMessage(pkt1)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	hsMsg, err = c.DecryptHandshake(lkey, hs)
+	// Message: A <= B
+	pkt0 = lob.New([]byte("Hello World!"))
+	pkt1, err = sessB.EncryptMessage(pkt0)
 	if err != nil {
-		b.Fatal(err)
+		panic(err)
 	}
 
-	ok = lstate.ApplyHandshake(hsMsg)
-	if !ok {
-		b.Fatal("handshake failed")
+	err = sessA.VerifyMessage(pkt1)
+	if err != nil {
+		panic(err)
 	}
 
-	pkt, err = rstate.EncryptPacket(pkt)
+	pkt, err = sessB.EncryptPacket(pkt)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -378,8 +332,176 @@ func BenchmarkPacketDecryption(b *testing.B, c cipherset.Cipher) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		epkt, err := lstate.DecryptPacket(pkt)
+		epkt, err := sessA.DecryptPacket(pkt)
 		epkt.Free()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkMessageEncryption(b *testing.B, csid uint8) {
+	var (
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		sessA *cipherset.Session
+		pkt   = lob.New(bytes.Repeat([]byte{'x'}, 1024))
+		err   error
+	)
+
+	keyA, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	keyB, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	if err != nil {
+		panic(err)
+	}
+
+	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	if err != nil {
+		panic(err)
+	}
+
+	b.SetBytes(1024)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		epkt, err := sessA.EncryptMessage(pkt)
+		epkt.Free()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkMessageDecryption(b *testing.B, csid uint8) {
+	var (
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt1  *lob.Packet
+		pkt   = lob.New(bytes.Repeat([]byte{'x'}, 1024))
+		err   error
+	)
+
+	keyA, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	keyB, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	if err != nil {
+		panic(err)
+	}
+
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	if err != nil {
+		panic(err)
+	}
+
+	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	if err != nil {
+		panic(err)
+	}
+
+	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	if err != nil {
+		panic(err)
+	}
+
+	// Message: A => B
+	pkt1, err = sessA.EncryptMessage(pkt)
+	if err != nil {
+		panic(err)
+	}
+
+	err = sessB.VerifyMessage(pkt1)
+	if err != nil {
+		panic(err)
+	}
+
+	b.SetBytes(1024)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		epkt, err := selfB.DecryptMessage(pkt1)
+		epkt.Free()
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkMessageVerification(b *testing.B, csid uint8) {
+	var (
+		keyA  *cipherset.PrivateKey
+		keyB  *cipherset.PrivateKey
+		selfA *cipherset.Self
+		selfB *cipherset.Self
+		sessA *cipherset.Session
+		sessB *cipherset.Session
+		pkt1  *lob.Packet
+		pkt   = lob.New(bytes.Repeat([]byte{'x'}, 1024))
+		err   error
+	)
+
+	keyA, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	keyB, err = cipherset.GenerateKey(csid)
+	if err != nil {
+		panic(err)
+	}
+
+	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	if err != nil {
+		panic(err)
+	}
+
+	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	if err != nil {
+		panic(err)
+	}
+
+	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	if err != nil {
+		panic(err)
+	}
+
+	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	if err != nil {
+		panic(err)
+	}
+
+	// Message: A => B
+	pkt1, err = sessA.EncryptMessage(pkt)
+	if err != nil {
+		panic(err)
+	}
+
+	b.SetBytes(1024)
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		err := sessB.VerifyMessage(pkt1)
 		if err != nil {
 			b.Fatal(err)
 		}

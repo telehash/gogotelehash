@@ -16,43 +16,6 @@ func Register(csid uint8, c Cipher) {
 	ciphers[csid] = c
 }
 
-func GenerateKey(csid uint8) (Key, error) {
-	c := ciphers[csid]
-	if c == nil {
-		return nil, ErrUnknownCSID
-	}
-
-	return c.GenerateKey()
-}
-
-func GenerateKeys(csids ...uint8) (Keys, error) {
-	keys := make(Keys)
-
-	if len(csids) == 0 {
-		for csid, cipher := range ciphers {
-			key, err := cipher.GenerateKey()
-			if err != nil {
-				return nil, err
-			}
-
-			keys[csid] = key
-		}
-
-		return keys, nil
-	}
-
-	for _, csid := range csids {
-		key, err := GenerateKey(csid)
-		if err != nil {
-			return nil, err
-		}
-
-		keys[csid] = key
-	}
-
-	return keys, nil
-}
-
 func DecodeKey(csid uint8, pub, prv string) (Key, error) {
 	c := ciphers[csid]
 

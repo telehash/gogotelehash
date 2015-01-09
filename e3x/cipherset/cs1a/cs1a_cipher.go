@@ -5,60 +5,408 @@ import (
 	"bytes"
 	"crypto/aes"
 	Cipher "crypto/cipher"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"io"
+	"math/big"
 	"sync"
 
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/eccp"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/ecdh"
 	"github.com/telehash/gogotelehash/e3x/cipherset/cs1a/secp160r1"
+	"github.com/telehash/gogotelehash/e3x/cipherset/driver"
 	"github.com/telehash/gogotelehash/internal/lob"
 	"github.com/telehash/gogotelehash/internal/util/bufpool"
 )
 
 var (
-	_ cipherset.Cipher    = (*cipher)(nil)
-	_ cipherset.State     = (*state)(nil)
-	_ cipherset.Key       = (*key)(nil)
-	_ cipherset.Handshake = (*handshake)(nil)
+	_ driver.Driver  = (*driverImp)(nil)
+	_ driver.Self    = (*selfImp)(nil)
+	_ driver.Session = (*sessionImp)(nil)
 )
 
+var csidHeader = []byte{0x1a}
+
 func init() {
-	cipherset.Register(0x1a, &cipher{})
+	driver.Register(&driverImp{})
 }
 
-type cipher struct{}
+type driverImp struct{}
 
-type handshake struct {
-	key     *key
-	lineKey *key
-	parts   cipherset.Parts
-	at      uint32
+type selfImp struct {
+	prv []byte
+	x   *big.Int
+	y   *big.Int
 }
 
-func (h *handshake) Parts() cipherset.Parts {
-	return h.parts
+type sessionImp struct {
+	// computed by NewSession()
+	self            *selfImp
+	localToken      [16]byte
+	remoteKeyX      *big.Int
+	remoteKeyY      *big.Int
+	localLineKeyPrv []byte
+	localLineKeyPub []byte
+	localLineKeyX   *big.Int
+	localLineKeyY   *big.Int
+
+	// computed by the first VerifyMessage
+	remoteToken       [16]byte
+	remoteLineKeyPub  []byte
+	remoteLineKeyX    *big.Int
+	remoteLineKeyY    *big.Int
+	lineEncryptionKey []byte
+	lineDecryptionKey []byte
 }
 
-func (h *handshake) PublicKey() cipherset.Key {
-	return h.key
+func (d *driverImp) CSID() uint8 {
+	return 0x1a
 }
 
-func (h *handshake) At() uint32 { return h.at }
-func (*handshake) CSID() uint8  { return 0x1a }
-func (*cipher) CSID() uint8     { return 0x1a }
+func (d *driverImp) GenerateKey() (prv, pub []byte, err error) {
+	prv, x, y, err := elliptic.GenerateKey(secp160r1.P160(), rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
 
-func (c *cipher) DecodeKeyBytes(pub, prv []byte) (cipherset.Key, error) {
-	return decodeKeyBytes(pub, prv)
+	pub = eccp.Marshal(secp160r1.P160(), x, y)
+	return prv, pub, nil
 }
 
-func (c *cipher) GenerateKey() (cipherset.Key, error) {
-	return generateKey()
+func (d *driverImp) NewSelf(prv, pub []byte) (driver.Self, error) {
+	if len(prv) == 0 || len(pub) == 0 {
+		return nil, driver.ErrInvalidKey
+	}
+
+	self := &selfImp{}
+
+	self.prv = make([]byte, len(prv))
+	copy(self.prv, prv)
+
+	self.x, self.y = eccp.Unmarshal(secp160r1.P160(), pub)
+	if self.x == nil || self.y == nil {
+		return nil, driver.ErrInvalidKey
+	}
+
+	return self, nil
 }
+
+func (s *selfImp) DecryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
+	if len(p) < 21+4+4 {
+		return nil, cipherset.ErrInvalidMessage
+	}
+
+	var (
+		ctLen    = pkt.BodyLen() - (21 + 4 + 4)
+		body     = bufpool.New()
+		inner    = bufpool.New().SetLen(ctLen)
+		innerPkt *lob.Packet
+		innerRaw []byte
+		bodyRaw  []byte
+		ephemX   *big.Int
+		ephemY   *big.Int
+		shared   []byte
+
+		out              = make([]byte, ctLen)
+		cs1aLocalKey, _  = localKey.(*key)
+		cs1aRemoteKey, _ = remoteKey.(*key)
+	)
+
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+
+	var (
+		remoteLineKey = bodyRaw[:21]
+		iv            = bodyRaw[21 : 21+4]
+		ciphertext    = bodyRaw[21+4 : 21+4+ctLen]
+		mac           = bodyRaw[21+4+ctLen:]
+		aesIv         [16]byte
+	)
+
+	copy(aesIv[:], iv)
+
+	ephemX, ephemY = eccp.Unmarshal(secp160r1.P160(), remoteLineKey)
+	if ephemX == nil || ephemY == nil {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	shared = ecdh.ComputeShared(secp160r1.P160(), ephemX, ephemY, s.prv)
+	if shared == nil {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	aharedSum := sha256.Sum256(shared)
+	aesKey := fold(aharedSum[:], 16)
+	if aesKey == nil {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	aesBlock, err := aes.NewCipher(aesKey)
+	if err != nil {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	aes := cipher.NewCTR(aesBlock, aesIv[:])
+	if aes == nil {
+		body.Free()
+		inner.Free()
+		return nil, driver.ErrInvalidMessage
+	}
+
+	aes.XORKeyStream(inner.RawBytes(), ciphertext)
+
+	innerPkt, err = lob.Decode(inner)
+	if err != nil {
+		body.Free()
+		inner.Free()
+		return nil, err
+	}
+
+	body.Free()
+	inner.Free()
+	return innerPkt, nil
+}
+
+func (s *selfImp) NewSession(key []byte) (driver.Session, error) {
+	session := &sessionImp{}
+	session.self = s
+
+	{ // copy the remote key
+		if len(key) == 0 {
+			return nil, driver.ErrInvalidKey
+		}
+
+		session.remoteKeyX, session.remoteKeyY = eccp.Unmarshal(secp160r1.P160(), key)
+		if session.remoteKeyX == nil || session.remoteKeyY == nil {
+			return nil, driver.ErrInvalidKey
+		}
+	}
+
+	{ // make local line key
+		prv, x, y, err := elliptic.GenerateKey(secp160r1.P160(), rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		session.localLineKeyPrv = prv
+		session.localLineKeyPub = eccp.Marshal(secp160r1.P160(), x, y)
+		session.localLineKeyX = x
+		session.localLineKeyY = y
+	}
+
+	{ // make local token
+		sha := sha256.Sum256(session.localLineKeyPub[:16])
+		copy(session.localToken[:], sha[:16])
+	}
+
+	return session, nil
+}
+
+func (s *sessionImp) LocalToken() [16]byte {
+	return s.localToken
+}
+
+func (s *sessionImp) RemoteToken() [16]byte {
+	return s.remoteToken
+}
+
+func (s *sessionImp) NegotiatedEphemeralKeys() bool {
+	return s.remoteLineKeyPub != nil
+}
+
+func (s *sessionImp) VerifyMessage(pkt *lob.Packet) error {
+	if len(p) < 21+4+4 {
+		return nil, cipherset.ErrInvalidMessage
+	}
+
+	var (
+		ctLen   = pkt.BodyLen() - (21 + 4 + 4)
+		body    = bufpool.New()
+		bodyRaw []byte
+		ephemX  *big.Int
+		ephemY  *big.Int
+		shared  []byte
+
+		out              = make([]byte, ctLen)
+		cs1aLocalKey, _  = localKey.(*key)
+		cs1aRemoteKey, _ = remoteKey.(*key)
+	)
+
+	pkt.Body(body.SetLen(pkt.BodyLen()).RawBytes()[:0])
+	bodyRaw = body.RawBytes()
+
+	var (
+		remoteLineKey = bodyRaw[:21]
+		iv            = bodyRaw[21 : 21+4]
+		ciphertext    = bodyRaw[21+4 : 21+4+ctLen]
+		mac           = bodyRaw[21+4+ctLen:]
+		aesIv         [16]byte
+		macKey        []byte
+	)
+
+	// make makeKey
+	macKey = ecdh.ComputeShared(secp160r1.P160(),
+		s.remoteKeyX, s.remoteKeyY, s.self.prv)
+	macKey = append(macKey, iv...)
+
+	// verify mac
+	h := hmac.New(sha256.New, macKey)
+	h.Write(bodyRaw[:21+4+ctLen])
+	if subtle.ConstantTimeCompare(mac, fold(h.Sum(nil), 4)) != 1 {
+		body.Free()
+		return driver.ErrInvalidMessage
+	}
+
+	// verify remote line key
+	if s.remoteLineKeyPub != nil && !bytes.Equal(s.remoteLineKeyPub, remoteLineKey) {
+		body.Free()
+		return driver.ErrSessionReset
+	}
+
+	ephemX, ephemY = eccp.Unmarshal(secp160r1.P160(), remoteLineKey)
+	if ephemX == nil || ephemY == nil {
+		body.Free()
+		return driver.ErrInvalidMessage
+	}
+
+	// Message is valid:
+	// - now set the lineKey and token
+	// - make the encryption keys
+	if s.remoteLineKeyPub == nil {
+		// copy remote token
+		s.remoteLineKeyPub = new([]byte, len(remoteLineKey))
+		copy(s.remoteLineKeyPub, remoteLineKey)
+		s.remoteLineKeyX = ephemX
+		s.remoteLineKeyY = ephemY
+
+		// make remote token
+		sha := sha256.Sum256(remoteLineKey[:16])
+		copy(s.remoteToken[:], sha[:16])
+
+		{ // make line encryption/decryption keys
+			sharedKey := ecdh.ComputeShared(
+				secp160r1.P160(),
+				s.remoteLineKeyX, s.remoteLineKeyY,
+				s.localLineKeyPrv)
+
+			sha := sha256.New()
+			sha.Write(sharedKey)
+			sha.Write(s.localLineKeyPub)
+			sha.Write(s.remoteLineKeyPub)
+			s.lineEncryptionKey = fold(sha.Sum(nil), 16)
+
+			sha.Reset()
+			sha.Write(sharedKey)
+			sha.Write(s.remoteLineKeyPub)
+			sha.Write(s.localLineKeyPub)
+			s.lineDecryptionKey = fold(sha.Sum(nil), 16)
+		}
+	}
+
+	body.Free()
+	return nil
+}
+
+func (s *sessionImp) EncryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
+	var (
+		inner   *bufpool.Buffer
+		outer   *lob.Packet
+		body    = bufpool.New()
+		bodyRaw []byte
+		ctLen   int
+		err     error
+	)
+
+	inner, err = lob.Encode(pkt)
+	if err != nil {
+		body.Free()
+		return nil, err
+	}
+	ctLen = inner.Len()
+
+	body.SetLen(21 + 4 + ctLen + 4)
+	bodyRaw = body.RawBytes()
+
+	// copy public senderLineKey
+	copy(bodyRaw[:21], s.localLineKeyPub)
+
+	// copy the nonce
+	_, err = io.ReadFull(rand.Reader, bodyRaw[21:21+4])
+	if err != nil {
+		body.Free()
+		inner.Free()
+		return nil, err
+	}
+
+	{ // encrypt inner
+		shared := ecdh.ComputeShared(
+			secp160r1.P160(),
+			s.remoteKeyX, s.remoteKeyY,
+			s.localLineKeyPrv)
+		if shared == nil {
+			body.Free()
+			inner.Free()
+			return nil, driver.ErrInvalidMessage
+		}
+
+		aharedSum := sha256.Sum256(shared)
+		aesKey := fold(aharedSum[:], 16)
+		if aesKey == nil {
+			body.Free()
+			inner.Free()
+			return nil, driver.ErrInvalidMessage
+		}
+
+		aesBlock, err := aes.NewCipher(aesKey)
+		if err != nil {
+			body.Free()
+			inner.Free()
+			return nil, err
+		}
+
+		var aesIv [16]byte
+		copy(aesIv[:], bodyRaw[21:21+4])
+
+		aes := Cipher.NewCTR(aesBlock, aesIv[:])
+		if aes == nil {
+			body.Free()
+			inner.Free()
+			return nil, driver.ErrInvalidMessage
+		}
+
+		aes.XORKeyStream(bodyRaw[21+4:21+4+ctLen], inner.RawBytes())
+	}
+
+	{ // compute HMAC
+		macKey := ecdh.ComputeShared(secp160r1.P160(),
+			s.remoteKeyX, s.remoteKeyY, s.self.prv)
+		macKey = append(macKey, bodyRaw[21:21+4]...)
+
+		h := hmac.New(sha256.New, macKey)
+		h.Write(bodyRaw[:21+4+ctLen])
+		sum := h.Sum(nil)
+		copy(bodyRaw[21+4+ctLen:], fold(sum, 4))
+	}
+
+	outer = lob.New(body.RawBytes())
+	outer.Header().Bytes = csidHeader
+
+	inner.Free()
+	body.Free()
+	return outer, nil
+}
+
+// ========================================================================== //
 
 func (c *cipher) NewState(localKey cipherset.Key) (cipherset.State, error) {
 	if k, ok := localKey.(*key); ok && k != nil && k.CanEncrypt() && k.CanSign() {

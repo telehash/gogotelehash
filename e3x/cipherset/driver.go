@@ -1,18 +1,7 @@
 package cipherset
 
 import (
-	"crypto/sha256"
-	"errors"
-
 	"github.com/telehash/gogotelehash/internal/lob"
-)
-
-var (
-	ErrUnknownCSID    = errors.New("cipherset: unknown CSID")
-	ErrInvalidKey     = errors.New("cipherset: invalid key")
-	ErrInvalidState   = errors.New("cipherset: invalid state")
-	ErrInvalidMessage = errors.New("cipherset: invalid message")
-	ErrInvalidPacket  = errors.New("cipherset: invalid packet")
 )
 
 type Cipher interface {
@@ -69,26 +58,4 @@ type Key interface {
 	Private() []byte
 	CanSign() bool
 	CanEncrypt() bool
-}
-
-type Token [16]byte
-
-var ZeroToken Token
-
-func ExtractToken(msg []byte) Token {
-	var (
-		token Token
-		l     = len(msg)
-	)
-
-	if l >= 3+16 && msg[0] == 0 && msg[1] == 1 {
-		sha := sha256.Sum256(msg[3 : 3+16])
-		copy(token[:], sha[:16])
-	} else if l >= 2+16 && msg[0] == 0 && msg[1] == 0 {
-		copy(token[:], msg[2:2+16])
-	} else {
-		return ZeroToken
-	}
-
-	return token
 }
