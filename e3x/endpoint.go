@@ -217,13 +217,13 @@ func RegisterModule(key interface{}, mod Module) EndpointOption {
 	}
 }
 
-func Keys(keys map[uint8]*cipherset.PrivateKey) EndpointOption {
+func Keys(keys map[cipherset.CSID]*cipherset.PrivateKey) EndpointOption {
 	return func(e *Endpoint) error {
 		if e.cipher != nil {
 			return nil
 		}
 
-		pubKeys := make(map[uint8][]byte, len(keys))
+		pubKeys := make(cipherset.Keys, len(keys))
 		for csid, key := range keys {
 			pubKeys[csid] = key.Public
 		}
@@ -463,7 +463,7 @@ func (e *Endpoint) accept(conn net.Conn) {
 	}
 
 	var (
-		csid = outer.Header().Bytes[0]
+		csid = cipherset.CSID(outer.Header().Bytes[0])
 	)
 
 	handshake, err := decodeHandshake(inner)
@@ -480,7 +480,7 @@ func (e *Endpoint) accept(conn net.Conn) {
 
 	keyHandshake, ok := handshake.(*cipherset.KeyHandshake)
 	if !ok || keyHandshake.CSID != csid {
-		err = ErrInvalidHandshake
+		err = InvalidHandshakeError("")
 		if e.endpointHooks.DropPacket(msg.Get(nil), conn, err) != ErrStopPropagation {
 			conn.Close()
 		}

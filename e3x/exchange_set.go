@@ -151,7 +151,6 @@ func (set *exchangeSet) UpdateTokens(x *Exchange, local, remote cipherset.Token)
 
 	for k, xx := range set.tokens {
 		if xx == x {
-			removed = true
 			delete(set.tokens, k)
 		}
 	}

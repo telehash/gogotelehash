@@ -195,7 +195,10 @@ func (book *addressBook) PipeToAddr(addr net.Addr) *Pipe {
 func (book *addressBook) AddPipe(p *Pipe) {
 	book.mtx.Lock()
 	defer book.mtx.Unlock()
+	book.addPipe(p)
+}
 
+func (book *addressBook) addPipe(p *Pipe) {
 	var (
 		now = time.Now()
 		idx = book.indexOfPipe(p)
@@ -248,7 +251,7 @@ func (book *addressBook) ReceivedHandshake(p *Pipe) {
 	)
 
 	if idx < 0 {
-		book.AddPipe(p)
+		book.addPipe(p)
 		return
 	}
 

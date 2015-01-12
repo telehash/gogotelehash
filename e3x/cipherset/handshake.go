@@ -15,9 +15,9 @@ func (e errInvalidHandshake) Error() string {
 }
 
 type KeyHandshake struct {
-	CSID     uint8
-	Key      []byte
-	Parts    map[uint8]string
+	CSID     CSID
+	Key      Key
+	Parts    Parts
 	Hashname hashname.H
 }
 
@@ -63,13 +63,13 @@ func (h *KeyHandshake) DecodeHandshake(pkt *lob.Packet) error {
 		switch x := v.(type) {
 		case string:
 			if h.Parts == nil {
-				h.Parts = make(map[uint8]string)
+				h.Parts = make(map[CSID]string)
 			}
-			h.Parts[uint8(csid)] = x
+			h.Parts[CSID(csid)] = x
 
 		case bool:
 			if x == true {
-				h.CSID = uint8(csid)
+				h.CSID = CSID(csid)
 			} else {
 				return errInvalidHandshake("invalid header")
 			}
@@ -84,12 +84,11 @@ func (h *KeyHandshake) DecodeHandshake(pkt *lob.Packet) error {
 		return errInvalidHandshake("invalid body")
 	}
 
-	hn, err := hashname.FromKeyAndIntermediates(h.CSID, h.Key, h.Parts)
-	if err != nil {
-		return errInvalidHandshake("unable to make hashname")
+	if h.Parts == nil {
+		h.Parts = make(map[CSID]string)
 	}
-
-	h.Hashname = hn
+	h.Parts[h.CSID] = h.Key.ToPart()
+	h.Hashname = h.Parts.ToHashname()
 
 	return nil
 }

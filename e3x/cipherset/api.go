@@ -20,15 +20,15 @@ var (
 
 // Self represents the the local identity
 type Self struct {
-	keys    map[uint8]*PrivateKey
-	pubKeys map[uint8][]byte
-	drivers map[uint8]driver.Self
+	keys    map[CSID]*PrivateKey
+	pubKeys Keys
+	drivers map[CSID]driver.Self
 }
 
 // Session represents the cryptographic state between two endpoints
 type Session struct {
 	mtx    sync.RWMutex
-	csid   uint8
+	csid   CSID
 	isHigh bool
 	driver driver.Session
 }
@@ -39,8 +39,8 @@ type PrivateKey struct {
 	Public  []byte
 }
 
-func GenerateKey(csid uint8) (*PrivateKey, error) {
-	drv := driver.Lookup(csid)
+func GenerateKey(csid CSID) (*PrivateKey, error) {
+	drv := driver.Lookup(uint8(csid))
 	if drv == nil {
 		return nil, ErrUnknownCSID
 	}
@@ -53,12 +53,9 @@ func GenerateKey(csid uint8) (*PrivateKey, error) {
 	return &PrivateKey{prv, pub}, nil
 }
 
-func GenerateKeys(csids ...uint8) (map[uint8]*PrivateKey, error) {
-	if len(csids) == 0 {
-		csids = driver.AvailableCSIDs()
-	}
+func GenerateKeys(csids ...CSID) (map[CSID]*PrivateKey, error) {
 
-	keys := make(map[uint8]*PrivateKey, len(csids))
+	keys := make(map[CSID]*PrivateKey, len(csids))
 	for _, csid := range csids {
 		key, err := GenerateKey(csid)
 		if err != nil {
@@ -67,22 +64,33 @@ func GenerateKeys(csids ...uint8) (map[uint8]*PrivateKey, error) {
 		keys[csid] = key
 	}
 
+	if len(csids) == 0 {
+		for _, csid := range driver.AvailableCSIDs() {
+			key, err := GenerateKey(CSID(csid))
+			if err != nil {
+				return nil, err
+			}
+			keys[CSID(csid)] = key
+		}
+
+	}
+
 	return keys, nil
 }
 
 // New makes a new Self with the provided keys
-func New(keys map[uint8]*PrivateKey) (*Self, error) {
+func New(keys map[CSID]*PrivateKey) (*Self, error) {
 	if len(keys) == 0 {
 		return nil, ErrInvalidState
 	}
 
 	self := &Self{}
 	self.keys = keys
-	self.pubKeys = make(map[uint8][]byte, len(keys))
-	self.drivers = make(map[uint8]driver.Self, len(keys))
+	self.pubKeys = make(Keys, len(keys))
+	self.drivers = make(map[CSID]driver.Self, len(keys))
 
 	for csid, key := range keys {
-		drv := driver.Lookup(csid)
+		drv := driver.Lookup(uint8(csid))
 		if drv == nil {
 			return nil, ErrUnknownCSID
 		}
@@ -99,7 +107,7 @@ func New(keys map[uint8]*PrivateKey) (*Self, error) {
 	return self, nil
 }
 
-func (s *Self) PublicKeys() map[uint8][]byte {
+func (s *Self) PublicKeys() Keys {
 	return s.pubKeys
 }
 
@@ -118,7 +126,7 @@ func (s *Self) DecryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
 	}
 
 	csid := hdr.Bytes[0]
-	drv := s.drivers[csid]
+	drv := s.drivers[CSID(csid)]
 	if drv == nil {
 		return nil, ErrUnknownCSID
 	}
@@ -127,9 +135,9 @@ func (s *Self) DecryptMessage(pkt *lob.Packet) (*lob.Packet, error) {
 }
 
 // NewSession makes a new session with the provided public keys.
-func (s *Self) NewSession(keys map[uint8][]byte) (*Session, error) {
+func (s *Self) NewSession(keys Keys) (*Session, error) {
 	var (
-		selectedCSID  uint8
+		selectedCSID  CSID
 		selectedKey   []byte
 		selfDriver    driver.Self
 		sessionDriver driver.Session
@@ -172,7 +180,7 @@ func (s *Self) NewSession(keys map[uint8][]byte) (*Session, error) {
 	return session, nil
 }
 
-func (s *Session) CSID() uint8 {
+func (s *Session) CSID() CSID {
 	return s.csid
 }
 

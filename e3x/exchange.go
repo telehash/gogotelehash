@@ -2,7 +2,6 @@ package e3x
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -18,12 +17,19 @@ import (
 	"github.com/telehash/gogotelehash/transports"
 )
 
-var ErrInvalidHandshake = errors.New("e3x: invalid handshake")
-
 type BrokenExchangeError hashname.H
 
 func (err BrokenExchangeError) Error() string {
 	return "e3x: broken exchange " + string(err)
+}
+
+type InvalidHandshakeError string
+
+func (e InvalidHandshakeError) Error() string {
+	if e == "" {
+		return "e3x: invalid handshake"
+	}
+	return "e3x: invalid handshake: " + string(e)
 }
 
 type ExchangeState uint8
@@ -37,6 +43,10 @@ const (
 	ExchangeExpired
 	ExchangeBroken
 )
+
+func (s ExchangeState) IsOpening() bool {
+	return s&(ExchangeInitialising|ExchangeDialing) > 0
+}
 
 func (s ExchangeState) IsOpen() bool {
 	return s&(ExchangeIdle|ExchangeActive) > 0
@@ -138,6 +148,7 @@ func newExchange(
 	}
 
 	x.log = log.To(remoteIdent.Hashname())
+	x.addressBook = newAddressBook(x.log)
 	for _, addr := range remoteIdent.addrs {
 		x.addressBook.AddPipe(newPipe(x.endpoint.getTransport(), nil, addr, x))
 	}
@@ -262,7 +273,7 @@ func (x *Exchange) Dial() error {
 		x.rescheduleHandshake()
 	}
 
-	for x.state == ExchangeDialing {
+	for x.state.IsOpening() {
 		x.cndState.Wait()
 	}
 
@@ -345,7 +356,10 @@ func (x *Exchange) deliverHandshake() error {
 	for _, pipe := range x.addressBook.HandshakePipes() {
 		_, err := pipe.Write(pktData)
 		if err == nil {
+			x.log.Printf("SND HANDSHAKE")
 			x.addressBook.SentHandshake(pipe)
+		} else {
+			x.log.Printf("SND HANDSHAKE error=%s", err)
 		}
 	}
 
@@ -474,7 +488,7 @@ func (x *Exchange) receivedPacket(msg message) {
 
 func (x *Exchange) deliverPacket(pkt *lob.Packet, p *Pipe) error {
 	x.mtx.Lock()
-	for x.state == ExchangeDialing || x.sessCipher == nil {
+	for x.state.IsOpening() || x.sessCipher == nil {
 		x.cndState.Wait()
 	}
 	if !x.state.IsOpen() {
@@ -571,7 +585,7 @@ func (x *Exchange) getNextAt() uint32 {
 	return at
 }
 
-func (x *Exchange) isLocalSeq(seq uint32) bool {
+func (x *Exchange) isLocalAt(seq uint32) bool {
 	if x.sessCipher.IsHigh() {
 		// must be odd
 		return seq%2 == 1
@@ -682,7 +696,7 @@ func (x *Exchange) Open(typ string, reliable bool) (*Channel, error) {
 	)
 
 	x.mtx.Lock()
-	for x.state == ExchangeDialing {
+	for x.state.IsOpening() {
 		x.cndState.Wait()
 	}
 	if !x.state.IsOpen() {
@@ -738,6 +752,14 @@ func (x *Exchange) generateHandshake(at uint32) (*bufpool.Buffer, error) {
 		pktData *bufpool.Buffer
 		err     error
 	)
+
+	if x.sessCipher == nil {
+		sess, err := x.selfCipher.NewSession(x.remoteIdent.Keys())
+		if err != nil {
+			return nil, err
+		}
+		x.sessCipher = sess
+	}
 
 	if at == 0 {
 		at = x.getNextAt()
@@ -798,24 +820,22 @@ func (x *Exchange) AddPipeConnection(conn net.Conn, addr net.Addr) (p *Pipe, add
 // ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
 // handshake is accepted err is nil. When the handshake is a request-handshake
 // and it is accepted response will contain a response-handshake packet.
-func (x *Exchange) ApplyHandshake(handshake *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, ok bool) {
+func (x *Exchange) ApplyHandshake(handshake *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, err error) {
 	x.mtx.Lock()
 	defer x.mtx.Unlock()
 
 	return x.applyHandshake(handshake, pipe)
 }
 
-func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, ok bool) {
+func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, err error) {
 	var (
 		inner     *lob.Packet
 		handshake Handshake
-		ident     *Identity
 		at        uint32
-		err       error
 	)
 
 	if outer == nil {
-		return nil, false
+		return nil, InvalidHandshakeError("")
 	}
 
 	if x.sessCipher != nil {
@@ -825,116 +845,91 @@ func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufp
 			err = nil
 		}
 		if err != nil {
-			return nil, false
+			return nil, InvalidHandshakeError(err.Error())
 		}
 	}
 
 	inner, err = x.selfCipher.DecryptMessage(outer)
 	if err != nil {
 		// drop; invalid packet
-		return nil, false
+		return nil, InvalidHandshakeError("unable to decrypt")
 	}
 
 	at = inner.Header().At
 	if !inner.Header().HasAt || at < x.lastRemoteAt {
 		// drop; a newer packet has already been processed
-		return nil, false
+		return nil, InvalidHandshakeError("invalid `at`")
 	}
 
 	handshake, err = decodeHandshake(inner)
-	if handshake == nil || err != nil {
-		return nil, false
+	if err != nil {
+		return nil, err
 	}
 
 	if key, ok := handshake.(*cipherset.KeyHandshake); ok {
 
 		if x.sessCipher != nil && key.CSID != x.sessCipher.CSID() {
 			// drop; wrong csid
-			return nil, false
+			return nil, InvalidHandshakeError("wrong CSID")
 		}
 
 		if x.remoteIdent != nil && x.remoteIdent.Hashname() != key.Hashname {
 			// drop; invalid hashname
-			return nil, false
+			return nil, InvalidHandshakeError("invalid hashname")
 		}
 
 		if x.sessCipher == nil {
-			sess, err := x.selfCipher.NewSession(map[uint8][]byte{key.CSID: key.Key})
+			sess, err := x.selfCipher.NewSession(cipherset.Keys{key.CSID: key.Key})
 			if err != nil {
 				// drop; unable to create session
-				return nil, false
+				return nil, InvalidHandshakeError(err.Error())
 			}
 
 			err = sess.VerifyMessage(outer)
 			if err != nil {
 				// drop; invalid handshake
-				return nil, false
+				return nil, InvalidHandshakeError(err.Error())
 			}
 
 			x.sessCipher = sess
 		}
 
-		if x.remoteIdent == nil {
-			ident, err := NewIdentity(key.Hashname).WithKeys(map[uint8][]byte{key.CSID: key.Key}, key.Parts)
+		if !x.remoteIdent.HasKeys() {
+			ident, err := x.remoteIdent.WithKeyAndParts(key.CSID, key.Key, key.Parts)
 			if err != nil {
 				// drop; unable to create session
-				return nil, false
+				return nil, InvalidHandshakeError(err.Error())
 			}
 
 			x.remoteIdent = ident
 		}
 
-	}
+		if x.isLocalAt(at) {
+			x.resetBreak()
+			x.addressBook.ReceivedHandshake(pipe)
 
-	ident, err = NewIdentity(
-		cipherset.Keys{handshake.CSID(): handshake.PublicKey()},
-		handshake.Parts(),
-		nil,
-	)
-	if err != nil {
-		// drop; invalid identity
-		return nil, false
-	}
+		} else {
+			x.addressBook.AddPipe(pipe)
 
-	if x.remoteIdent != nil && x.remoteIdent.Hashname() != ident.Hashname() {
-		// drop; invalid hashname
-		return nil, false
-	}
+			response, err = x.generateHandshake(at)
+			if err != nil {
+				// drop; invalid identity
+				return nil, err
+			}
+		}
 
-	if !x.cipher.ApplyHandshake(handshake) {
-		// drop; handshake was rejected by the cipherset
-		return nil, false
-	}
+		if x.state.IsOpening() {
+			x.traceStarted()
 
-	if x.remoteIdent == nil {
-		x.remoteIdent = ident
-	}
+			x.state = ExchangeIdle
+			x.resetExpire()
+			x.cndState.Broadcast()
 
-	if x.isLocalSeq(at) {
-		x.resetBreak()
-		x.addressBook.ReceivedHandshake(pipe)
-
-	} else {
-		x.addressBook.AddPipe(pipe)
-
-		response, err = x.generateHandshake(at)
-		if err != nil {
-			// drop; invalid identity
-			return nil, false
+			go x.exchangeHooks.Opened()
 		}
 	}
 
-	if x.state == ExchangeDialing || x.state == ExchangeInitialising {
-		x.traceStarted()
-
-		x.state = ExchangeIdle
-		x.resetExpire()
-		x.cndState.Broadcast()
-
-		go x.exchangeHooks.Opened()
-	}
-
-	return response, true
+	return response, nil
 }
 
 func (x *Exchange) receivedHandshake(msg message) bool {
@@ -942,54 +937,34 @@ func (x *Exchange) receivedHandshake(msg message) bool {
 	defer x.mtx.Unlock()
 
 	var (
-		pkt       *lob.Packet
-		handshake cipherset.Handshake
-		buf       [1500]byte
-		csid      uint8
-		err       error
+		outer *lob.Packet
+		err   error
 	)
 
-	if !msg.IsHandshake {
-		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedHandshake(msg, nil, "invalid packet")
-		return false
-	}
-
-	pkt, err = lob.Decode(msg.Data)
+	outer, err = lob.Decode(msg.Data)
 	if err != nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, err)
-		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
-	hdr := pkt.Header()
-	if !hdr.IsBinary() && len(hdr.Bytes) != 1 {
-		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedHandshake(msg, nil, "invalid header")
-		return false
-	}
-	csid = uint8(hdr.Bytes[0])
-
-	handshake, err = cipherset.DecryptHandshake(csid, x.localIdent.keys[csid], pkt.Body(buf[:0]))
+	resp, err := x.applyHandshake(outer, msg.Pipe)
 	if err != nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, err)
-		x.traceDroppedHandshake(msg, nil, err.Error())
 		return false
 	}
 
-	resp, ok := x.applyHandshake(handshake, msg.Pipe)
-	if !ok {
-		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedHandshake(msg, handshake, "failed to apply")
-		return false
+	if outer.Header().HasAt {
+		x.lastRemoteAt = outer.Header().At
 	}
-
-	x.lastRemoteSeq = handshake.At()
 
 	if resp != nil {
-		msg.Pipe.Write(resp)
+		_, err = msg.Pipe.Write(resp)
+		if err != nil {
+			x.log.Printf("SND HANDSHAKE REPLY error=%s", err)
+		} else {
+			x.log.Printf("SND HANDSHAKE REPLY")
+		}
 	}
 
-	x.traceReceivedHandshake(msg, handshake)
 	return true
 }

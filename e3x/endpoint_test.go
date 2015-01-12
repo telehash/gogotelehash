@@ -30,12 +30,12 @@ func TestSimpleEndpoint(t *testing.T) {
 	assert.NoError(err)
 
 	ea, erra := Open(
-		Keys(cipherset.Keys{0x3a: ka}),
+		Keys(map[cipherset.CSID]*cipherset.PrivateKey{0x3a: ka}),
 		Transport(mux.Config{udp.Config{}, inproc.Config{}}),
 		Log(nil))
 
 	eb, errb := Open(
-		Keys(cipherset.Keys{0x3a: kb}),
+		Keys(map[cipherset.CSID]*cipherset.PrivateKey{0x3a: kb}),
 		Transport(mux.Config{udp.Config{}, inproc.Config{}}),
 		Log(nil))
 	assert.NoError(erra)
@@ -43,11 +43,8 @@ func TestSimpleEndpoint(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	identA, err := ea.LocalIdentity()
-	assert.NoError(err)
-
-	identB, err := eb.LocalIdentity()
-	assert.NoError(err)
+	identA := ea.LocalIdentity()
+	identB := eb.LocalIdentity()
 
 	_, err = ea.Dial(identB)
 	assert.NoError(err)

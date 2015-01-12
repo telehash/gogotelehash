@@ -4,9 +4,7 @@
 package hashname
 
 import (
-	"crypto/sha256"
 	"errors"
-	"sort"
 
 	"github.com/telehash/gogotelehash/internal/util/base32util"
 )
@@ -41,84 +39,4 @@ func (h H) Network() string {
 
 func (h H) String() string {
 	return string(h)
-}
-
-// FromIntermediates derives a hashname from its intermediate parts.
-func FromIntermediates(parts map[uint8]string) (H, error) {
-	if len(parts) == 0 {
-		return "", ErrNoIntermediateParts
-	}
-
-	var (
-		hash = sha256.New()
-		ids  = make([]int, 0, len(parts))
-		buf  [32]byte
-	)
-
-	for id := range parts {
-		ids = append(ids, int(id))
-	}
-	sort.Ints(ids)
-
-	for _, id := range ids {
-
-		// decode intermediate part
-		partString := parts[uint8(id)]
-		if len(partString) != 52 {
-			return "", ErrInvalidIntermediatePart
-		}
-		part, err := base32util.DecodeString(partString)
-		if err != nil {
-			return "", ErrInvalidIntermediatePart
-		}
-
-		buf[0] = byte(id)
-		hash.Write(buf[:1])
-		hash.Sum(buf[:0])
-		hash.Reset()
-
-		hash.Write(buf[:32])
-		hash.Write(part)
-		hash.Sum(buf[:0])
-		hash.Reset()
-
-		hash.Write(buf[:32])
-	}
-
-	return H(base32util.EncodeToString(buf[:32])), nil
-}
-
-// PartsFromKeys derives the intermediate parts from their respectve public keys.
-func PartsFromKeys(keys map[uint8][]byte) map[uint8]string {
-	var (
-		hash          = sha256.New()
-		intermediates = make(map[uint8]string, len(keys))
-		buf           [32]byte
-	)
-
-	for id, key := range keys {
-		hash.Write(key)
-		hash.Sum(buf[:0])
-		hash.Reset()
-
-		intermediates[id] = base32util.EncodeToString(buf[:])[:52]
-	}
-
-	return intermediates
-}
-
-// FromKeyAndIntermediates derives a hasname from a public key and some intermediate parts.
-func FromKeyAndIntermediates(id uint8, key []byte, intermediates map[uint8]string) (H, error) {
-	var (
-		all          = make(map[uint8]string, len(intermediates)+1)
-		sum          = sha256.Sum256(key)
-		intermediate = base32util.EncodeToString(sum[:])
-	)
-
-	for k, v := range intermediates {
-		all[k] = v
-	}
-	all[id] = intermediate
-
-	return FromIntermediates(all)
 }

@@ -12,10 +12,10 @@ import (
 
 type cipherTestSuite struct {
 	suite.Suite
-	csid uint8
+	csid cipherset.CSID
 }
 
-func Run(t *testing.T, csid uint8) {
+func Run(t *testing.T, csid cipherset.CSID) {
 	suite.Run(t, &cipherTestSuite{csid: csid})
 }
 
@@ -45,15 +45,15 @@ func (s *cipherTestSuite) TestMessage() {
 	assert.NoError(err)
 	assert.NotNil(keyB)
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{s.csid: keyA})
 	assert.NoError(err)
 	assert.NotNil(selfA)
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{s.csid: keyB})
 	assert.NoError(err)
 	assert.NotNil(selfB)
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{s.csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{s.csid: keyB.Public})
 	assert.NoError(err)
 	assert.NotNil(sessA)
 	assert.False(sessA.NegotiatedEphemeralKeys())
@@ -68,7 +68,7 @@ func (s *cipherTestSuite) TestMessage() {
 	assert.NotNil(pkt2)
 	assert.Equal(pkt0, pkt2)
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{s.csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{s.csid: keyA.Public})
 	assert.NoError(err)
 	assert.NotNil(sessB)
 	assert.False(sessB.NegotiatedEphemeralKeys())
@@ -104,20 +104,20 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.NoError(err)
 	assert.NotNil(keyB)
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{s.csid: keyA})
 	assert.NoError(err)
 	assert.NotNil(selfA)
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{s.csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{s.csid: keyB})
 	assert.NoError(err)
 	assert.NotNil(selfB)
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{s.csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{s.csid: keyB.Public})
 	assert.NoError(err)
 	assert.NotNil(sessA)
 	assert.False(sessA.NegotiatedEphemeralKeys())
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{s.csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{s.csid: keyA.Public})
 	assert.NoError(err)
 	assert.NotNil(sessB)
 	assert.False(sessB.NegotiatedEphemeralKeys())
@@ -175,7 +175,7 @@ func (s *cipherTestSuite) TestPacketEncryption() {
 	assert.Equal(pkt0, pkt2)
 }
 
-func BenchmarkPacketEncryption(b *testing.B, csid uint8) {
+func BenchmarkPacketEncryption(b *testing.B, csid cipherset.CSID) {
 	var (
 		keyA  *cipherset.PrivateKey
 		keyB  *cipherset.PrivateKey
@@ -199,22 +199,22 @@ func BenchmarkPacketEncryption(b *testing.B, csid uint8) {
 		panic(err)
 	}
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
 		panic(err)
 	}
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
 		panic(err)
 	}
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{csid: keyB.Public})
 	if err != nil {
 		panic(err)
 	}
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{csid: keyA.Public})
 	if err != nil {
 		panic(err)
 	}
@@ -255,7 +255,7 @@ func BenchmarkPacketEncryption(b *testing.B, csid uint8) {
 	}
 }
 
-func BenchmarkPacketDecryption(b *testing.B, csid uint8) {
+func BenchmarkPacketDecryption(b *testing.B, csid cipherset.CSID) {
 	var (
 		keyA  *cipherset.PrivateKey
 		keyB  *cipherset.PrivateKey
@@ -279,22 +279,22 @@ func BenchmarkPacketDecryption(b *testing.B, csid uint8) {
 		panic(err)
 	}
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
 		panic(err)
 	}
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
 		panic(err)
 	}
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{csid: keyB.Public})
 	if err != nil {
 		panic(err)
 	}
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{csid: keyA.Public})
 	if err != nil {
 		panic(err)
 	}
@@ -340,7 +340,7 @@ func BenchmarkPacketDecryption(b *testing.B, csid uint8) {
 	}
 }
 
-func BenchmarkMessageEncryption(b *testing.B, csid uint8) {
+func BenchmarkMessageEncryption(b *testing.B, csid cipherset.CSID) {
 	var (
 		keyA  *cipherset.PrivateKey
 		keyB  *cipherset.PrivateKey
@@ -360,12 +360,12 @@ func BenchmarkMessageEncryption(b *testing.B, csid uint8) {
 		panic(err)
 	}
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
 		panic(err)
 	}
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{csid: keyB.Public})
 	if err != nil {
 		panic(err)
 	}
@@ -382,7 +382,7 @@ func BenchmarkMessageEncryption(b *testing.B, csid uint8) {
 	}
 }
 
-func BenchmarkMessageDecryption(b *testing.B, csid uint8) {
+func BenchmarkMessageDecryption(b *testing.B, csid cipherset.CSID) {
 	var (
 		keyA  *cipherset.PrivateKey
 		keyB  *cipherset.PrivateKey
@@ -405,22 +405,22 @@ func BenchmarkMessageDecryption(b *testing.B, csid uint8) {
 		panic(err)
 	}
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
 		panic(err)
 	}
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
 		panic(err)
 	}
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{csid: keyB.Public})
 	if err != nil {
 		panic(err)
 	}
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{csid: keyA.Public})
 	if err != nil {
 		panic(err)
 	}
@@ -448,7 +448,7 @@ func BenchmarkMessageDecryption(b *testing.B, csid uint8) {
 	}
 }
 
-func BenchmarkMessageVerification(b *testing.B, csid uint8) {
+func BenchmarkMessageVerification(b *testing.B, csid cipherset.CSID) {
 	var (
 		keyA  *cipherset.PrivateKey
 		keyB  *cipherset.PrivateKey
@@ -471,22 +471,22 @@ func BenchmarkMessageVerification(b *testing.B, csid uint8) {
 		panic(err)
 	}
 
-	selfA, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyA})
+	selfA, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyA})
 	if err != nil {
 		panic(err)
 	}
 
-	selfB, err = cipherset.New(map[uint8]*cipherset.PrivateKey{csid: keyB})
+	selfB, err = cipherset.New(map[cipherset.CSID]*cipherset.PrivateKey{csid: keyB})
 	if err != nil {
 		panic(err)
 	}
 
-	sessA, err = selfA.NewSession(map[uint8][]byte{csid: keyB.Public})
+	sessA, err = selfA.NewSession(cipherset.Keys{csid: keyB.Public})
 	if err != nil {
 		panic(err)
 	}
 
-	sessB, err = selfB.NewSession(map[uint8][]byte{csid: keyA.Public})
+	sessB, err = selfB.NewSession(cipherset.Keys{csid: keyA.Public})
 	if err != nil {
 		panic(err)
 	}

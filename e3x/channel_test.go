@@ -91,8 +91,7 @@ func TestPingPong(t *testing.T) {
 			}
 		}()
 
-		ident, err = A.LocalIdentity()
-		assert.NoError(err)
+		ident = A.LocalIdentity()
 
 		c, err = B.Open(ident, "ping", false)
 		assert.NoError(err)
@@ -140,8 +139,7 @@ func TestPingPongReliable(t *testing.T) {
 			}
 		}()
 
-		ident, err = A.LocalIdentity()
-		assert.NoError(err)
+		ident = A.LocalIdentity()
 
 		c, err = B.Open(ident, "ping", true)
 		assert.NoError(err)
@@ -197,8 +195,7 @@ func TestFloodReliable(t *testing.T) {
 			}
 		}()
 
-		ident, err = A.LocalIdentity()
-		assert.NoError(err)
+		ident = A.LocalIdentity()
 
 		c, err = B.Open(ident, "flood", true)
 		assert.NoError(err)
@@ -270,10 +267,7 @@ func BenchmarkReadWriteReliable(b *testing.B) {
 			}
 		}()
 
-		ident, err = A.LocalIdentity()
-		if err != nil {
-			b.Fatal(err)
-		}
+		ident = A.LocalIdentity()
 
 		c, err = B.Open(ident, "flood", true)
 		if err != nil {
@@ -346,10 +340,7 @@ func BenchmarkReadWriteUnreliable(b *testing.B) {
 			}
 		}()
 
-		ident, err = A.LocalIdentity()
-		if err != nil {
-			b.Fatal(err)
-		}
+		ident = A.LocalIdentity()
 
 		c, err = B.Open(ident, "flood", false)
 		if err != nil {
@@ -452,10 +443,7 @@ func BenchmarkChannels(b *testing.B) {
 		defer l.Close()
 		go accept(l)
 
-		ident, err = A.LocalIdentity()
-		if err != nil {
-			b.Fatal(err)
-		}
+		ident = A.LocalIdentity()
 
 		x, err := B.Dial(ident)
 		if err != nil {
@@ -546,10 +534,7 @@ func BenchmarkChannelsReliable(b *testing.B) {
 		defer l.Close()
 		go accept(l)
 
-		ident, err = A.LocalIdentity()
-		if err != nil {
-			b.Fatal(err)
-		}
+		ident = A.LocalIdentity()
 
 		x, err := B.Dial(ident)
 		if err != nil {

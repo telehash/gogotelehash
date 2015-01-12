@@ -15,7 +15,7 @@ func RegisterHandshakeType(i Handshake) {
 	}
 
 	t := reflect.TypeOf(i)
-	for t.Kind() == reflect.Ptr || reflect.Kind() == reflect.Interface {
+	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Interface {
 		t = t.Elem()
 	}
 
@@ -31,7 +31,7 @@ type Handshake interface {
 
 func encodeHandshake(h Handshake) (*lob.Packet, error) {
 	if h == nil {
-		return nil, ErrInvalidHandshake
+		return nil, InvalidHandshakeError("")
 	}
 
 	pkt, err := h.EncodeHandshake()
@@ -56,7 +56,7 @@ func decodeHandshake(pkt *lob.Packet) (Handshake, error) {
 
 	t, ok := handshakeTypes[hdr.Type]
 	if !ok {
-		return nil, ErrInvalidHandshake
+		return nil, InvalidHandshakeError("unkown type: " + hdr.Type)
 	}
 
 	h := reflect.New(t).Interface().(Handshake)

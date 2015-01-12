@@ -258,7 +258,7 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 		}
 		buf.Write(hdrAt)
 		buf.WriteByte(':')
-		fmt.Fprintf(buf, "%d", h.Seq)
+		fmt.Fprintf(buf, "%d", h.At)
 		first = false
 	}
 
