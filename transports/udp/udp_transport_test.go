@@ -31,7 +31,18 @@ func TestAddrs(t *testing.T) {
 	}
 }
 
-func Benchmark(b *testing.B) {
+func BenchmarkAddrFillKey(b *testing.B) {
+	var (
+		addr = &udpv4{IP: net.ParseIP("127.0.0.1"), Port: 4587}
+		k    [32]byte
+	)
+
+	for i := 0; i < b.N; i++ {
+		addr.FillKey(k[:])
+	}
+}
+
+func BenchmarkReadWrite(b *testing.B) {
 	A, err := Config{Network: "udp4"}.Open()
 	if err != nil {
 		b.Fatal(err)
@@ -78,15 +89,22 @@ func Benchmark(b *testing.B) {
 		}
 	}
 
+	sem := make(chan bool, 100)
+	for i := 0; i < cap(sem); i++ {
+		sem <- true
+	}
+
+	go func() {
+		for _ = range sem {
+			w.Write(msg)
+		}
+	}()
+
 	b.SetBytes(int64(len(msg)))
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i += 2 {
-		_, err = w.Write(msg)
-		if err != nil {
-			b.Fatal(err)
-		}
-
+	for i := 0; i < b.N; i++ {
+		sem <- true
 		n, err := r.Read(out[:])
 		if err != nil {
 			b.Fatal(err)
@@ -96,4 +114,5 @@ func Benchmark(b *testing.B) {
 			b.Fatalf("invalid message")
 		}
 	}
+	close(sem)
 }

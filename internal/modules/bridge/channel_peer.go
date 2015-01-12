@@ -1,8 +1,6 @@
 package bridge
 
 import (
-	"encoding/hex"
-
 	"github.com/telehash/gogotelehash/e3x"
 	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/internal/hashname"
@@ -25,21 +23,18 @@ func (mod *module) peerVia(router *e3x.Exchange, to hashname.H, body *bufpool.Bu
 }
 
 func (mod *module) introduceVia(router *e3x.Exchange, to hashname.H) error {
-	localIdent, err := mod.e.LocalIdentity()
-	if err != nil {
-		return err
-	}
+	localIdent := mod.e.LocalIdentity()
 
 	keys := localIdent.Keys()
-	parts := hashname.PartsFromKeys(keys)
+	parts := keys.ToParts()
 
 	for csid, key := range keys {
-		inner := lob.New(key.Public())
+		inner := lob.New(key)
 		for partCSID, part := range parts {
 			if partCSID == csid {
-				inner.Header().SetBool(hex.EncodeToString([]byte{partCSID}), true)
+				inner.Header().SetBool(partCSID.String(), true)
 			} else {
-				inner.Header().SetString(hex.EncodeToString([]byte{partCSID}), part)
+				inner.Header().SetString(partCSID.String(), part)
 			}
 		}
 

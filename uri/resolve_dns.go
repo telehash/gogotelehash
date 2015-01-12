@@ -120,7 +120,7 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 		// Sort txts so they form ascending sequences of key parts
 		sort.Strings(txts)
 
-		keyData := make(map[uint8]string, 10)
+		keyData := make(map[cipherset.CSID]string, 10)
 		for len(txts) > 0 {
 			var (
 				txt   = txts[0]
@@ -135,7 +135,7 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 			var (
 				label = parts[0]
 				value = parts[1]
-				csid  uint8
+				csid  cipherset.CSID
 			)
 
 			if len(label) < 2 {
@@ -149,7 +149,7 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 				txts = txts[1:]
 				continue
 			}
-			csid = uint8(i)
+			csid = cipherset.CSID(i)
 
 			// verify the key-part portion of the label
 			if len(label) > 2 {
@@ -166,22 +166,19 @@ func resolveSRV(uri *URI, proto string) (*e3x.Identity, error) {
 
 		keys = make(cipherset.Keys, len(keyData))
 		for csid, str := range keyData {
-			key, err := cipherset.DecodeKey(csid, str, "")
+			var k cipherset.Key
+			err := k.UnmarshalText([]byte(str))
 			if err != nil {
 				continue
 			}
 
-			keys[csid] = key
+			keys[csid] = k
 		}
 	}
 
-	ident, err := e3x.NewIdentity(keys, nil, addrs)
+	ident, err := e3x.NewIdentity(hn).WithAddrs(addrs).WithKeys(keys, nil)
 	if err != nil {
-		return nil, err
-	}
-
-	if hn != ident.Hashname() {
-		return nil, &net.DNSError{Name: host, Err: "invalid keys"}
+		return nil, &net.DNSError{Name: host, Err: err.Error()}
 	}
 
 	return ident, nil

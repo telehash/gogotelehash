@@ -2,6 +2,7 @@ package cipherset
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"sort"
 
 	"github.com/telehash/gogotelehash/internal/hashname"
@@ -9,10 +10,15 @@ import (
 )
 
 type (
-	Key   []byte
-	Keys  map[CSID]Key
-	Parts map[CSID]string
+	Key         []byte
+	Keys        map[CSID]Key
+	PrivateKeys map[CSID]*PrivateKey
+	Parts       map[CSID]string
 )
+
+func (key Key) String() string {
+	return base32util.EncodeToString(key)
+}
 
 func (key Key) ToPart() string {
 	part := sha256.Sum256(key)
@@ -31,6 +37,18 @@ func (keyPtr *Key) UnmarshalText(text []byte) error {
 
 	*keyPtr = k
 	return nil
+}
+
+func (pkeys PrivateKeys) ToPublicKeys() Keys {
+	var (
+		keys = make(Keys, len(pkeys))
+	)
+
+	for id, key := range pkeys {
+		keys[id] = Key(key.Public)
+	}
+
+	return keys
 }
 
 func (keys Keys) ToParts() Parts {
@@ -86,4 +104,34 @@ func (parts Parts) ToHashname() hashname.H {
 	}
 
 	return hashname.H(base32util.EncodeToString(buf[:]))
+}
+
+func (parts Parts) MarshalJSON() ([]byte, error) {
+	var m = make(map[string]string, len(parts))
+
+	for csid, part := range parts {
+		m[csid.String()] = part
+	}
+
+	return json.Marshal(m)
+}
+
+func (keys Keys) MarshalJSON() ([]byte, error) {
+	var m = make(map[string]string, len(keys))
+
+	for csid, key := range keys {
+		m[csid.String()] = key.String()
+	}
+
+	return json.Marshal(m)
+}
+
+func (keys PrivateKeys) MarshalJSON() ([]byte, error) {
+	var m = make(map[string]*PrivateKey, len(keys))
+
+	for csid, key := range keys {
+		m[csid.String()] = key
+	}
+
+	return json.Marshal(m)
 }

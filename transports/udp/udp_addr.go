@@ -95,25 +95,15 @@ func (u *udpv6) ToUDPAddr() *net.UDPAddr { return (*net.UDPAddr)(u) }
 func (u *udpv4) IsIPv6() bool { return false }
 func (u *udpv6) IsIPv6() bool { return true }
 
-func (u *udpv4) Key() interface{} {
-	var (
-		k connKey
-	)
-
-	copy(k[:16], u.IP.To16())
-	binary.BigEndian.PutUint16(k[16:], uint16(u.Port))
-
-	return k
+func (u *udpv4) FillKey(k []byte) {
+	k[0] = 4
+	copy(k[1:1+4], u.IP.To4())
+	binary.BigEndian.PutUint16(k[1+4:], uint16(u.Port))
 }
-func (u *udpv6) Key() interface{} {
-	var (
-		k connKey
-	)
-
-	copy(k[:16], u.IP.To16())
-	binary.BigEndian.PutUint16(k[16:], uint16(u.Port))
-
-	return k
+func (u *udpv6) FillKey(k []byte) {
+	k[0] = 6
+	copy(k[1:1+16], u.IP.To16())
+	binary.BigEndian.PutUint16(k[1+16:], uint16(u.Port))
 }
 
 func (u *udpv4) UnmarshalJSON(data []byte) error {

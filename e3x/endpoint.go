@@ -318,7 +318,7 @@ func (e *Endpoint) LocalHashname() hashname.H {
 }
 
 func (e *Endpoint) LocalIdentity() *Identity {
-	return e.localIdent.withPaths(e.transport.Addrs())
+	return e.localIdent.WithAddrs(e.transport.Addrs())
 }
 
 func (e *Endpoint) start() error {
@@ -514,22 +514,6 @@ func (e *Endpoint) accept(conn net.Conn) {
 	inner.Free()
 	outer.Free()
 	exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
-
-	// oldLocalToken := exchange.LocalToken()
-	// oldRemoteToken := exchange.RemoteToken()
-	// exchange.received(newMessage(msg, newPipe(e.transport, conn, nil, exchange)))
-	// newLocalToken := exchange.LocalToken()
-	// newRemoteToken := exchange.RemoteToken()
-
-	// if oldLocalToken != newLocalToken {
-	// 	delete(e.tokens, oldLocalToken)
-	// 	e.tokens[newLocalToken] = exchange
-	// }
-
-	// if oldRemoteToken != newRemoteToken {
-	// 	delete(e.tokens, oldRemoteToken)
-	// 	e.tokens[newRemoteToken] = exchange
-	// }
 }
 
 func (e *Endpoint) Identify(i Identifier) (*Identity, error) {

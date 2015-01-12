@@ -34,8 +34,6 @@ const (
 	UDPv6 = "udp6"
 )
 
-type connKey [18]byte
-
 type transport struct {
 	net   string
 	laddr udpAddr

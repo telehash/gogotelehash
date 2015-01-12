@@ -13,7 +13,7 @@ import (
 
 type Addr interface {
 	net.Addr
-	Key() interface{}
+	FillKey(k []byte)
 }
 
 type Transport interface {
@@ -30,7 +30,7 @@ type transport struct {
 	inner Transport
 
 	mtx    sync.RWMutex
-	conns  map[interface{}]*connection
+	conns  map[connKey]*connection
 	closed bool
 
 	mtxAccept   sync.Mutex
@@ -46,6 +46,8 @@ type connection struct {
 	closed   bool
 	halfPipe *transportsutil.HalfPipe
 }
+
+type connKey [32]byte
 
 var (
 	_ transports.Transport = (*transport)(nil)
@@ -117,8 +119,10 @@ func (t *transport) Accept() (net.Conn, error) {
 
 func (t *transport) getConnection(addr Addr) (conn *connection, created bool) {
 	var (
-		k = addr.Key()
+		k connKey
 	)
+
+	addr.FillKey(k[:])
 
 	t.mtx.RLock()
 	if t.conns != nil {
@@ -129,7 +133,7 @@ func (t *transport) getConnection(addr Addr) (conn *connection, created bool) {
 	if conn == nil {
 		t.mtx.Lock()
 		if t.conns == nil {
-			t.conns = make(map[interface{}]*connection)
+			t.conns = make(map[connKey]*connection)
 		}
 		conn = t.conns[k]
 		if conn == nil {
@@ -146,10 +150,12 @@ func (t *transport) getConnection(addr Addr) (conn *connection, created bool) {
 
 func (t *transport) dropConnection(addr Addr) {
 	var (
-		k     = addr.Key()
+		k     connKey
 		conn1 *connection
 		conn2 *connection
 	)
+
+	addr.FillKey(k[:])
 
 	// still there?
 	t.mtx.RLock()

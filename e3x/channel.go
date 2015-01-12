@@ -112,6 +112,8 @@ type writeBufferEntry struct {
 	dst        *Pipe
 }
 
+var writeBufferEntryPool = sync.Pool{New: func() interface{} { return &writeBufferEntry{} }}
+
 func newChannel(
 	hn hashname.H, typ string,
 	reliable bool, serverside bool,
@@ -392,7 +394,9 @@ func (c *Channel) write(pkt *lob.Packet, p *Pipe) error {
 		if c.oSeq%30 == 0 || hdr.End {
 			c.applyAckHeaders(pkt)
 		}
-		c.writeBuffer[c.oSeq] = &writeBufferEntry{pkt, end, time.Time{}, p}
+		entry := writeBufferEntryPool.Get().(*writeBufferEntry)
+		entry.pkt, entry.end, entry.dst = pkt, end, p
+		c.writeBuffer[c.oSeq] = entry
 		c.needsResend = false
 	}
 
@@ -602,6 +606,8 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 			for i := oldAck + 1; i <= ack; i++ {
 				if e := c.writeBuffer[i]; e != nil {
 					e.pkt.Free()
+					e.pkt, e.dst, e.lastResend, e.end = nil, nil, time.Time{}, false
+					writeBufferEntryPool.Put(e)
 				}
 				delete(c.writeBuffer, i)
 				changed = true
@@ -876,7 +882,6 @@ ADD_HIGHEST_ACCEPTABLE_SEQ:
 
 func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 	var (
-		omiss     = c.buildMissList()
 		now       = time.Now()
 		oneSecAgo = now.Add(-1 * time.Second)
 		last      = ack
@@ -898,9 +903,6 @@ func (c *Channel) processMissingPackets(ack uint32, miss []uint32) {
 		hdr := e.pkt.Header()
 		if c.iSeq >= cInitialSeq {
 			hdr.Ack, hdr.HasAck = c.iSeq, true
-		}
-		if len(omiss) > 0 {
-			hdr.Miss, hdr.HasMiss = omiss, true
 		}
 		e.lastResend = now
 
@@ -973,7 +975,7 @@ func (c *Channel) deliverAck() {
 		return
 	}
 
-	pkt := &lob.Packet{}
+	pkt := lob.New(nil)
 	hdr := pkt.Header()
 	hdr.C, hdr.HasC = c.id, true
 	c.applyAckHeaders(pkt)

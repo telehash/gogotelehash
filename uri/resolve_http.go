@@ -52,14 +52,8 @@ func WellKnown(e *e3x.Endpoint) http.Handler {
 			return
 		}
 
-		ident, err := e.LocalIdentity()
-		if err != nil {
-			http.NotFound(rw, req)
-			return
-		}
-
 		rw.Header().Set("Content-Type", "application/json; charset=utf-8")
 		rw.WriteHeader(200)
-		json.NewEncoder(rw).Encode(ident)
+		json.NewEncoder(rw).Encode(e.LocalIdentity())
 	})
 }

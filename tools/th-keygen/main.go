@@ -31,7 +31,7 @@ func main() {
 
 	var (
 		output = args["--output"].(string)
-		keys   = cipherset.Keys{}
+		keys   cipherset.PrivateKeys
 		data   []byte
 		err    error
 		out    struct {
@@ -41,22 +41,12 @@ func main() {
 		}
 	)
 
-	{ // CS 1a
-		k, err := cipherset.GenerateKey(0x1a)
-		assert(err)
-		keys[0x1a] = k
-	}
-
-	{ // CS 3a
-		k, err := cipherset.GenerateKey(0x3a)
-		assert(err)
-		keys[0x3a] = k
-	}
-
-	out.Keys = cipherset.PrivateKeys(keys)
-	out.Parts = hashname.PartsFromKeys(keys)
-	out.Hashname, err = hashname.FromIntermediates(out.Parts)
+	keys, err = cipherset.GenerateKeys()
 	assert(err)
+
+	out.Keys = keys
+	out.Parts = keys.ToPublicKeys().ToParts()
+	out.Hashname = out.Parts.ToHashname()
 
 	if len(out.Keys) == 0 {
 		out.Keys = nil

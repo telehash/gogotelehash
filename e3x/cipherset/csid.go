@@ -23,6 +23,37 @@ func ExtractCSID(msg []byte) CSID {
 	return csid
 }
 
+func (id CSID) String() string {
+	var b [2]byte
+	b[0] = toHalfHex(uint8(id) >> 4)
+	b[1] = toHalfHex(uint8(id))
+	return string(b[:])
+}
+
+func (id CSID) MarshalJSON() ([]byte, error) {
+	b := make([]byte, 4)
+	b[0] = '"'
+	b[1] = toHalfHex(uint8(id) >> 4)
+	b[2] = toHalfHex(uint8(id))
+	b[3] = '"'
+	return b, nil
+}
+
+func (idPtr *CSID) UnmarshalJSON(b []byte) error {
+	if len(b) != 4 || b[0] != '"' || b[3] != '"' {
+		return ErrInvalidCSID
+	}
+
+	upper, ok1 := fromHalfHex(b[1])
+	lower, ok2 := fromHalfHex(b[2])
+	if !ok1 || !ok2 {
+		return ErrInvalidCSID
+	}
+
+	*idPtr = CSID((upper << 4) | lower)
+	return nil
+}
+
 func (id CSID) MarshalText() (text []byte, err error) {
 	b := make([]byte, 2)
 	b[0] = toHalfHex(uint8(id) >> 4)

@@ -113,7 +113,7 @@ func (i *Identity) UnmarshalJSON(p []byte) error {
 		addrs = append(addrs, addr)
 	}
 
-	b, err := NewIdentity(jsonAddr.Hashname).withPaths(addrs).WithKeys(jsonAddr.Keys, jsonAddr.Parts)
+	b, err := NewIdentity(jsonAddr.Hashname).WithAddrs(addrs).WithKeys(jsonAddr.Keys, jsonAddr.Parts)
 	if err != nil {
 		return err
 	}
@@ -122,12 +122,12 @@ func (i *Identity) UnmarshalJSON(p []byte) error {
 	return nil
 }
 
-func (i *Identity) withPaths(paths []net.Addr) *Identity {
+func (i *Identity) WithAddrs(addrs []net.Addr) *Identity {
 	return &Identity{
 		hashname: i.hashname,
 		keys:     i.keys,
 		parts:    i.parts,
-		addrs:    paths,
+		addrs:    addrs,
 	}
 }
 

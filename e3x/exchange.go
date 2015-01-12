@@ -1,7 +1,7 @@
 package e3x
 
 import (
-	"encoding/base64"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -126,7 +126,7 @@ func newExchange(
 		remoteIdent: remoteIdent,
 		channels:    &channelSet{},
 	}
-	x.traceNew()
+	// x.traceNew()
 
 	x.cndState = sync.NewCond(&x.mtx)
 
@@ -194,74 +194,6 @@ func (x *Exchange) getTID() tracer.ID {
 	return x.TID
 }
 
-func (x *Exchange) traceError(err error) error {
-	if tracer.Enabled && err != nil {
-		tracer.Emit("exchange.error", tracer.Info{
-			"exchange_id": x.TID,
-			"error":       err.Error(),
-		})
-	}
-	return err
-}
-
-func (x *Exchange) traceNew() {
-	if tracer.Enabled {
-		tracer.Emit("exchange.new", tracer.Info{
-			"exchange_id": x.TID,
-			"endpoint_id": x.endpoint.getTID(),
-		})
-	}
-}
-
-func (x *Exchange) traceStarted() {
-	if tracer.Enabled {
-		tracer.Emit("exchange.started", tracer.Info{
-			"exchange_id": x.TID,
-			"peer":        x.remoteIdent.Hashname().String(),
-		})
-	}
-}
-
-func (x *Exchange) traceStopped() {
-	if tracer.Enabled {
-		tracer.Emit("exchange.stopped", tracer.Info{
-			"exchange_id": x.TID,
-		})
-	}
-}
-
-func (x *Exchange) traceDroppedPacket(msg message, pkt *lob.Packet, reason string) {
-	if tracer.Enabled {
-		info := tracer.Info{
-			"exchange_id": x.TID,
-			"packet_id":   msg.TID,
-			"reason":      reason,
-		}
-
-		if pkt != nil {
-			info["packet"] = tracer.Info{
-				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
-			}
-		}
-
-		tracer.Emit("exchange.rcv.packet", info)
-	}
-}
-
-func (x *Exchange) traceReceivedPacket(msg message, pkt *lob.Packet) {
-	if tracer.Enabled {
-		tracer.Emit("exchange.rcv.packet", tracer.Info{
-			"exchange_id": x.TID,
-			"packet_id":   msg.TID,
-			"packet": tracer.Info{
-				"header": pkt.Header(),
-				"body":   base64.StdEncoding.EncodeToString(pkt.Body(nil)),
-			},
-		})
-	}
-}
-
 // Dial exchanges the initial handshakes. It will timeout after 2 minutes.
 func (x *Exchange) Dial() error {
 	x.mtx.Lock()
@@ -293,7 +225,7 @@ func (x *Exchange) RemoteHashname() hashname.H {
 // RemoteIdentity returns the Identity of the remote peer.
 func (x *Exchange) RemoteIdentity() *Identity {
 	x.mtx.Lock()
-	ident := x.remoteIdent.withPaths(x.addressBook.KnownAddresses())
+	ident := x.remoteIdent.WithAddrs(x.addressBook.KnownAddresses())
 	x.mtx.Unlock()
 	return ident
 }
@@ -402,19 +334,16 @@ func (x *Exchange) receivedPacket(msg message) {
 
 	if !state.IsOpen() {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedPacket(msg, nil, dropExchangeIsNotOpen)
 		return // drop
 	}
 	if cipher == nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedPacket(msg, nil, dropNoSession)
 		return // drop
 	}
 
 	pkt, err := lob.Decode(msg.Data)
 	if err != nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedPacket(msg, nil, dropInvalidPacket)
 		return // drop
 	}
 
@@ -422,7 +351,6 @@ func (x *Exchange) receivedPacket(msg message) {
 	pkt.Free()
 	if err != nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedPacket(msg, nil, err.Error())
 		return // drop
 	}
 	pkt2.TID = msg.TID
@@ -437,7 +365,6 @@ func (x *Exchange) receivedPacket(msg message) {
 	if !hasC {
 		// drop: missing "c"
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-		x.traceDroppedPacket(msg, pkt2, dropMissingChannelID)
 		return
 	}
 
@@ -448,7 +375,6 @@ func (x *Exchange) receivedPacket(msg message) {
 			if !hasType {
 				addPromise.Cancel()
 				x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-				x.traceDroppedPacket(msg, pkt2, dropMissingChannelType)
 				return // drop (missing typ)
 			}
 
@@ -456,7 +382,6 @@ func (x *Exchange) receivedPacket(msg message) {
 			if listener == nil {
 				addPromise.Cancel()
 				x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, nil)
-				x.traceDroppedPacket(msg, pkt2, dropMissingChannelHandler)
 				return // drop (no handler)
 			}
 
@@ -482,7 +407,6 @@ func (x *Exchange) receivedPacket(msg message) {
 		}
 	}
 
-	x.traceReceivedPacket(msg, pkt2)
 	c.receivedPacket(pkt2)
 }
 
@@ -518,6 +442,10 @@ func (x *Exchange) deliverPacket(pkt *lob.Packet, p *Pipe) error {
 	return err
 }
 
+func (x *Exchange) Kill() {
+	x.expire(errors.New("killed"))
+}
+
 func (x *Exchange) expire(err error) {
 	x.mtx.Lock()
 	if x.state == ExchangeExpired || x.state == ExchangeBroken {
@@ -550,7 +478,6 @@ func (x *Exchange) expire(err error) {
 	}
 
 	x.exchangeSet.Remove(x)
-	x.traceStopped()
 	x.exchangeHooks.Closed(err)
 }
 
@@ -736,15 +663,6 @@ func (x *Exchange) AddPathCandidate(addr net.Addr) {
 	}
 }
 
-// GenerateHandshake can be used to generate a new handshake packet.
-// This is useful when the exchange doesn't know where to send the handshakes yet.
-func (x *Exchange) GenerateHandshake() (*bufpool.Buffer, error) {
-	x.mtx.Lock()
-	defer x.mtx.Unlock()
-
-	return x.generateHandshake(0)
-}
-
 func (x *Exchange) generateHandshake(at uint32) (*bufpool.Buffer, error) {
 	var (
 		inner   *lob.Packet
@@ -817,16 +735,6 @@ func (x *Exchange) AddPipeConnection(conn net.Conn, addr net.Addr) (p *Pipe, add
 	return p, added
 }
 
-// ApplyHandshake applies a (out-of-band) handshake to the exchange. When the
-// handshake is accepted err is nil. When the handshake is a request-handshake
-// and it is accepted response will contain a response-handshake packet.
-func (x *Exchange) ApplyHandshake(handshake *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, err error) {
-	x.mtx.Lock()
-	defer x.mtx.Unlock()
-
-	return x.applyHandshake(handshake, pipe)
-}
-
 func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufpool.Buffer, err error) {
 	var (
 		inner     *lob.Packet
@@ -891,7 +799,9 @@ func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufp
 				return nil, InvalidHandshakeError(err.Error())
 			}
 
+			x.exchangeSet.UpdateTokens(x, sess.LocalToken(), sess.RemoteToken())
 			x.sessCipher = sess
+			go x.exchangeHooks.SessionReset()
 		}
 
 		if !x.remoteIdent.HasKeys() {
@@ -919,8 +829,6 @@ func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufp
 		}
 
 		if x.state.IsOpening() {
-			x.traceStarted()
-
 			x.state = ExchangeIdle
 			x.resetExpire()
 			x.cndState.Broadcast()
@@ -933,8 +841,6 @@ func (x *Exchange) applyHandshake(outer *lob.Packet, pipe *Pipe) (response *bufp
 }
 
 func (x *Exchange) receivedHandshake(msg message) bool {
-	x.mtx.Lock()
-	defer x.mtx.Unlock()
 
 	var (
 		outer *lob.Packet
@@ -947,7 +853,9 @@ func (x *Exchange) receivedHandshake(msg message) bool {
 		return false
 	}
 
+	x.mtx.Lock()
 	resp, err := x.applyHandshake(outer, msg.Pipe)
+	x.mtx.Unlock()
 	if err != nil {
 		x.exchangeHooks.DropPacket(msg.Data.Get(nil), msg.Pipe, err)
 		return false

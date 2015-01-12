@@ -75,7 +75,7 @@ func (c *connection) sendHandshake(body []byte) error {
 		return err
 	}
 
-	// defer e3x.ForgetterFromEndpoint(c.ex.).ForgetChannel(ch)
+	defer ch.Kill()
 
 	pkt := lob.New(body)
 	pkt.Header().SetString("peer", string(c.target))

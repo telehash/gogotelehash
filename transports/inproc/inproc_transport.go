@@ -2,6 +2,7 @@
 package inproc
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"net"
@@ -169,6 +170,6 @@ func (a *inprocAddr) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (a *inprocAddr) Key() interface{} {
-	return a.id
+func (a *inprocAddr) FillKey(k []byte) {
+	binary.BigEndian.PutUint32(k, a.id)
 }

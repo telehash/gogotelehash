@@ -29,9 +29,10 @@ type EndpointHook struct {
 }
 
 type ExchangeHook struct {
-	OnOpened     func(*Endpoint, *Exchange) error
-	OnClosed     func(*Endpoint, *Exchange, error) error
-	OnDropPacket func(e *Endpoint, x *Exchange, msg []byte, pipe *Pipe, reason error) error
+	OnSessionReset func(*Endpoint, *Exchange) error
+	OnOpened       func(*Endpoint, *Exchange) error
+	OnClosed       func(*Endpoint, *Exchange, error) error
+	OnDropPacket   func(e *Endpoint, x *Exchange, msg []byte, pipe *Pipe, reason error) error
 }
 
 type ChannelHook struct {
@@ -105,6 +106,15 @@ func (s *EndpointHooks) DropPacket(msg []byte, conn net.Conn, reason error) erro
 			return nil
 		}
 		return o.OnDropPacket(s.endpoint, msg, conn, reason)
+	})
+}
+
+func (s *ExchangeHooks) SessionReset() error {
+	return s.trigger(func(o ExchangeHook) error {
+		if o.OnSessionReset == nil {
+			return nil
+		}
+		return o.OnSessionReset(s.endpoint, s.exchange)
 	})
 }
 

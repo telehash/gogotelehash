@@ -57,12 +57,7 @@ func (e *Endpoint) Listen(typ string, reliable bool) *Listener {
 }
 
 func (e *Endpoint) LocalIdentity() (*Identity, error) {
-	inner, err := e.inner.LocalIdentity()
-	if err != nil {
-		return nil, err
-	}
-
-	return &Identity{inner}, nil
+	return &Identity{e.inner.LocalIdentity()}, nil
 }
 
 func (e *Endpoint) Dial(identifier Identifier) (*Exchange, error) {

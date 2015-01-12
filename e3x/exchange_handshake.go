@@ -7,6 +7,10 @@ import (
 	"github.com/telehash/gogotelehash/internal/lob"
 )
 
+func init() {
+	RegisterHandshakeType(&cipherset.KeyHandshake{})
+}
+
 var handshakeTypes = map[string]reflect.Type{}
 
 func RegisterHandshakeType(i Handshake) {
@@ -66,8 +70,4 @@ func decodeHandshake(pkt *lob.Packet) (Handshake, error) {
 	}
 
 	return h, nil
-}
-
-func init() {
-	RegisterHandshakeType(&cipherset.KeyHandshake{})
 }
