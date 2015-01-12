@@ -24,11 +24,9 @@ func (set *channelSet) Get(id uint32) *Channel {
 }
 
 func (set *channelSet) All() []*Channel {
-	var (
-		s = make([]*Channel, 0, len(set.channels))
-	)
-
 	set.mtx.RLock()
+
+	s := make([]*Channel, 0, len(set.channels))
 	for _, c := range set.channels {
 		s = append(s, c)
 	}

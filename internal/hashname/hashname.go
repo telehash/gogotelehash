@@ -8,7 +8,6 @@ import (
 	"errors"
 	"sort"
 
-	"github.com/telehash/gogotelehash/e3x/cipherset"
 	"github.com/telehash/gogotelehash/internal/util/base32util"
 )
 
@@ -45,7 +44,7 @@ func (h H) String() string {
 }
 
 // FromIntermediates derives a hashname from its intermediate parts.
-func FromIntermediates(parts cipherset.Parts) (H, error) {
+func FromIntermediates(parts map[uint8]string) (H, error) {
 	if len(parts) == 0 {
 		return "", ErrNoIntermediateParts
 	}
@@ -89,35 +88,16 @@ func FromIntermediates(parts cipherset.Parts) (H, error) {
 	return H(base32util.EncodeToString(buf[:32])), nil
 }
 
-// FromKeys derives a hashname from its public keys.
-func FromKeys(keys cipherset.Keys) (H, error) {
-	var (
-		hash          = sha256.New()
-		intermediates = make(cipherset.Parts, len(keys))
-		buf           [32]byte
-	)
-
-	for id, key := range keys {
-		hash.Write(key.Public())
-		hash.Sum(buf[:0])
-		hash.Reset()
-
-		intermediates[id] = base32util.EncodeToString(buf[:])[:52]
-	}
-
-	return FromIntermediates(intermediates)
-}
-
 // PartsFromKeys derives the intermediate parts from their respectve public keys.
-func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
+func PartsFromKeys(keys map[uint8][]byte) map[uint8]string {
 	var (
 		hash          = sha256.New()
-		intermediates = make(cipherset.Parts, len(keys))
+		intermediates = make(map[uint8]string, len(keys))
 		buf           [32]byte
 	)
 
 	for id, key := range keys {
-		hash.Write(key.Public())
+		hash.Write(key)
 		hash.Sum(buf[:0])
 		hash.Reset()
 
@@ -128,9 +108,9 @@ func PartsFromKeys(keys cipherset.Keys) cipherset.Parts {
 }
 
 // FromKeyAndIntermediates derives a hasname from a public key and some intermediate parts.
-func FromKeyAndIntermediates(id uint8, key []byte, intermediates cipherset.Parts) (H, error) {
+func FromKeyAndIntermediates(id uint8, key []byte, intermediates map[uint8]string) (H, error) {
 	var (
-		all          = make(cipherset.Parts, len(intermediates)+1)
+		all          = make(map[uint8]string, len(intermediates)+1)
 		sum          = sha256.Sum256(key)
 		intermediate = base32util.EncodeToString(sum[:])
 	)

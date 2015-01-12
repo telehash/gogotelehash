@@ -15,38 +15,45 @@ var ErrNoAddress = errors.New("e3x: no addresses")
 
 type Identity struct {
 	hashname hashname.H
-	keys     cipherset.Keys
-	parts    cipherset.Parts
+	keys     map[uint8][]byte
+	parts    map[uint8]string
 	addrs    []net.Addr
 }
 
-func NewIdentity(keys cipherset.Keys, parts cipherset.Parts, addrs []net.Addr) (*Identity, error) {
-	var err error
+func NewIdentity(hashname hashname.H) *Identity {
+	return &Identity{hashname: hashname}
+}
 
-	ident := &Identity{
-		keys:  keys,
-		parts: parts,
-		addrs: addrs,
-	}
-
-	if len(ident.keys) == 0 {
+func (i *Identity) WithKeys(keys cipherset.Keys, parts cipherset.Parts) (*Identity, error) {
+	if len(keys) == 0 {
 		return nil, ErrNoKeys
 	}
 
-	if ident.parts == nil {
-		ident.parts = make(cipherset.Parts, len(ident.keys))
+	if parts == nil {
+		parts = make(cipherset.Parts, len(keys))
 	}
 
-	for csid, part := range hashname.PartsFromKeys(ident.keys) {
-		ident.parts[csid] = part
+	for csid, part := range hashname.PartsFromKeys(keys) {
+		parts[csid] = part
 	}
 
-	ident.hashname, err = hashname.FromIntermediates(ident.parts)
+	hashname, err := hashname.FromIntermediates(parts)
 	if err != nil {
 		return nil, err
 	}
 
-	return ident, nil
+	if i.hashname != "" && i.hashname != hashname {
+		return nil, errors.New("e3x: mismatching keys")
+	}
+
+	i = &Identity{
+		hashname: hashname,
+		keys:     keys,
+		parts:    parts,
+		addrs:    i.addrs,
+	}
+
+	return i, nil
 }
 
 func (i *Identity) Hashname() hashname.H {

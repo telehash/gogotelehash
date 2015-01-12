@@ -23,6 +23,8 @@ var (
 	hdrAck  = []byte(`"ack"`)
 	hdrMiss = []byte(`"miss"`)
 	hdrEnd  = []byte(`"end"`)
+	hdrErr  = []byte(`"err"`)
+	hdrAt   = []byte(`"at"`)
 )
 
 func parseHeader(hdr *Header, p []byte) error {
@@ -53,6 +55,10 @@ func parseHeader(hdr *Header, p []byte) error {
 			f = parseType
 		} else if p, ok = parsePrefix(p, hdrEnd); ok {
 			f = parseEnd
+		} else if p, ok = parsePrefix(p, hdrErr); ok {
+			f = parseErr
+		} else if p, ok = parsePrefix(p, hdrAt); ok {
+			f = parseAt
 		} else if key, p, ok = parseString(p); ok {
 			f = parseOther
 		} else {
@@ -164,6 +170,28 @@ func parseEnd(hdr *Header, key string, p []byte) ([]byte, error) {
 
 	hdr.End = b
 	hdr.HasEnd = true
+	return p, nil
+}
+
+func parseErr(hdr *Header, key string, p []byte) ([]byte, error) {
+	s, p, ok := parseString(p)
+	if !ok {
+		return nil, ErrInvalidPacket
+	}
+
+	hdr.Err = s
+	hdr.HasErr = true
+	return p, nil
+}
+
+func parseAt(hdr *Header, key string, p []byte) ([]byte, error) {
+	n, p, ok := parseUint32(p)
+	if !ok {
+		return nil, ErrInvalidPacket
+	}
+
+	hdr.At = n
+	hdr.HasAt = true
 	return p, nil
 }
 

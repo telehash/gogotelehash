@@ -668,7 +668,7 @@ func (c *Channel) receivedPacket(pkt *lob.Packet) {
 	if c.iBufferedSeq < seq {
 		c.iBufferedSeq = seq
 	}
-	if end && hasEnd {
+	if hasEnd && end {
 		c.receivedEnd = true
 		c.deliverAck()
 	}
@@ -711,7 +711,9 @@ func (c *Channel) Error(err error) error {
 	}
 
 	pkt := &lob.Packet{}
-	pkt.Header().SetString("err", err.Error())
+	hdr := pkt.Header()
+	hdr.HasErr = true
+	hdr.Err = err.Error()
 	if err := c.write(pkt, nil); err != nil {
 		c.mtx.Unlock()
 		return err

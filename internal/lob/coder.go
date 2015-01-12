@@ -38,12 +38,16 @@ type Header struct {
 	C       uint32   `json:"c,omitempty"`
 	Type    string   `json:"type,omitempty"`
 	End     bool     `json:"end,omitempty"`
+	Err     string   `json:"err,omitempty"`
+	At      uint32   `json:"at,omitempty"`
 	Seq     uint32   `json:"seq,omitempty"`
 	Ack     uint32   `json:"ack,omitempty"`
 	Miss    []uint32 `json:"miss,omitempty"`
 	HasC    bool     `json:"-"`
 	HasType bool     `json:"-"`
 	HasEnd  bool     `json:"-"`
+	HasErr  bool     `json:"-"`
+	HasAt   bool     `json:"-"`
 	HasSeq  bool     `json:"-"`
 	HasAck  bool     `json:"-"`
 	HasMiss bool     `json:"-"`
@@ -235,6 +239,26 @@ func (h *Header) writeTo(buf *bytes.Buffer) error {
 		} else {
 			buf.Write(tokenFalse)
 		}
+		first = false
+	}
+
+	if h.HasErr {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrErr)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%q", h.Err)
+		first = false
+	}
+
+	if h.HasAt {
+		if !first {
+			buf.WriteByte(',')
+		}
+		buf.Write(hdrAt)
+		buf.WriteByte(':')
+		fmt.Fprintf(buf, "%d", h.Seq)
 		first = false
 	}
 

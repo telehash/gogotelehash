@@ -21,6 +21,7 @@ var (
 // Self represents the the local identity
 type Self struct {
 	keys    map[uint8]*PrivateKey
+	pubKeys map[uint8][]byte
 	drivers map[uint8]driver.Self
 }
 
@@ -77,6 +78,7 @@ func New(keys map[uint8]*PrivateKey) (*Self, error) {
 
 	self := &Self{}
 	self.keys = keys
+	self.pubKeys = make(map[uint8][]byte, len(keys))
 	self.drivers = make(map[uint8]driver.Self, len(keys))
 
 	for csid, key := range keys {
@@ -90,10 +92,15 @@ func New(keys map[uint8]*PrivateKey) (*Self, error) {
 			return nil, err
 		}
 
+		self.pubKeys[csid] = key.Public
 		self.drivers[csid] = s
 	}
 
 	return self, nil
+}
+
+func (s *Self) PublicKeys() map[uint8][]byte {
+	return s.pubKeys
 }
 
 // DecryptMessage decrypts a message packet.
