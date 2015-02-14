@@ -42,6 +42,23 @@ func TestCoding(t *testing.T) {
 	}
 }
 
+func TestSpecification(t *testing.T) {
+	var (
+		assert = assert.New(t)
+		h      H
+		err    error
+	)
+
+	// This values are taken from the telehash v3 specification
+	h, err = FromKeys(cipherset.Keys{
+		0x3a: mustKey(0x3a, "eg3fxjnjkz763cjfnhyabeftyf75m2s4gll3gvmuacegax5h6nia"),
+		0x1a: mustKey(0x1a, "an7lbl5e6vk4ql6nblznjicn5rmf3lmzlm"),
+	})
+	if assert.NoError(err) {
+		assert.Equal("27ywx5e5ylzxfzxrhptowvwntqrd3jhksyxrfkzi6jfn64d3lwxa", h)
+	}
+}
+
 func mustHex(s string) []byte {
 	d, err := hex.DecodeString(s)
 	if err != nil {
