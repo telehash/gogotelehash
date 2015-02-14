@@ -91,20 +91,7 @@ func FromIntermediates(parts cipherset.Parts) (H, error) {
 
 // FromKeys derives a hashname from its public keys.
 func FromKeys(keys cipherset.Keys) (H, error) {
-	var (
-		hash          = sha256.New()
-		intermediates = make(cipherset.Parts, len(keys))
-		buf           [32]byte
-	)
-
-	for id, key := range keys {
-		hash.Write(key.Public())
-		hash.Sum(buf[:0])
-		hash.Reset()
-
-		intermediates[id] = base32util.EncodeToString(buf[:])[:52]
-	}
-
+	intermediates := PartsFromKeys(keys)
 	return FromIntermediates(intermediates)
 }
 
