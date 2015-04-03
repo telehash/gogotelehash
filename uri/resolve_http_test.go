@@ -28,7 +28,7 @@ func Test_resolveHTTP(t *testing.T) {
 	}
 
 	ident, err := resolveHTTP(uri)
-	assert.NoError(err)
-	assert.NotNil(ident)
-	t.Logf("ident=%v addrs=%v keys=%v", ident, ident.Addresses(), ident.Keys())
+	if assert.NoError(err) && assert.NotNil(ident) {
+		t.Logf("ident=%v addrs=%v keys=%v", ident, ident.Addresses(), ident.Keys())
+	}
 }

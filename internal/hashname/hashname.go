@@ -4,22 +4,8 @@
 package hashname
 
 import (
-	"errors"
-
 	"github.com/telehash/gogotelehash/internal/util/base32util"
 )
-
-// ErrNoIntermediateParts is returned when deriving a Hashname
-var ErrNoIntermediateParts = errors.New("hashname: no intermediate parts")
-
-// ErrInvalidIntermediatePart is returned when deriving a Hashname
-var ErrInvalidIntermediatePart = errors.New("hashname: invalid intermediate part")
-
-// ErrInvalidIntermediatePartID is returned when deriving a Hashname
-var ErrInvalidIntermediatePartID = errors.New("hashname: invalid intermediate part id")
-
-// ErrInvalidKey is returned when deriving a Hashname
-var ErrInvalidKey = errors.New("hashname: invalid key")
 
 // H represents a hashname.
 type H string

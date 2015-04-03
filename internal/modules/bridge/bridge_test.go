@@ -104,10 +104,8 @@ func TestBridge(t *testing.T) {
 		}
 	}()
 
-	Aident, err := A.LocalIdentity()
-	assert.NoError(err)
-	Bident, err := B.LocalIdentity()
-	assert.NoError(err)
+	Aident := A.LocalIdentity()
+	Bident := B.LocalIdentity()
 
 	{
 		addr, err := transports.ResolveAddr("peer", string(R.LocalHashname()))
