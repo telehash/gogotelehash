@@ -31,7 +31,7 @@ func Transport(config transports.Config) EndpointOption {
 }
 
 func Open(options ...EndpointOption) (*Endpoint, error) {
-	innerOptions := make([]e3x.EndpointOption, len(options)+10)
+	innerOptions := make([]e3x.EndpointOption, len(options))
 
 	innerOptions = append(innerOptions, paths.Module())
 	innerOptions = append(innerOptions, bridge.Module(bridge.Config{}))
