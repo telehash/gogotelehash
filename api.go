@@ -14,6 +14,8 @@ import (
 	"github.com/telehash/gogotelehash/internal/modules/paths"
 )
 
+const OPTIONS_ADDITIONAL_CAPACITY = 2
+
 type (
 	EndpointOption e3x.EndpointOption
 	Endpoint       struct{ inner *e3x.Endpoint }
@@ -31,7 +33,10 @@ func Transport(config transports.Config) EndpointOption {
 }
 
 func Open(options ...EndpointOption) (*Endpoint, error) {
-	innerOptions := make([]e3x.EndpointOption, len(options)+10)
+	innerOptions := make(
+		[]e3x.EndpointOption,
+		len(options),
+		len(options)+OPTIONS_ADDITIONAL_CAPACITY)
 
 	innerOptions = append(innerOptions, paths.Module())
 	innerOptions = append(innerOptions, bridge.Module(bridge.Config{}))
